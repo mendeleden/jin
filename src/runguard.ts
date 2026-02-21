@@ -21,46 +21,50 @@ export function isDaemonRunning(): { running: boolean; pid?: number } {
 
 /** Check if jin is registered as an OS service */
 export function isServiceInstalled(): boolean {
-  if (process.platform === "linux") {
-    return existsSync(join(HOME, ".config", "systemd", "user", "jin.service"));
-  }
-  if (process.platform === "darwin") {
-    return existsSync(join(HOME, "Library", "LaunchAgents", "com.jin.agent.plist"));
-  }
-  if (process.platform === "win32") {
-    const result = Bun.spawnSync(
-      ["powershell", "-Command", "Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    return result.exitCode === 0 && new TextDecoder().decode(result.stdout).trim().length > 0;
-  }
+  try {
+    if (process.platform === "linux") {
+      return existsSync(join(HOME, ".config", "systemd", "user", "jin.service"));
+    }
+    if (process.platform === "darwin") {
+      return existsSync(join(HOME, "Library", "LaunchAgents", "com.jin.agent.plist"));
+    }
+    if (process.platform === "win32") {
+      const result = Bun.spawnSync(
+        ["powershell", "-Command", "Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue"],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      return result.exitCode === 0 && new TextDecoder().decode(result.stdout).trim().length > 0;
+    }
+  } catch {}
   return false;
 }
 
 /** Check if the OS service is actively running (not just installed) */
 export function isServiceActive(): boolean {
-  if (process.platform === "linux") {
-    const result = Bun.spawnSync(
-      ["systemctl", "--user", "is-active", "jin.service"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const state = new TextDecoder().decode(result.stdout).trim();
-    return state === "active" || state === "activating" || state === "reloading";
-  }
-  if (process.platform === "darwin") {
-    const result = Bun.spawnSync(["launchctl", "list"], { stdout: "pipe" });
-    const output = new TextDecoder().decode(result.stdout);
-    const line = output.split("\n").find((l) => l.includes("com.jin.agent"));
-    if (!line) return false;
-    return line.trim().split(/\s+/)[0] !== "-"; // first column is PID or "-"
-  }
-  if (process.platform === "win32") {
-    const result = Bun.spawnSync(
-      ["powershell", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    return new TextDecoder().decode(result.stdout).trim() === "Running";
-  }
+  try {
+    if (process.platform === "linux") {
+      const result = Bun.spawnSync(
+        ["systemctl", "--user", "is-active", "jin.service"],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      const state = new TextDecoder().decode(result.stdout).trim();
+      return state === "active" || state === "activating" || state === "reloading";
+    }
+    if (process.platform === "darwin") {
+      const result = Bun.spawnSync(["launchctl", "list"], { stdout: "pipe" });
+      const output = new TextDecoder().decode(result.stdout);
+      const line = output.split("\n").find((l) => l.includes("com.jin.agent"));
+      if (!line) return false;
+      return line.trim().split(/\s+/)[0] !== "-";
+    }
+    if (process.platform === "win32") {
+      const result = Bun.spawnSync(
+        ["powershell", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      return new TextDecoder().decode(result.stdout).trim() === "Running";
+    }
+  } catch {}
   return false;
 }
 

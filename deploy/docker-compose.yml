@@ -1,0 +1,89 @@
+##
+## jin self-hosted deployment
+##
+## Runs jin + Postgres on your local machine. Jin reads tool conversations
+## from your host and pushes them to the local Postgres instance.
+##
+## Quick start:
+##   1. cp .env.example .env   (edit if needed)
+##   2. docker compose up -d
+##   3. jin is now watching and pushing to local Postgres
+##
+## View data:
+##   docker compose exec postgres psql -U jin -d jin -c "SELECT * FROM jin_sessions;"
+##
+## One-shot commands:
+##   docker compose run --rm jin list
+##   docker compose run --rm jin analyze
+##   docker compose run --rm jin show <session-id>
+##
+
+services:
+
+  ## ── Postgres ──────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jin}
+      POSTGRES_DB: ${POSTGRES_DB:-jin}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jin}"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ## ── Jin Watcher ───────────────────────────────────────────────────
+  ## Reads tool conversations from host, pushes to Postgres
+
+  jin:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      JIN_TEAM_CONFIG: ${JIN_TEAM_CONFIG}
+    volumes:
+      # Jin state (SQLite, logs, config)
+      - jin-state:/root/.config/jin
+
+      # Mount host tool data directories (read-only)
+      # Claude Code
+      - ${HOME}/.claude:/root/.claude:ro
+      - ${HOME}/.config/claude:/root/.config/claude:ro
+      # Cursor
+      - ${HOME}/.cursor:/root/.cursor:ro
+      # Codex
+      - ${HOME}/.codex:/root/.codex:ro
+      # Gemini CLI
+      - ${HOME}/.gemini:/root/.gemini:ro
+      # Amp
+      - ${HOME}/.local/share/amp:/root/.local/share/amp:ro
+      # OpenCode
+      - ${HOME}/.local/share/opencode:/root/.local/share/opencode:ro
+      # Warp
+      - ${HOME}/.local/share/warp-terminal:/root/.local/share/warp-terminal:ro
+      # Kiro
+      - ${HOME}/.kiro:/root/.kiro:ro
+      # Pi
+      - ${HOME}/.openclaw:/root/.openclaw:ro
+      # PiAgent
+      - ${HOME}/.pi:/root/.pi:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        jin init --team=$${JIN_TEAM_CONFIG} 2>/dev/null
+        exec jin watch
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  jin-state:
