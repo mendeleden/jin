@@ -78,6 +78,8 @@ export class CursorAdapter implements Adapter {
             messageCount: messages.length,
             sourcePath: dbPath,
             isSubAgent: false,
+            parentSessionId: "",
+            isCompacted: false,
             metadata: { workspace: wsDir },
           });
         } catch {
@@ -194,6 +196,7 @@ export class CursorAdapter implements Adapter {
           cacheWrite: 0,
           toolUses: [],
           thinkingBlocks: [],
+          recordType: "",
         });
       }
     } catch {

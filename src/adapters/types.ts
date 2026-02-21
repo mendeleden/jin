@@ -1,4 +1,5 @@
-// Adapter interface — each coding tool implements this to expose its conversation data.
+// Adapter interface — each coding tool implements this to expose its conversation data
+// and surrounding context artifacts (memory files, configs, rules, etc.).
 
 export interface Adapter {
   id: string;
@@ -16,6 +17,9 @@ export interface Adapter {
 
   /** Return directories to watch for changes. */
   watchPaths(): string[];
+
+  /** Collect context artifacts (memory files, configs, rules, instructions). */
+  artifacts?(): Promise<ContextArtifact[]>;
 }
 
 export interface Session {
@@ -32,12 +36,14 @@ export interface Session {
   messageCount: number;
   sourcePath: string;
   isSubAgent: boolean;
+  parentSessionId: string; // for sub-agent/subtask linkage
+  isCompacted: boolean;    // whether session has been compacted
   metadata: Record<string, unknown>;
 }
 
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: string; // ISO 8601
   model: string;
@@ -47,6 +53,8 @@ export interface Message {
   cacheWrite: number;
   toolUses: ToolUse[];
   thinkingBlocks: ThinkingBlock[];
+  /** Record type from source (e.g. "summary", "compact_boundary", "session_meta") */
+  recordType: string;
 }
 
 export interface ToolUse {
@@ -61,8 +69,37 @@ export interface ThinkingBlock {
   tokenCount: number;
 }
 
+// --- Context artifacts: memory files, configs, rules, instructions ---
+
+export type ArtifactKind =
+  | "memory"        // CLAUDE.md, AGENTS.md, GEMINI.md, SOUL.md, etc.
+  | "rules"         // .claude/rules/*.md, .cursor/rules/*.mdc, etc.
+  | "config"        // settings.json, config.toml, opencode.json, etc.
+  | "instructions"  // AGENTS.md, SYSTEM.md, per-project instructions
+  | "plan"          // plan mode documents
+  | "todo"          // persisted todo/task lists
+  | "skill"         // SKILL.md files, custom commands
+  | "checkpoint"    // file-history snapshots, session diffs
+  | "history"       // cross-session prompt history (history.jsonl)
+  | "mcp"           // MCP server configurations
+  | "agent-def"     // sub-agent/custom agent definitions
+  | "workspace";    // OpenClaw workspace files (SOUL.md, IDENTITY.md, etc.)
+
+export interface ContextArtifact {
+  id: string;                 // stable identifier (e.g. hash of path)
+  adapterId: string;
+  kind: ArtifactKind;
+  name: string;               // human label (e.g. "CLAUDE.md (global)")
+  path: string;               // absolute path on disk
+  scope: "global" | "project" | "session" | "local";
+  content: string;            // file contents (or summary for large files)
+  contentHash: string;        // for change detection
+  updatedAt: string;          // ISO 8601
+  metadata: Record<string, unknown>;
+}
+
 export interface WatchEvent {
-  type: "session_created" | "session_updated" | "message_added";
+  type: "session_created" | "session_updated" | "message_added" | "artifact_changed";
   adapterId: string;
   sessionId: string;
   timestamp: string;

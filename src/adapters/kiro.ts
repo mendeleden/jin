@@ -82,6 +82,8 @@ export class KiroAdapter implements Adapter {
         messageCount: r.message_count || 0,
         sourcePath: this.dbPath,
         isSubAgent: false,
+        parentSessionId: "",
+        isCompacted: false,
         metadata: {},
       }));
     } catch {
@@ -130,6 +132,7 @@ export class KiroAdapter implements Adapter {
         model: r.model || "",
         inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
         toolUses: [], thinkingBlocks: [],
+        recordType: "",
       }));
     } catch {
       return [];

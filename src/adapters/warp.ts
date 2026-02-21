@@ -70,6 +70,8 @@ export class WarpAdapter implements Adapter {
         messageCount: r.query_count || 0,
         sourcePath: this.dbPath,
         isSubAgent: false,
+        parentSessionId: "",
+        isCompacted: false,
         metadata: { workingDirectory: r.working_directory },
       }));
     } catch {
@@ -106,6 +108,7 @@ export class WarpAdapter implements Adapter {
           model: "",
           inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
           toolUses: [], thinkingBlocks: [],
+          recordType: "",
         });
         if (r.response) {
           messages.push({
@@ -116,6 +119,7 @@ export class WarpAdapter implements Adapter {
             model: r.model || "",
             inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
             toolUses: [], thinkingBlocks: [],
+            recordType: "",
           });
         }
       }

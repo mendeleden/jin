@@ -3,6 +3,7 @@ import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { createSink } from "../sinks/registry";
 import { FileWatcher } from "../watcher";
+import { autoTagSession } from "../tagger";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync } from "fs";
@@ -298,6 +299,7 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
         const messages = await adapter.messages(session.id);
         if (messages.length > 0) {
           store.upsertMessages(session.id, messages);
+          autoTagSession(store, session, messages);
         }
       } catch {}
     }

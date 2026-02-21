@@ -189,7 +189,7 @@ async function darwinInstall(): Promise<void> {
   // Try modern syntax first, fall back to legacy
   let result = Bun.spawnSync(
     ["launchctl", "bootstrap", `gui/${uidStr}`, LAUNCHD_PLIST],
-    { stdout: "inherit", stderr: "pipe" }
+    { stdout: "inherit", stderr: "inherit" }
   );
 
   if (result.exitCode !== 0) {

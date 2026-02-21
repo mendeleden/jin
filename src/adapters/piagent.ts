@@ -44,6 +44,8 @@ export class PiAgentAdapter implements Adapter {
           messageCount: meta.msgCount,
           sourcePath: filePath,
           isSubAgent: false,
+          parentSessionId: "",
+          isCompacted: false,
           metadata: { fileSize: stat.size },
         });
       } catch { continue; }
@@ -128,6 +130,7 @@ export class PiAgentAdapter implements Adapter {
           outputTokens: rec.usage?.output_tokens || 0,
           cacheRead: 0, cacheWrite: 0,
           toolUses: [], thinkingBlocks: [],
+          recordType: "",
         });
       } catch { continue; }
     }

@@ -4,7 +4,7 @@ set -e
 # jin installer — downloads and installs the jin binary
 # Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/jin/main/install.sh | sh
 
-REPO="YOUR_ORG/jin"
+REPO="mendeleden/jin"
 INSTALL_DIR="${JIN_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect platform

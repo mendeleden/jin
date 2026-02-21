@@ -56,6 +56,8 @@ export class AmpAdapter implements Adapter {
           messageCount: meta.msgCount,
           sourcePath: filePath,
           isSubAgent: false,
+          parentSessionId: "",
+          isCompacted: false,
           metadata: { fileSize: stat.size },
         });
       } catch { continue; }
@@ -150,6 +152,7 @@ export class AmpAdapter implements Adapter {
             output: "",
           })),
           thinkingBlocks: [],
+          recordType: "",
         });
       } catch { continue; }
     }

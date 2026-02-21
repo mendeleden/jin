@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
-import type { Session, Message } from "./adapters/types";
+import type { Session, Message, ContextArtifact } from "./adapters/types";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -50,10 +50,85 @@ CREATE TABLE IF NOT EXISTS push_log (
   response TEXT
 );
 
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  adapter_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT,
+  path TEXT,
+  scope TEXT DEFAULT 'project',
+  content TEXT,
+  content_hash TEXT,
+  updated_at TEXT,
+  ingested_at TEXT,
+  metadata TEXT DEFAULT '{}'
+);
+
+-- Projects: derived from cwd/git, groups sessions across tools
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  directory TEXT,            -- canonical cwd path
+  git_remote TEXT,           -- git remote origin URL (for cross-machine linking)
+  git_branch TEXT,           -- default branch
+  language TEXT,             -- primary language (auto-detected)
+  first_seen TEXT,
+  last_seen TEXT,
+  session_count INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
+  total_cost REAL DEFAULT 0,
+  metadata TEXT DEFAULT '{}'
+);
+
+-- Link sessions to projects (M:N because a session could touch multiple projects)
+CREATE TABLE IF NOT EXISTS session_projects (
+  session_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  PRIMARY KEY (session_id, project_id),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+-- Tags: auto-generated and user-applied labels for sessions
+CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,     -- 'tool', 'model', 'project', 'language', 'branch', 'custom'
+  color TEXT,                 -- hex color for UI
+  UNIQUE(name, category)
+);
+
+-- Link tags to sessions (M:N)
+CREATE TABLE IF NOT EXISTS session_tags (
+  session_id TEXT NOT NULL,
+  tag_id INTEGER NOT NULL,
+  auto_applied INTEGER DEFAULT 1,  -- 1 = system-generated, 0 = user-applied
+  PRIMARY KEY (session_id, tag_id),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+-- Tool usage stats per session (for visualization)
+CREATE TABLE IF NOT EXISTS tool_usage (
+  session_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  call_count INTEGER DEFAULT 0,
+  total_input_chars INTEGER DEFAULT 0,
+  total_output_chars INTEGER DEFAULT 0,
+  PRIMARY KEY (session_id, tool_name),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_adapter ON sessions(adapter_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_artifacts_adapter ON artifacts(adapter_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind);
+CREATE INDEX IF NOT EXISTS idx_session_projects_project ON session_projects(project_id);
+CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_projects_last_seen ON projects(last_seen);
+CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage(tool_name);
 `;
 
 export class Store {
@@ -68,6 +143,7 @@ export class Store {
     this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec("PRAGMA foreign_keys=ON");
     this.db.exec(SCHEMA);
+    this.migrate();
   }
 
   upsertSession(session: Session): void {
@@ -139,7 +215,7 @@ export class Store {
     limit?: number;
   }): Session[] {
     let query = "SELECT * FROM sessions WHERE 1=1";
-    const params: unknown[] = [];
+    const params: (string | number | null)[] = [];
 
     if (opts?.adapterId) {
       query += " AND adapter_id = ?";
@@ -241,6 +317,248 @@ export class Store {
     return result;
   }
 
+  // --- Projects ---
+
+  upsertProject(project: {
+    id: string; name: string; directory?: string; gitRemote?: string;
+    gitBranch?: string; language?: string;
+  }): void {
+    this.db.run(
+      `INSERT INTO projects (id, name, directory, git_remote, git_branch, language, first_seen, last_seen)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+        name=excluded.name, directory=COALESCE(excluded.directory, projects.directory),
+        git_remote=COALESCE(excluded.git_remote, projects.git_remote),
+        git_branch=COALESCE(excluded.git_branch, projects.git_branch),
+        language=COALESCE(excluded.language, projects.language),
+        last_seen=excluded.last_seen`,
+      [project.id, project.name, project.directory || null, project.gitRemote || null,
+       project.gitBranch || null, project.language || null,
+       new Date().toISOString(), new Date().toISOString()]
+    );
+  }
+
+  linkSessionToProject(sessionId: string, projectId: string): void {
+    this.db.run(
+      `INSERT OR IGNORE INTO session_projects (session_id, project_id) VALUES (?, ?)`,
+      [sessionId, projectId]
+    );
+  }
+
+  refreshProjectStats(): void {
+    this.db.exec(`
+      UPDATE projects SET
+        session_count = (SELECT COUNT(*) FROM session_projects WHERE project_id = projects.id),
+        total_tokens = COALESCE((
+          SELECT SUM(s.total_tokens) FROM sessions s
+          JOIN session_projects sp ON sp.session_id = s.id
+          WHERE sp.project_id = projects.id
+        ), 0),
+        total_cost = COALESCE((
+          SELECT SUM(s.est_cost) FROM sessions s
+          JOIN session_projects sp ON sp.session_id = s.id
+          WHERE sp.project_id = projects.id
+        ), 0),
+        last_seen = COALESCE((
+          SELECT MAX(s.updated_at) FROM sessions s
+          JOIN session_projects sp ON sp.session_id = s.id
+          WHERE sp.project_id = projects.id
+        ), projects.last_seen)
+    `);
+  }
+
+  listProjects(): any[] {
+    return this.db.prepare(
+      `SELECT p.*, GROUP_CONCAT(DISTINCT s.adapter_id) as tools
+       FROM projects p
+       LEFT JOIN session_projects sp ON sp.project_id = p.id
+       LEFT JOIN sessions s ON s.id = sp.session_id
+       GROUP BY p.id ORDER BY p.last_seen DESC`
+    ).all() as any[];
+  }
+
+  // --- Tags ---
+
+  ensureTag(name: string, category: string, color?: string): number {
+    this.db.run(
+      `INSERT OR IGNORE INTO tags (name, category, color) VALUES (?, ?, ?)`,
+      [name, category, color || null]
+    );
+    const row = this.db.prepare(
+      `SELECT id FROM tags WHERE name = ? AND category = ?`
+    ).get(name, category) as any;
+    return row.id;
+  }
+
+  tagSession(sessionId: string, tagId: number, auto: boolean = true): void {
+    this.db.run(
+      `INSERT OR IGNORE INTO session_tags (session_id, tag_id, auto_applied) VALUES (?, ?, ?)`,
+      [sessionId, tagId, auto ? 1 : 0]
+    );
+  }
+
+  getSessionTags(sessionId: string): Array<{ name: string; category: string; color: string }> {
+    return this.db.prepare(
+      `SELECT t.name, t.category, t.color FROM tags t
+       JOIN session_tags st ON st.tag_id = t.id
+       WHERE st.session_id = ? ORDER BY t.category, t.name`
+    ).all(sessionId) as any[];
+  }
+
+  listTags(): Array<{ id: number; name: string; category: string; color: string; count: number }> {
+    return this.db.prepare(
+      `SELECT t.*, COUNT(st.session_id) as count FROM tags t
+       LEFT JOIN session_tags st ON st.tag_id = t.id
+       GROUP BY t.id ORDER BY count DESC`
+    ).all() as any[];
+  }
+
+  // --- Tool usage stats ---
+
+  upsertToolUsage(sessionId: string, toolName: string, callCount: number,
+    inputChars: number, outputChars: number): void {
+    this.db.run(
+      `INSERT INTO tool_usage (session_id, tool_name, call_count, total_input_chars, total_output_chars)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, tool_name) DO UPDATE SET
+        call_count=excluded.call_count, total_input_chars=excluded.total_input_chars,
+        total_output_chars=excluded.total_output_chars`,
+      [sessionId, toolName, callCount, inputChars, outputChars]
+    );
+  }
+
+  analyzeToolUsage(): Array<{ tool_name: string; total_calls: number; session_count: number }> {
+    return this.db.prepare(
+      `SELECT tool_name, SUM(call_count) as total_calls, COUNT(DISTINCT session_id) as session_count
+       FROM tool_usage GROUP BY tool_name ORDER BY total_calls DESC`
+    ).all() as any[];
+  }
+
+  // --- Cross-tool queries for visualization ---
+
+  /** Timeline: sessions per day, grouped by tool */
+  timelineByDay(days: number = 30): any[] {
+    return this.db.prepare(
+      `SELECT DATE(created_at) as day, adapter_id, COUNT(*) as sessions,
+       SUM(total_tokens) as tokens, SUM(est_cost) as cost
+       FROM sessions
+       WHERE created_at >= DATE('now', '-' || ? || ' days')
+       GROUP BY day, adapter_id ORDER BY day ASC`
+    ).all(days) as any[];
+  }
+
+  /** Cost breakdown by project and tool */
+  costByProjectAndTool(): any[] {
+    return this.db.prepare(
+      `SELECT p.name as project_name, s.adapter_id, COUNT(*) as sessions,
+       SUM(s.total_tokens) as tokens, SUM(s.est_cost) as cost
+       FROM sessions s
+       JOIN session_projects sp ON sp.session_id = s.id
+       JOIN projects p ON p.id = sp.project_id
+       GROUP BY p.id, s.adapter_id ORDER BY cost DESC`
+    ).all() as any[];
+  }
+
+  /** Sessions with their tags and project, for dashboard listing */
+  enrichedSessions(opts?: { limit?: number; projectId?: string; tagName?: string }): any[] {
+    let query = `
+      SELECT s.*,
+        GROUP_CONCAT(DISTINCT t.name) as tag_names,
+        GROUP_CONCAT(DISTINCT p.name) as project_names
+      FROM sessions s
+      LEFT JOIN session_tags st ON st.session_id = s.id
+      LEFT JOIN tags t ON t.id = st.tag_id
+      LEFT JOIN session_projects sp ON sp.session_id = s.id
+      LEFT JOIN projects p ON p.id = sp.project_id
+      WHERE 1=1`;
+    const params: (string | number | null)[] = [];
+    if (opts?.projectId) {
+      query += " AND sp.project_id = ?";
+      params.push(opts.projectId);
+    }
+    if (opts?.tagName) {
+      query += " AND t.name = ?";
+      params.push(opts.tagName);
+    }
+    query += " GROUP BY s.id ORDER BY s.updated_at DESC";
+    if (opts?.limit) {
+      query += " LIMIT ?";
+      params.push(opts.limit);
+    }
+    return this.db.prepare(query).all(...params) as any[];
+  }
+
+  // --- Artifacts ---
+
+  upsertArtifact(artifact: ContextArtifact): void {
+    this.db.run(
+      `INSERT INTO artifacts (id, adapter_id, kind, name, path, scope, content,
+        content_hash, updated_at, ingested_at, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+        content=excluded.content, content_hash=excluded.content_hash,
+        updated_at=excluded.updated_at, ingested_at=excluded.ingested_at,
+        metadata=excluded.metadata`,
+      [
+        artifact.id,
+        artifact.adapterId,
+        artifact.kind,
+        artifact.name,
+        artifact.path,
+        artifact.scope,
+        artifact.content,
+        artifact.contentHash,
+        artifact.updatedAt,
+        new Date().toISOString(),
+        JSON.stringify(artifact.metadata),
+      ]
+    );
+  }
+
+  listArtifacts(opts?: {
+    adapterId?: string;
+    kind?: string;
+  }): ContextArtifact[] {
+    let query = "SELECT * FROM artifacts WHERE 1=1";
+    const params: (string | number | null)[] = [];
+    if (opts?.adapterId) {
+      query += " AND adapter_id = ?";
+      params.push(opts.adapterId);
+    }
+    if (opts?.kind) {
+      query += " AND kind = ?";
+      params.push(opts.kind);
+    }
+    query += " ORDER BY updated_at DESC";
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map(rowToArtifact);
+  }
+
+  artifactCount(): number {
+    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM artifacts").get() as any;
+    return row.cnt;
+  }
+
+  /** Migrate schema for existing databases */
+  migrate(): void {
+    // Add new columns if they don't exist (safe for existing DBs)
+    const pragmaColumns = (table: string) => {
+      const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+      return new Set(rows.map((r: any) => r.name));
+    };
+    const sessionCols = pragmaColumns("sessions");
+    if (!sessionCols.has("parent_session_id")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT DEFAULT ''");
+    }
+    if (!sessionCols.has("is_compacted")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN is_compacted INTEGER DEFAULT 0");
+    }
+    const msgCols = pragmaColumns("messages");
+    if (!msgCols.has("record_type")) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN record_type TEXT DEFAULT ''");
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -261,6 +579,8 @@ function rowToSession(row: any): Session {
     messageCount: row.message_count,
     sourcePath: row.source_path || "",
     isSubAgent: !!row.is_sub_agent,
+    parentSessionId: row.parent_session_id || "",
+    isCompacted: !!row.is_compacted,
     metadata: row.metadata ? JSON.parse(row.metadata) : {},
   };
 }
@@ -278,5 +598,21 @@ function rowToMessage(row: any): Message {
     cacheWrite: row.cache_write,
     toolUses: row.tool_uses ? JSON.parse(row.tool_uses) : [],
     thinkingBlocks: row.thinking_blocks ? JSON.parse(row.thinking_blocks) : [],
+    recordType: row.record_type || "",
+  };
+}
+
+function rowToArtifact(row: any): ContextArtifact {
+  return {
+    id: row.id,
+    adapterId: row.adapter_id,
+    kind: row.kind,
+    name: row.name || "",
+    path: row.path || "",
+    scope: row.scope || "project",
+    content: row.content || "",
+    contentHash: row.content_hash || "",
+    updatedAt: row.updated_at || "",
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
   };
 }

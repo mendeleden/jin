@@ -107,6 +107,8 @@ export class OpenCodeAdapter implements Adapter {
             messageCount: msgCount,
             sourcePath: fullPath,
             isSubAgent: false,
+            parentSessionId: "",
+            isCompacted: false,
             metadata: {},
           });
         }
@@ -146,6 +148,7 @@ export class OpenCodeAdapter implements Adapter {
         model: turn.model || "",
         inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
         toolUses: [], thinkingBlocks: [],
+        recordType: "",
       });
     }
     return messages;
@@ -165,6 +168,7 @@ export class OpenCodeAdapter implements Adapter {
           model: rec.model || "",
           inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
           toolUses: [], thinkingBlocks: [],
+          recordType: "",
         });
       } catch { continue; }
     }

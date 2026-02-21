@@ -62,6 +62,8 @@ export class GeminiCliAdapter implements Adapter {
             messageCount: messages.length,
             sourcePath: filePath,
             isSubAgent: false,
+            parentSessionId: "",
+            isCompacted: false,
             metadata: {},
           });
         } catch { continue; }
@@ -126,6 +128,7 @@ export class GeminiCliAdapter implements Adapter {
           model: turn.model || data.model || "",
           inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
           toolUses: [], thinkingBlocks: [],
+          recordType: "",
         });
       }
     }
