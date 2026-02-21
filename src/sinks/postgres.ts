@@ -1,0 +1,232 @@
+import type { Sink, SinkConfig, PushPayload, PushResult } from "./types";
+
+/**
+ * PostgreSQL sink.
+ *
+ * Uses the pg-compatible fetch approach via Bun's native TCP,
+ * but for simplicity and zero-dependency, we use the Postgres
+ * wire protocol over HTTP (Neon/Supabase) or a simple pg client.
+ *
+ * To keep this zero-dependency, we use the SQL-over-HTTP approach
+ * that Neon, Supabase, and CockroachDB support. For self-hosted
+ * Postgres, teams can use the webhook sink with a thin API in front,
+ * or we can add a pg driver later.
+ */
+export class PostgresSink implements Sink {
+  id = "postgres";
+  name = "PostgreSQL";
+  private connectionString: string;
+  private schema: string;
+  private sessionsTable: string;
+  private messagesTable: string;
+  private teamId: string;
+  private developerId: string;
+
+  constructor(config: SinkConfig) {
+    if (!config.connectionString) {
+      throw new Error("Postgres sink requires 'connectionString'");
+    }
+    this.connectionString = config.connectionString;
+    this.schema = config.schema || "public";
+    this.sessionsTable = `${this.schema}.${config.table || "jin_sessions"}`;
+    this.messagesTable = `${this.schema}.${config.table ? config.table + "_messages" : "jin_messages"}`;
+    this.teamId = config.teamId || "";
+    this.developerId = config.developerId || "";
+  }
+
+  async healthCheck(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.query("SELECT 1");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  async push(data: PushPayload[]): Promise<PushResult> {
+    let pushed = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    // Ensure tables exist
+    try {
+      await this.ensureTables();
+    } catch (err) {
+      return { pushed: 0, failed: data.length, errors: [`Table creation failed: ${err}`] };
+    }
+
+    for (const { session, messages } of data) {
+      try {
+        // Upsert session
+        await this.query(
+          `INSERT INTO ${this.sessionsTable}
+           (id, adapter_id, adapter_name, name, created_at, updated_at, duration_ms,
+            is_active, total_tokens, est_cost, message_count, source_path,
+            is_sub_agent, metadata, team_id, developer_id, ingested_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+           ON CONFLICT (id) DO UPDATE SET
+            name=EXCLUDED.name, updated_at=EXCLUDED.updated_at,
+            total_tokens=EXCLUDED.total_tokens, est_cost=EXCLUDED.est_cost,
+            message_count=EXCLUDED.message_count, metadata=EXCLUDED.metadata,
+            ingested_at=EXCLUDED.ingested_at`,
+          [
+            session.id, session.adapterId, session.adapterName, session.name,
+            session.createdAt, session.updatedAt, session.durationMs,
+            session.isActive, session.totalTokens, session.estCost,
+            session.messageCount, session.sourcePath, session.isSubAgent,
+            JSON.stringify(session.metadata), this.teamId, this.developerId,
+            new Date().toISOString(),
+          ]
+        );
+
+        // Upsert messages
+        for (const msg of messages) {
+          await this.query(
+            `INSERT INTO ${this.messagesTable}
+             (id, session_id, role, content, timestamp, model,
+              input_tokens, output_tokens, cache_read, cache_write,
+              tool_uses, thinking_blocks)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             ON CONFLICT (id) DO UPDATE SET
+              content=EXCLUDED.content, tool_uses=EXCLUDED.tool_uses`,
+            [
+              msg.id, session.id, msg.role, msg.content, msg.timestamp,
+              msg.model, msg.inputTokens, msg.outputTokens,
+              msg.cacheRead, msg.cacheWrite,
+              JSON.stringify(msg.toolUses), JSON.stringify(msg.thinkingBlocks),
+            ]
+          );
+        }
+
+        pushed++;
+      } catch (err) {
+        failed++;
+        errors.push(`Session ${session.id}: ${err}`);
+      }
+    }
+
+    return { pushed, failed, errors };
+  }
+
+  async close(): Promise<void> {}
+
+  private async ensureTables(): Promise<void> {
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ${this.sessionsTable} (
+        id TEXT PRIMARY KEY,
+        adapter_id TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        name TEXT,
+        created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ,
+        duration_ms BIGINT DEFAULT 0,
+        is_active BOOLEAN DEFAULT FALSE,
+        total_tokens INTEGER DEFAULT 0,
+        est_cost DOUBLE PRECISION DEFAULT 0,
+        message_count INTEGER DEFAULT 0,
+        source_path TEXT,
+        is_sub_agent BOOLEAN DEFAULT FALSE,
+        metadata JSONB DEFAULT '{}',
+        team_id TEXT DEFAULT '',
+        developer_id TEXT DEFAULT '',
+        ingested_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ${this.messagesTable} (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES ${this.sessionsTable}(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT,
+        timestamp TIMESTAMPTZ,
+        model TEXT,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read INTEGER DEFAULT 0,
+        cache_write INTEGER DEFAULT 0,
+        tool_uses JSONB DEFAULT '[]',
+        thinking_blocks JSONB DEFAULT '[]'
+      )
+    `);
+
+    await this.query(
+      `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_sess_team ON ${this.sessionsTable}(team_id)`
+    );
+    await this.query(
+      `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_sess_dev ON ${this.sessionsTable}(developer_id)`
+    );
+    await this.query(
+      `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_msg_sess ON ${this.messagesTable}(session_id)`
+    );
+  }
+
+  /**
+   * Execute SQL against Postgres.
+   *
+   * Supports two modes:
+   * 1. Neon/Supabase serverless HTTP (if connectionString is https://)
+   * 2. Standard pg wire protocol via subprocess (pg-native fallback)
+   */
+  private async query(sql: string, params?: unknown[]): Promise<unknown[]> {
+    // For Neon serverless / Supabase — HTTP-based SQL
+    if (this.connectionString.startsWith("https://") || this.connectionString.startsWith("http://")) {
+      return this.queryHttp(sql, params);
+    }
+
+    // For standard postgres:// connections, use psql subprocess
+    return this.queryPsql(sql, params);
+  }
+
+  private async queryHttp(sql: string, params?: unknown[]): Promise<unknown[]> {
+    const resp = await fetch(this.connectionString, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: sql, params: params || [] }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Postgres HTTP error ${resp.status}: ${text.slice(0, 200)}`);
+    }
+
+    const result = await resp.json() as any;
+    return result.rows || [];
+  }
+
+  private async queryPsql(sql: string, params?: unknown[]): Promise<unknown[]> {
+    // Interpolate params for psql (simple approach — for production, use a proper pg client)
+    let interpolated = sql;
+    if (params) {
+      for (let i = 0; i < params.length; i++) {
+        const val = params[i];
+        const escaped = val === null || val === undefined
+          ? "NULL"
+          : typeof val === "number" || typeof val === "boolean"
+            ? String(val)
+            : `'${String(val).replace(/'/g, "''")}'`;
+        interpolated = interpolated.replace(`$${i + 1}`, escaped);
+      }
+    }
+
+    const proc = Bun.spawn(["psql", this.connectionString, "-t", "-A", "-c", interpolated], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      throw new Error(`psql error: ${stderr.slice(0, 200)}`);
+    }
+
+    // Parse psql output (pipe-delimited)
+    return stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("|"));
+  }
+}

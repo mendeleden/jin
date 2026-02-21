@@ -1,0 +1,134 @@
+##
+## jin test harness — spin up real coding tools + centralized Postgres sink
+##
+## Usage:
+##   1. Copy .env.example to .env and fill in API keys
+##   2. docker compose up -d postgres
+##   3. docker compose up gemini-cli    (or codex, opencode)
+##   4. docker compose up jin-watch     (ingests + pushes to postgres)
+##   5. docker compose up jin-analyze   (view results)
+##
+## Each tool container:
+##   - Installs the real CLI tool
+##   - Runs a short coding prompt against a sample project
+##   - Writes conversation data to a shared volume
+##   - jin-watch picks it up automatically
+##
+
+services:
+
+  ## ── Centralized Sink ──────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jin
+      POSTGRES_PASSWORD: jin
+      POSTGRES_DB: jin
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jin"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  ## ── Gemini CLI ────────────────────────────────────────────────────
+
+  gemini-cli:
+    build:
+      context: .
+      dockerfile: gemini-cli/Dockerfile
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - gemini-data:/root/.gemini
+      - ./sample-project:/workspace
+    working_dir: /workspace
+    depends_on: []
+
+  ## ── OpenAI Codex CLI ──────────────────────────────────────────────
+
+  codex:
+    build:
+      context: .
+      dockerfile: codex/Dockerfile
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - codex-data:/root/.codex
+      - ./sample-project:/workspace
+    working_dir: /workspace
+    depends_on: []
+
+  ## ── OpenCode ──────────────────────────────────────────────────────
+
+  opencode:
+    build:
+      context: .
+      dockerfile: opencode/Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - opencode-data:/root/.local/share/opencode
+      - ./sample-project:/workspace
+    working_dir: /workspace
+    depends_on: []
+
+  ## ── Jin Watcher ───────────────────────────────────────────────────
+  ## Watches all tool data volumes + pushes to Postgres
+
+  jin-watch:
+    build:
+      context: ..
+      dockerfile: test-harness/jin/Dockerfile
+    environment:
+      JIN_TEAM_CONFIG: ${JIN_TEAM_CONFIG:-}
+    volumes:
+      # Mount each tool's data dir where jin expects it
+      - gemini-data:/root/.gemini
+      - codex-data:/root/.codex
+      - opencode-data:/root/.local/share/opencode
+      # Also mount host Claude Code data (read-only) for real data
+      - ${HOME}/.claude:/root/.claude:ro
+      - ${HOME}/.config/claude:/root/.config/claude:ro
+      # Jin's own state
+      - jin-state:/root/.config/jin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "-c", "jin init --team=$${JIN_TEAM_CONFIG} && jin watch"]
+
+  ## ── Jin Analyze (one-shot) ────────────────────────────────────────
+
+  jin-analyze:
+    build:
+      context: ..
+      dockerfile: test-harness/jin/Dockerfile
+    volumes:
+      - jin-state:/root/.config/jin
+    command: ["jin", "analyze"]
+    profiles: ["analyze"]
+
+  ## ── Jin List (one-shot) ───────────────────────────────────────────
+
+  jin-list:
+    build:
+      context: ..
+      dockerfile: test-harness/jin/Dockerfile
+    volumes:
+      - jin-state:/root/.config/jin
+    command: ["jin", "list", "--limit=20"]
+    profiles: ["list"]
+
+volumes:
+  pgdata:
+  gemini-data:
+  codex-data:
+  opencode-data:
+  jin-state:

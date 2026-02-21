@@ -1,0 +1,17 @@
+{
+  "name": "jin",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "jin": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build ./src/index.ts --compile --outfile jin",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7"
+  }
+}
