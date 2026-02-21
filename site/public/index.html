@@ -480,7 +480,7 @@ footer .license {
 
   <div class="install-block">
     <span class="prompt">$</span>
-    <code id="install-cmd">curl -fsSL https://builtbyeden.app/install.sh | sh</code>
+    <code id="install-cmd"></code>
     <span class="cursor-blink"></span>
     <button class="copy-btn" onclick="copyInstall()" id="copy-btn">copy</button>
   </div>
@@ -637,9 +637,11 @@ footer .license {
 </footer>
 
 <script>
+const installCmd = `curl -fsSL ${window.location.origin}/install.sh | sh`;
+document.getElementById('install-cmd').textContent = installCmd;
+
 function copyInstall() {
-  const cmd = 'curl -fsSL https://builtbyeden.app/install.sh | sh';
-  navigator.clipboard.writeText(cmd).then(() => {
+  navigator.clipboard.writeText(installCmd).then(() => {
     const btn = document.getElementById('copy-btn');
     btn.textContent = 'copied';
     btn.classList.add('copied');
