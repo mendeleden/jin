@@ -102,6 +102,15 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     process.exit(1);
   }
 
+  // Non-blocking update check on daemon start
+  import("../updater").then(({ checkForUpdate }) =>
+    checkForUpdate().then((u) => {
+      if (u?.available) {
+        log(`Update available: ${u.current} -> ${u.latest}. Run \`jin update\` to upgrade.`);
+      }
+    })
+  ).catch(() => {});
+
   console.log(`jin watch — monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
   for (const a of activeAdapters) {
     console.log(`  [~] ${a.name}`);

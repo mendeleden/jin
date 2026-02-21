@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { VERSION } from "./updater";
+
 const args = process.argv.slice(2);
 const command = args[0];
 
@@ -22,7 +24,7 @@ const flags = parseFlags(args.slice(1));
 
 function usage(): void {
   console.log(`
-  jin — conversation data pipeline for agentic coding tools
+  jin v${VERSION} — conversation data pipeline for agentic coding tools
 
   Usage:
     jin init [--team=<code>]         Detect tools, connect to team infra
@@ -41,6 +43,8 @@ function usage(): void {
     jin export [--format=json|markdown] [--output=dir]
                                      Export sessions to files
     jin team-config --type=<sink> ... Generate team onboarding code
+    jin update                       Self-update to latest version
+    jin version                      Show version
     jin ui                           Launch local web dashboard
 
   Sinks (output destinations):
@@ -164,6 +168,16 @@ async function main(): Promise<void> {
       await serviceCommand(action);
       break;
     }
+    case "update": {
+      const { selfUpdate } = await import("./updater");
+      await selfUpdate();
+      break;
+    }
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(`jin ${VERSION}`);
+      break;
     case "ui": {
       console.log("  Web dashboard coming soon. For now, use `jin list` and `jin analyze`.");
       break;
