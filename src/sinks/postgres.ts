@@ -1,16 +1,12 @@
+import { SQL } from "bun";
 import type { Sink, SinkConfig, PushPayload, PushResult } from "./types";
 
 /**
  * PostgreSQL sink.
  *
- * Uses the pg-compatible fetch approach via Bun's native TCP,
- * but for simplicity and zero-dependency, we use the Postgres
- * wire protocol over HTTP (Neon/Supabase) or a simple pg client.
- *
- * To keep this zero-dependency, we use the SQL-over-HTTP approach
- * that Neon, Supabase, and CockroachDB support. For self-hosted
- * Postgres, teams can use the webhook sink with a thin API in front,
- * or we can add a pg driver later.
+ * Supports two connection modes:
+ * 1. Standard postgres:// — uses Bun's built-in SQL driver (zero dependencies)
+ * 2. HTTP endpoints (Neon/Supabase) — uses SQL-over-HTTP via fetch
  */
 export class PostgresSink implements Sink {
   id = "postgres";
@@ -21,6 +17,7 @@ export class PostgresSink implements Sink {
   private messagesTable: string;
   private teamId: string;
   private developerId: string;
+  private conn: SQL | null = null;
 
   constructor(config: SinkConfig) {
     if (!config.connectionString) {
@@ -108,7 +105,19 @@ export class PostgresSink implements Sink {
     return { pushed, failed, errors };
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    if (this.conn) {
+      await this.conn.close();
+      this.conn = null;
+    }
+  }
+
+  private getConn(): SQL {
+    if (!this.conn) {
+      this.conn = new SQL(this.connectionString);
+    }
+    return this.conn;
+  }
 
   private async ensureTables(): Promise<void> {
     await this.query(`
@@ -166,7 +175,7 @@ export class PostgresSink implements Sink {
    *
    * Supports two modes:
    * 1. Neon/Supabase serverless HTTP (if connectionString is https://)
-   * 2. Standard pg wire protocol via subprocess (pg-native fallback)
+   * 2. Standard pg wire protocol via Bun's built-in SQL driver
    */
   private async query(sql: string, params?: unknown[]): Promise<unknown[]> {
     // For Neon serverless / Supabase — HTTP-based SQL
@@ -174,7 +183,7 @@ export class PostgresSink implements Sink {
       return this.queryHttp(sql, params);
     }
 
-    // For standard postgres:// connections, use psql subprocess
+    // For standard postgres:// connections, use Bun's built-in SQL driver
     return this.queryPsql(sql, params);
   }
 
@@ -194,39 +203,9 @@ export class PostgresSink implements Sink {
     return result.rows || [];
   }
 
-  private async queryPsql(sql: string, params?: unknown[]): Promise<unknown[]> {
-    // Interpolate params for psql (simple approach — for production, use a proper pg client)
-    let interpolated = sql;
-    if (params) {
-      for (let i = 0; i < params.length; i++) {
-        const val = params[i];
-        const escaped = val === null || val === undefined
-          ? "NULL"
-          : typeof val === "number" || typeof val === "boolean"
-            ? String(val)
-            : `'${String(val).replace(/'/g, "''")}'`;
-        interpolated = interpolated.replace(`$${i + 1}`, escaped);
-      }
-    }
-
-    const proc = Bun.spawn(["psql", this.connectionString, "-t", "-A", "-c", interpolated], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-      throw new Error(`psql error: ${stderr.slice(0, 200)}`);
-    }
-
-    // Parse psql output (pipe-delimited)
-    return stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => line.split("|"));
+  private async queryPsql(query: string, params?: unknown[]): Promise<unknown[]> {
+    const db = this.getConn();
+    const rows = await db.unsafe(query, params as any[]);
+    return Array.from(rows);
   }
 }

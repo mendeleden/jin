@@ -47,7 +47,9 @@ function usage(): void {
     jin update                       Self-update to latest version
     jin rollback                     Revert to previous version
     jin version                      Show version
-    jin ui                           Launch local web dashboard
+    jin ui [--port=4000] [--dev] [--no-open]
+                                     Launch local web dashboard
+    jin tui                          Terminal UI dashboard
 
   Sinks (output destinations):
     webhook    — POST to any HTTP endpoint
@@ -191,7 +193,17 @@ async function main(): Promise<void> {
       console.log(`jin ${VERSION}`);
       break;
     case "ui": {
-      console.log("  Web dashboard coming soon. For now, use `jin list` and `jin analyze`.");
+      const { startServer } = await import("./api/server");
+      await startServer({
+        port: flags.port ? parseInt(flags.port as string) : 4000,
+        dev: !!flags.dev,
+        open: !flags["no-open"],
+      });
+      break;
+    }
+    case "tui": {
+      const { launchTui } = await import("./tui/app");
+      await launchTui();
       break;
     }
     case "help":
