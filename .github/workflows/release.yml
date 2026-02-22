@@ -37,7 +37,10 @@ jobs:
 
       - run: bun install
 
-      - name: Build
+      - name: Build dashboard
+        run: cd dashboard && bun install && bun run build
+
+      - name: Build binary
         run: bun build ./src/index.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }}
 
       - name: Upload artifact

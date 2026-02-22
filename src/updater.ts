@@ -11,7 +11,7 @@ const PID_FILE = join(configDir(), "jin.pid");
 const BACKUP_PATH_FILE = join(configDir(), "jin.bak.path");
 
 // Embedded at build time — bump in package.json
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 
 interface GithubRelease {
   tag_name: string;
