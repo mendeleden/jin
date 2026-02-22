@@ -21,7 +21,8 @@ jobs:
           - os: macos-latest
             target: bun-darwin-arm64
             artifact: jin-darwin-arm64
-          - os: macos-13
+          # Cross-compile darwin-x64 from macOS ARM (macos-13 is deprecated)
+          - os: macos-latest
             target: bun-darwin-x64
             artifact: jin-darwin-x64
 

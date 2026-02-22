@@ -45,6 +45,7 @@ function usage(): void {
     jin team-config --type=<sink> ... Generate team onboarding code
     jin setup-skills                  Register /jin in Claude Code, Gemini CLI, Codex
     jin update                       Self-update to latest version
+    jin rollback                     Revert to previous version
     jin version                      Show version
     jin ui                           Launch local web dashboard
 
@@ -177,6 +178,11 @@ async function main(): Promise<void> {
     case "update": {
       const { selfUpdate } = await import("./updater");
       await selfUpdate();
+      break;
+    }
+    case "rollback": {
+      const { rollback } = await import("./updater");
+      await rollback();
       break;
     }
     case "version":
