@@ -11,7 +11,7 @@ const PID_FILE = join(configDir(), "jin.pid");
 const BACKUP_PATH_FILE = join(configDir(), "jin.bak.path");
 
 // Embedded at build time — bump in package.json
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
 
 interface GithubRelease {
   tag_name: string;
@@ -174,84 +174,176 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
   }
 }
 
+// ANSI helpers
+const c = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  blue: "\x1b[34m",
+  cyan: "\x1b[36m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  magenta: "\x1b[35m",
+  bgBlue: "\x1b[44m",
+  white: "\x1b[37m",
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function progressBar(pct: number, width = 30): string {
+  const filled = Math.round(pct * width);
+  const empty = width - filled;
+  const bar = `${c.cyan}${"█".repeat(filled)}${c.dim}${"░".repeat(empty)}${c.reset}`;
+  return bar;
+}
+
 export async function selfUpdate(): Promise<boolean> {
   const log = (msg: string) => console.log(`  ${msg}`);
 
-  log(`Current: ${VERSION}`);
-  log("Checking...");
+  console.log("");
+  log(`${c.blue}${c.bold}jin${c.reset} ${c.dim}self-update${c.reset}`);
+  log(`${c.dim}current  ${c.reset}${c.cyan}v${VERSION}${c.reset}  ${c.dim}(${getPlatformArtifact()})${c.reset}`);
+  console.log("");
 
+  // Check phase
+  process.stdout.write(`  ${c.dim}checking github...${c.reset}`);
   const check = await checkForUpdate();
+  process.stdout.write("\r\x1b[K"); // clear line
+
   if (!check) {
-    log("Could not reach GitHub.");
+    log(`${c.red}✗${c.reset} Could not reach GitHub.`);
     return false;
   }
 
   if (!check.available) {
-    log(`Already on latest (${VERSION}).`);
+    log(`${c.green}✓${c.reset} Already on latest ${c.cyan}v${VERSION}${c.reset}`);
+    console.log("");
     return false;
   }
 
   if (!check.url) {
-    log(`${check.latest} available but no binary for this platform.`);
-    log(`https://github.com/${REPO}/releases/tag/v${check.latest}`);
+    log(`${c.yellow}!${c.reset} ${c.bold}v${check.latest}${c.reset} available but no binary for ${getPlatformArtifact()}`);
+    log(`${c.dim}  https://github.com/${REPO}/releases/tag/v${check.latest}${c.reset}`);
     return false;
   }
 
-  // Show changelog
+  // Version banner
+  log(`${c.green}✓${c.reset} Update available`);
   console.log("");
-  log(`\x1b[1m${VERSION} -> ${check.latest}\x1b[0m`);
+  log(`  ${c.dim}${VERSION}${c.reset}  ${c.yellow}→${c.reset}  ${c.green}${c.bold}${check.latest}${c.reset}`);
+  console.log("");
+
+  // Changelog
   if (check.changelog) {
-    console.log("");
-    console.log(formatChangelog(check.changelog));
-    console.log("");
+    const lines = check.changelog.split("\n")
+      .map(l => l.replace(/^#+\s*/, "").trim())
+      .filter(l => l.length > 0)
+      .slice(0, 10);
+    if (lines.length > 0) {
+      log(`${c.dim}─── changelog ───${c.reset}`);
+      for (const line of lines) {
+        log(`${c.dim}  ${line}${c.reset}`);
+      }
+      log(`${c.dim}─────────────────${c.reset}`);
+      console.log("");
+    }
   }
 
-  // Download
-  log(`Downloading ${getPlatformArtifact()}...`);
+  // Download with progress
+  const artifact = getPlatformArtifact();
+  log(`${c.cyan}↓${c.reset} Downloading ${c.bold}${artifact}${c.reset}`);
+
+  const startTime = Date.now();
   const resp = await fetch(check.url);
   if (!resp.ok) {
-    log(`Download failed: ${resp.status}`);
+    log(`${c.red}✗${c.reset} Download failed: ${resp.status}`);
     return false;
   }
 
-  const data = await resp.arrayBuffer();
+  const contentLength = parseInt(resp.headers.get("content-length") || "0");
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  if (resp.body) {
+    const reader = resp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (contentLength > 0) {
+        const pct = received / contentLength;
+        const bar = progressBar(pct);
+        process.stdout.write(
+          `\r  ${bar} ${c.bold}${(pct * 100).toFixed(0)}%${c.reset} ${c.dim}${formatBytes(received)} / ${formatBytes(contentLength)}${c.reset}`
+        );
+      } else {
+        process.stdout.write(`\r  ${c.dim}${formatBytes(received)} downloaded...${c.reset}`);
+      }
+    }
+  }
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  process.stdout.write("\r\x1b[K"); // clear progress line
+
+  // Combine chunks
+  const totalSize = chunks.reduce((a, c) => a + c.length, 0);
+  const data = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const speed = totalSize / (parseFloat(elapsed) || 1);
+  log(`${c.green}✓${c.reset} Downloaded ${c.bold}${formatBytes(totalSize)}${c.reset} in ${c.cyan}${elapsed}s${c.reset} ${c.dim}(${formatBytes(speed)}/s)${c.reset}`);
+
+  // Install phase
   const binPath = process.execPath;
   const tmpPath = binPath + ".update";
   const backupPath = binPath + ".bak";
 
   try {
-    // Write new binary
+    process.stdout.write(`  ${c.dim}installing...${c.reset}`);
+
     await Bun.write(tmpPath, data);
     chmodSync(tmpPath, 0o755);
 
-    // Keep one rollback: current -> .bak, new -> current
     if (existsSync(backupPath)) {
       try { require("fs").unlinkSync(backupPath); } catch {}
     }
     renameSync(binPath, backupPath);
     renameSync(tmpPath, binPath);
 
-    // Record backup path for rollback
     await Bun.write(BACKUP_PATH_FILE, backupPath);
 
-    log(`Binary updated at ${binPath}`);
-    log(`\x1b[2mRollback: jin rollback\x1b[0m`);
+    process.stdout.write("\r\x1b[K");
+    log(`${c.green}✓${c.reset} Installed to ${c.dim}${binPath}${c.reset}`);
+    log(`${c.dim}  rollback: ${c.reset}${c.yellow}jin rollback${c.reset}`);
   } catch (err) {
-    log(`Update failed: ${err}`);
-    // Try to restore from backup
+    process.stdout.write("\r\x1b[K");
+    log(`${c.red}✗${c.reset} Install failed: ${err}`);
     if (existsSync(backupPath) && !existsSync(binPath)) {
       renameSync(backupPath, binPath);
-      log("Restored previous version.");
+      log(`${c.yellow}↩${c.reset} Restored previous version.`);
     }
     return false;
   }
 
-  // Auto-restart if running
+  // Auto-restart
   const runState = detectRunState();
   if (runState !== "none") {
     console.log("");
     await restartRunning(runState, log);
   }
+
+  console.log("");
+  log(`${c.green}${c.bold}✓ jin v${check.latest} ready${c.reset}`);
+  console.log("");
 
   return true;
 }

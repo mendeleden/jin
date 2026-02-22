@@ -47,8 +47,10 @@ function usage(): void {
     jin update                       Self-update to latest version
     jin rollback                     Revert to previous version
     jin version                      Show version
-    jin ui [--port=4000] [--dev] [--no-open]
-                                     Launch local web dashboard
+    jin ui [--port=4000] [--dev]     Launch dashboard (foreground)
+    jin ui start [--port=4000]       Start dashboard in background
+    jin ui stop                      Stop background dashboard
+    jin ui status                    Show dashboard status
     jin tui                          Terminal UI dashboard
 
   Sinks (output destinations):
@@ -193,12 +195,26 @@ async function main(): Promise<void> {
       console.log(`jin ${VERSION}`);
       break;
     case "ui": {
-      const { startServer } = await import("./api/server");
-      await startServer({
-        port: flags.port ? parseInt(flags.port as string) : 4000,
-        dev: !!flags.dev,
-        open: !flags["no-open"],
-      });
+      const subcommand = args[1];
+      const port = flags.port ? parseInt(flags.port as string) : 4000;
+      if (subcommand === "start") {
+        const { startDetached } = await import("./api/server");
+        await startDetached({ port });
+      } else if (subcommand === "stop") {
+        const { stopServer } = await import("./api/server");
+        stopServer();
+      } else if (subcommand === "status") {
+        const { serverStatus } = await import("./api/server");
+        serverStatus();
+      } else {
+        // Default: foreground mode (like Prisma Studio)
+        const { startServer } = await import("./api/server");
+        await startServer({
+          port,
+          dev: !!flags.dev,
+          open: !flags["no-open"],
+        });
+      }
       break;
     }
     case "tui": {

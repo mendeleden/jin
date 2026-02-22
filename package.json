@@ -1,6 +1,6 @@
 {
   "name": "jin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build ./src/index.ts --compile --outfile jin",
+    "build": "bun run scripts/embed-spa.ts && bun build ./src/index.ts --compile --outfile jin",
+    "build:dashboard": "cd dashboard && bun install && bun run build && cd .. && bun run scripts/embed-spa.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

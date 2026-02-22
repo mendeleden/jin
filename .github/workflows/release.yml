@@ -40,6 +40,9 @@ jobs:
       - name: Build dashboard
         run: cd dashboard && bun install && bun run build
 
+      - name: Embed dashboard in source
+        run: bun run scripts/embed-spa.ts
+
       - name: Build binary
         run: bun build ./src/index.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }}
 
