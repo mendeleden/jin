@@ -17,8 +17,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const { isServiceActive, isDaemonRunning, isServiceInstalled } = await import("../runguard");
 
   // Block if OS service is running — but not if WE are the service
-  // systemd sets INVOCATION_ID and JOURNAL_STREAM for managed processes
-  const launchedByService = !!(process.env.INVOCATION_ID || process.env.JOURNAL_STREAM);
+  // JIN_LAUNCHED_BY_SERVICE is set in both the systemd unit and launchd plist
+  const launchedByService = !!(process.env.JIN_LAUNCHED_BY_SERVICE || process.env.INVOCATION_ID || process.env.JOURNAL_STREAM);
   if (!launchedByService && isServiceActive()) {
     console.log(`  jin is already running as an OS service.`);
     console.log(`  Use \`jin service uninstall\` to remove it first, or \`jin service status\` for details.`);

@@ -43,6 +43,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=JIN_LAUNCHED_BY_SERVICE=1
 ExecStart=${binPath} watch
 Restart=on-failure
 RestartSec=5s
@@ -163,6 +164,12 @@ function launchdPlist(binPath: string): string {
 
     <key>StandardErrorPath</key>
     <string>${join(logDir, "jin.err.log")}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>JIN_LAUNCHED_BY_SERVICE</key>
+        <string>1</string>
+    </dict>
 
     <key>WorkingDirectory</key>
     <string>${HOME}</string>

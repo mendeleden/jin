@@ -1,5 +1,7 @@
 {
-  "outputDirectory": "public",
+  "buildCommand": "bun run docs:build",
+  "outputDirectory": "docs/.vitepress/dist",
+  "installCommand": "bun install",
   "headers": [
     {
       "source": "/install.sh",
@@ -8,5 +10,8 @@
         { "key": "Cache-Control", "value": "public, max-age=300" }
       ]
     }
+  ],
+  "rewrites": [
+    { "source": "/install.sh", "destination": "/install.sh" }
   ]
 }

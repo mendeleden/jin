@@ -43,6 +43,7 @@ function usage(): void {
     jin export [--format=json|markdown] [--output=dir]
                                      Export sessions to files
     jin team-config --type=<sink> ... Generate team onboarding code
+    jin setup-skills                  Register /jin in Claude Code, Gemini CLI, Codex
     jin update                       Self-update to latest version
     jin version                      Show version
     jin ui                           Launch local web dashboard
@@ -70,7 +71,7 @@ async function main(): Promise<void> {
   switch (command) {
     case "init": {
       const { initCommand } = await import("./commands/init");
-      await initCommand({ team: flags.team as string | undefined });
+      await initCommand({ team: flags.team as string | undefined, json: !!flags.json });
       break;
     }
     case "watch": {
@@ -166,6 +167,11 @@ async function main(): Promise<void> {
       const { serviceCommand } = await import("./commands/service");
       const action = args[1];
       await serviceCommand(action);
+      break;
+    }
+    case "setup-skills": {
+      const { setupSkillsCommand } = await import("./commands/setup-skills");
+      await setupSkillsCommand();
       break;
     }
     case "update": {
