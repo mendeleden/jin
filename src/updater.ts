@@ -11,7 +11,7 @@ const PID_FILE = join(configDir(), "jin.pid");
 const BACKUP_PATH_FILE = join(configDir(), "jin.bak.path");
 
 // Embedded at build time — bump in package.json
-export const VERSION = "0.1.5";
+export const VERSION = "0.1.6";
 
 interface GithubRelease {
   tag_name: string;
@@ -202,7 +202,7 @@ function progressBar(pct: number, width = 30): string {
   return bar;
 }
 
-export async function selfUpdate(): Promise<boolean> {
+export async function selfUpdate(opts?: { quiet?: boolean }): Promise<boolean> {
   const log = (msg: string) => console.log(`  ${msg}`);
 
   console.log("");
@@ -343,9 +343,92 @@ export async function selfUpdate(): Promise<boolean> {
 
   console.log("");
   log(`${c.green}${c.bold}✓ jin v${check.latest} ready${c.reset}`);
-  console.log("");
+
+  // Live tail of service re-ingestion
+  if (runState !== "none" && !opts?.quiet) {
+    console.log("");
+    await tailServiceLog(log);
+  } else {
+    console.log("");
+  }
 
   return true;
+}
+
+/** Tail the service log after restart, showing ingestion progress until Enter or timeout */
+async function tailServiceLog(log: (msg: string) => void): Promise<void> {
+  const logPath = join(configDir(), "jin.log");
+  if (!existsSync(logPath)) return;
+
+  log(`${c.dim}─── service log (press Enter to detach) ───${c.reset}`);
+  console.log("");
+
+  // Get current file size as our starting offset
+  const { statSync: fstatSync } = require("fs");
+  let offset = fstatSync(logPath).size;
+  let done = false;
+  let ingestionComplete = false;
+
+  // Listen for Enter key
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.once("data", () => {
+      done = true;
+    });
+  }
+
+  // Poll the log file for new lines
+  const MAX_WAIT = 60_000; // give up after 60s
+  const start = Date.now();
+
+  while (!done && Date.now() - start < MAX_WAIT) {
+    await Bun.sleep(300);
+
+    try {
+      const stat = fstatSync(logPath);
+      if (stat.size <= offset) continue;
+
+      const fd = require("fs").openSync(logPath, "r");
+      const buf = Buffer.alloc(stat.size - offset);
+      require("fs").readSync(fd, buf, 0, buf.length, offset);
+      require("fs").closeSync(fd);
+      offset = stat.size;
+
+      const newLines = buf.toString("utf-8").split("\n").filter(Boolean);
+      for (const line of newLines) {
+        // Show relevant lines with nice formatting
+        const stripped = line.replace(/^\[[\d\s:-]+\]\s*/, "");
+        if (stripped.startsWith("Initial ingest")) {
+          log(`${c.cyan}↻${c.reset} ${c.dim}Re-ingesting data...${c.reset}`);
+        } else if (stripped.startsWith("Ingested ")) {
+          log(`${c.green}✓${c.reset} ${stripped}`);
+          ingestionComplete = true;
+        } else if (stripped.startsWith("Watching for changes")) {
+          log(`${c.green}✓${c.reset} ${c.dim}Service ready.${c.reset}`);
+          done = true;
+        } else if (stripped.startsWith("Sink connected")) {
+          log(`${c.dim}  ${stripped}${c.reset}`);
+        } else if (stripped.startsWith("Update available")) {
+          // skip, we just updated
+        }
+      }
+    } catch {
+      // file read error, just continue
+    }
+  }
+
+  // Cleanup stdin
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  }
+
+  if (!ingestionComplete && !done) {
+    log(`${c.dim}Timed out waiting for ingestion. Check \`jin status\` or service logs.${c.reset}`);
+  }
+
+  console.log("");
 }
 
 /** Rollback to the previous version */
