@@ -150,13 +150,14 @@ export class Store {
     this.db.run(
       `INSERT INTO sessions (id, adapter_id, adapter_name, name, created_at, updated_at,
         duration_ms, is_active, total_tokens, est_cost, message_count, source_path,
-        is_sub_agent, metadata, ingested_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_sub_agent, parent_session_id, metadata, ingested_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
         name=excluded.name, updated_at=excluded.updated_at,
         duration_ms=excluded.duration_ms, is_active=excluded.is_active,
         total_tokens=excluded.total_tokens, est_cost=excluded.est_cost,
         message_count=excluded.message_count, source_path=excluded.source_path,
+        is_sub_agent=excluded.is_sub_agent, parent_session_id=excluded.parent_session_id,
         metadata=excluded.metadata, ingested_at=excluded.ingested_at`,
       [
         session.id,
@@ -172,6 +173,7 @@ export class Store {
         session.messageCount,
         session.sourcePath,
         session.isSubAgent ? 1 : 0,
+        session.parentSessionId || "",
         JSON.stringify(session.metadata),
         new Date().toISOString(),
       ]
@@ -486,6 +488,33 @@ export class Store {
       params.push(opts.limit);
     }
     return this.db.prepare(query).all(...params) as any[];
+  }
+
+  // --- Sub-agent relationships ---
+
+  /** Get child sessions (sub-agents/tasks) of a parent session */
+  getChildSessions(parentId: string): Session[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM sessions WHERE parent_session_id = ? ORDER BY created_at ASC`
+    ).all(parentId) as any[];
+    return rows.map(rowToSession);
+  }
+
+  /** Get the full session tree: parent + all descendants */
+  getSessionTree(sessionId: string): { parent: Session | null; children: Session[] } {
+    const session = this.getSession(sessionId);
+    if (!session) return { parent: null, children: [] };
+
+    // If this is a sub-agent, find the parent
+    let parent: Session | null = null;
+    if (session.parentSessionId) {
+      parent = this.getSession(session.parentSessionId);
+    }
+
+    // Find direct children
+    const children = this.getChildSessions(sessionId);
+
+    return { parent, children };
   }
 
   // --- Artifacts ---

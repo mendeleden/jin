@@ -35,12 +35,24 @@ export default function SessionTable({ sessions, compact }: SessionTableProps) {
           {sessions.map((s) => (
             <tr key={s.id} className="hover:bg-zinc-800/30 transition-colors">
               <td className="py-2.5 pr-4 max-w-xs">
-                <Link
-                  to={`/sessions/${s.id}`}
-                  className="text-zinc-200 hover:text-jin-400 transition-colors truncate block"
-                >
-                  {s.name || s.id.slice(0, 12)}
-                </Link>
+                <div className="flex items-center gap-1.5">
+                  <Link
+                    to={`/sessions/${s.id}`}
+                    className="text-zinc-200 hover:text-jin-400 transition-colors truncate"
+                  >
+                    {s.name || s.id.slice(0, 12)}
+                  </Link>
+                  {!!s.is_sub_agent && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 whitespace-nowrap">
+                      sub-agent
+                    </span>
+                  )}
+                  {!!s.is_active && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 whitespace-nowrap">
+                      active
+                    </span>
+                  )}
+                </div>
                 {s.tag_names && (
                   <div className="flex gap-1 mt-1 flex-wrap">
                     {s.tag_names.split(",").slice(0, 3).map((t) => (

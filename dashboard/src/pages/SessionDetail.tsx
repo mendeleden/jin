@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSession } from "@/lib/api";
+import type { SessionSummary } from "@/lib/api";
 import { formatCost, formatTokens, formatDuration, timeAgo, adapterColor } from "@/lib/utils";
 import MessageThread from "@/components/MessageThread";
 import TagBadge from "@/components/TagBadge";
@@ -28,7 +29,7 @@ export default function SessionDetail() {
     );
   }
 
-  const { session: s, messages, tags } = data;
+  const { session: s, messages, tags, parent, children } = data;
 
   return (
     <div className="space-y-6">
@@ -69,6 +70,15 @@ export default function SessionDetail() {
         </div>
       </div>
 
+      {/* Session tree: parent + children */}
+      {(parent || children.length > 0) && (
+        <SessionTree
+          current={s}
+          parent={parent}
+          children={children}
+        />
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="rounded border border-zinc-800 px-3 py-2">
@@ -100,6 +110,85 @@ export default function SessionDetail() {
         </h3>
         <MessageThread messages={messages} />
       </div>
+    </div>
+  );
+}
+
+function SessionTree({
+  current,
+  parent,
+  children,
+}: {
+  current: { id: string; name: string };
+  parent: SessionSummary | null;
+  children: SessionSummary[];
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+      <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">
+        Session Tree
+      </h3>
+      <div className="space-y-1 text-sm">
+        {/* Parent */}
+        {parent && (
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-600 w-5 text-center">↑</span>
+            <Link
+              to={`/sessions/${parent.id}`}
+              className="text-zinc-300 hover:text-jin-400 transition-colors truncate"
+            >
+              {parent.name || parent.id.slice(0, 16)}
+            </Link>
+            <span className="text-[10px] text-zinc-500">parent</span>
+            <span className="text-[10px] text-zinc-600">
+              {parent.messageCount} msgs · {formatTokens(parent.totalTokens)} · {formatCost(parent.estCost)}
+            </span>
+          </div>
+        )}
+
+        {/* Current (highlighted) */}
+        <div className="flex items-center gap-2">
+          <span className="text-jin-400 w-5 text-center">●</span>
+          <span className="text-zinc-100 font-medium truncate">
+            {current.name || current.id.slice(0, 16)}
+          </span>
+          <span className="text-[10px] text-jin-400">current</span>
+        </div>
+
+        {/* Children */}
+        {children.map((child, i) => (
+          <div key={child.id} className="flex items-center gap-2">
+            <span className="text-zinc-600 w-5 text-center">
+              {i === children.length - 1 ? "└" : "├"}
+            </span>
+            <Link
+              to={`/sessions/${child.id}`}
+              className="text-zinc-300 hover:text-jin-400 transition-colors truncate"
+            >
+              {child.name || child.id.slice(0, 16)}
+            </Link>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400/80">
+              sub-agent
+            </span>
+            <span className="text-[10px] text-zinc-600">
+              {child.messageCount} msgs · {formatTokens(child.totalTokens)} · {formatCost(child.estCost)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Aggregate stats for children */}
+      {children.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-zinc-800 flex items-center gap-4 text-xs text-zinc-500">
+          <span>{children.length} sub-agent{children.length !== 1 ? "s" : ""}</span>
+          <span>
+            {formatTokens(children.reduce((a, c) => a + c.totalTokens, 0))} tokens total
+          </span>
+          <span>
+            {formatCost(children.reduce((a, c) => a + c.estCost, 0))} cost total
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -59,10 +59,29 @@ export interface SessionDetail {
     messageCount: number;
     sourcePath: string;
     isSubAgent: boolean;
+    parentSessionId: string;
     metadata: Record<string, unknown>;
   };
   messages: MessageItem[];
   tags: Array<{ name: string; category: string; color: string }>;
+  parent: SessionSummary | null;
+  children: SessionSummary[];
+}
+
+export interface SessionSummary {
+  id: string;
+  name: string;
+  adapterId: string;
+  adapterName: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMs: number;
+  isActive: boolean;
+  totalTokens: number;
+  estCost: number;
+  messageCount: number;
+  isSubAgent: boolean;
+  parentSessionId: string;
 }
 
 export interface MessageItem {

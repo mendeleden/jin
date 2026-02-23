@@ -62,7 +62,8 @@ export function createRoutes(store: Store): Map<string, Handler> {
     if (!session) return json({ error: "Session not found" }, 404);
     const messages = store.getMessages(params.id);
     const tags = store.getSessionTags(params.id);
-    return json({ session, messages, tags });
+    const tree = store.getSessionTree(params.id);
+    return json({ session, messages, tags, parent: tree.parent, children: tree.children });
   });
 
   // --- Analytics ---
