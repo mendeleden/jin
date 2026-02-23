@@ -152,7 +152,11 @@ export class ClaudeCodeAdapter implements Adapter {
     } catch { /* skip unreadable files */ }
   }
 
-  async messages(sessionId: string): Promise<Message[]> {
+  async messages(sessionId: string, sourcePath?: string): Promise<Message[]> {
+    // Fast path: use the known source path if available
+    if (sourcePath && existsSync(sourcePath)) {
+      return this.parseMessages(sourcePath);
+    }
     const filePath = await this.findSessionFile(sessionId);
     if (!filePath) return [];
     return this.parseMessages(filePath);
@@ -174,22 +178,39 @@ export class ClaudeCodeAdapter implements Adapter {
 
   private async findSessionFile(sessionId: string): Promise<string | null> {
     if (!existsSync(this.projectsDir)) return null;
+
+    const checkFile = async (filePath: string): Promise<boolean> => {
+      try {
+        const firstLine = (await Bun.file(filePath).text()).split("\n")[0];
+        if (!firstLine) return false;
+        const parsed = JSON.parse(firstLine);
+        return parsed.sessionId === sessionId || parsed.uuid === sessionId;
+      } catch { return false; }
+    };
+
     for (const projDir of readdirSync(this.projectsDir)) {
       const dirPath = join(this.projectsDir, projDir);
       try {
         if (!statSync(dirPath).isDirectory()) continue;
+
+        // Check top-level JSONL files
         for (const file of readdirSync(dirPath)) {
           if (!file.endsWith(".jsonl")) continue;
-          // Check if this file contains the session
           const filePath = join(dirPath, file);
-          const firstLine = (await Bun.file(filePath).text()).split("\n")[0];
-          if (!firstLine) continue;
+          if (await checkFile(filePath)) return filePath;
+        }
+
+        // Check nested subagent directories: <uuid>/subagents/agent-*.jsonl
+        for (const entry of readdirSync(dirPath)) {
+          const subagentsDir = join(dirPath, entry, "subagents");
           try {
-            const parsed = JSON.parse(firstLine);
-            if (parsed.sessionId === sessionId || parsed.uuid === sessionId) {
-              return filePath;
+            if (!statSync(subagentsDir).isDirectory()) continue;
+            for (const agentFile of readdirSync(subagentsDir)) {
+              if (!agentFile.endsWith(".jsonl")) continue;
+              const filePath = join(subagentsDir, agentFile);
+              if (await checkFile(filePath)) return filePath;
             }
-          } catch { continue; }
+          } catch { /* not a dir or no subagents */ }
         }
       } catch { continue; }
     }

@@ -12,8 +12,8 @@ export interface Adapter {
   /** List all sessions found for this tool. */
   sessions(): Promise<Session[]>;
 
-  /** Load all messages for a given session. */
-  messages(sessionId: string): Promise<Message[]>;
+  /** Load all messages for a given session. sourcePath is the known file location. */
+  messages(sessionId: string, sourcePath?: string): Promise<Message[]>;
 
   /** Return directories to watch for changes. */
   watchPaths(): string[];

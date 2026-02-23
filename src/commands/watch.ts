@@ -305,7 +305,7 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
       }
 
       try {
-        const messages = await adapter.messages(session.id);
+        const messages = await adapter.messages(session.id, session.sourcePath);
         if (messages.length > 0) {
           store.upsertMessages(session.id, messages);
           autoTagSession(store, session, messages);
