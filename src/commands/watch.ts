@@ -219,7 +219,7 @@ export async function watchCommand(opts: { daemon?: boolean; skipDeprecation?: b
 
 /** Fork to background */
 async function daemonize(): Promise<void> {
-  // For compiled binaries, resolve the real path on disk
+  // Resolve how to spawn ourselves
   const { realpathSync } = await import("fs");
   let exe: string;
   try {
@@ -228,9 +228,15 @@ async function daemonize(): Promise<void> {
     exe = process.execPath;
   }
 
+  // Detect if running as compiled binary or via bun
+  const isCompiled = !exe.endsWith("bun") && !exe.endsWith("node");
+  const cmd = isCompiled
+    ? [exe, "watch"]
+    : [exe, "run", process.argv[1], "watch"];
+
   const logFd = require("fs").openSync(LOG_FILE, "a");
 
-  const proc = Bun.spawn([exe, "watch"], {
+  const proc = Bun.spawn(cmd, {
     stdout: logFd,
     stderr: logFd,
     stdin: "ignore",
