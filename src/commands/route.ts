@@ -89,7 +89,7 @@ async function routeList(): Promise<void> {
 
   if (routes.length === 0) {
     console.log("  No routing rules configured.");
-    console.log("  All sessions push to all sinks (default behavior).");
+    console.log("  No sessions will be pushed to sinks until you add a route.");
     console.log("");
     console.log("  Add a route:");
     console.log("    jin route add --project=myapp --sink=team-postgres");

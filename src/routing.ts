@@ -16,8 +16,13 @@ export function sinksForSession(
   config: JinConfig,
   allSinks: Sink[],
 ): Sink[] {
-  if (!config.routes?.length) return allSinks; // no routing = push everywhere
+  // Explicit company opt-in: push everything everywhere
+  if (config.routeUnmatchedToAll) return allSinks;
 
+  // No routes configured = nothing gets pushed (opt-in only)
+  if (!config.routes?.length) return [];
+
+  // Check routes — first match wins
   const projects = store.getSessionProjects(session.id);
   for (const route of config.routes) {
     for (const project of projects) {
@@ -27,10 +32,9 @@ export function sinksForSession(
     }
   }
 
-  // No route matched — check policy
-  if (config.routeUnmatchedToAll) return allSinks; // company opt-in: push everywhere
+  // No route matched — use defaultSinks or don't push
   const defaults = config.defaultSinks || [];
-  if (defaults.length === 0) return []; // no default = local only, don't push
+  if (defaults.length === 0) return [];
   return allSinks.filter((s) => defaults.includes(s.id));
 }
 
