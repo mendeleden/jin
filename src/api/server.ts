@@ -28,6 +28,19 @@ export async function startServer(opts: {
   open?: boolean;
 }) {
   const port = opts.port || 4000;
+
+  // EADDRINUSE guard: check if background UI is already running
+  const existingPid = getRunningPid();
+  if (existingPid) {
+    const existingPort = getRunningPort() || 4000;
+    if (existingPort === port) {
+      console.log(`  Dashboard already running at http://localhost:${existingPort} (PID ${existingPid})`);
+      if (opts.open) openBrowser(`http://localhost:${existingPort}`);
+      return;
+    }
+    console.log(`  Note: Another dashboard running on port ${existingPort} (PID ${existingPid}).`);
+  }
+
   const config = await loadConfig();
   const store = new Store(config.store.dbPath);
   const routes = createRoutes(store);

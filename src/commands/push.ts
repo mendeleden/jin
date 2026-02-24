@@ -39,20 +39,6 @@ export async function pushCommand(opts: {
     );
   }
 
-  // Legacy: fall back to config.push
-  if (sinks.length === 0 && config.push?.endpoint) {
-    sinks.push(
-      createSink({
-        type: "webhook",
-        url: config.push.endpoint,
-        headers: config.push.headers,
-        batchSize: config.push.batchSize,
-        teamId: config.team?.teamId,
-        developerId: config.team?.developerId,
-      })
-    );
-  }
-
   if (sinks.length === 0) {
     console.error(
       "  No sinks configured. Use:\n" +

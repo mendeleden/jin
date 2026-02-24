@@ -1,9 +1,11 @@
 import { loadConfig, configDir } from "../config";
+import type { JinConfig } from "../config";
 import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { createSink } from "../sinks/registry";
 import { FileWatcher } from "../watcher";
 import { autoTagSession } from "../tagger";
+import { sinksForSession } from "../routing";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync } from "fs";
@@ -13,7 +15,7 @@ import { createHash } from "crypto";
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
-export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
+export async function watchCommand(opts: { daemon?: boolean; skipDeprecation?: boolean }): Promise<void> {
   const { isServiceActive, isDaemonRunning, isServiceInstalled } = await import("../runguard");
 
   // Block if OS service is running — but not if WE are the service
@@ -25,27 +27,32 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     process.exit(1);
   }
 
-  // Daemon mode: fork to background
+  // Daemon mode: fork to background (used internally by startCommand)
   if (opts.daemon) {
-    // Check if already running before forking
+    if (!opts.skipDeprecation) {
+      // User ran `jin watch --daemon` directly — redirect to `jin start`
+      console.log('  "jin watch --daemon" has been replaced by "jin start".\n');
+      const { startCommand } = await import("./start");
+      return startCommand({});
+    }
+
+    // Internal call from startCommand
     if (isRunning()) {
       const pid = readFileSync(PID_FILE, "utf-8").trim();
-      console.log(`  jin is already running (PID ${pid}). Use \`jin stop\` first.`);
-      process.exit(1);
+      console.log(`  Watcher already running (PID ${pid}).`);
+      return;
     }
-    // Warn if service is installed but not active (could start on reboot)
     if (isServiceInstalled()) {
-      console.log(`  Warning: jin OS service is installed but not active.`);
-      console.log(`  The service may start on reboot and conflict with this daemon.`);
-      console.log(`  Consider using \`jin service install\` instead, or \`jin service uninstall\` to remove it.\n`);
+      console.log(`  Note: OS service is installed but not active.`);
+      console.log(`  Consider \`jin start --service\` instead.\n`);
     }
     return daemonize();
   }
 
-  // Check if already running
+  // Foreground mode: error if daemon is already running
   if (isRunning()) {
     const pid = readFileSync(PID_FILE, "utf-8").trim();
-    console.log(`  jin is already running (PID ${pid}). Use \`jin stop\` first.`);
+    console.log(`  jin is already running (PID ${pid}). Stop it first with \`jin stop\`.`);
     process.exit(1);
   }
 
@@ -68,9 +75,10 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   // Set up sinks
   const sinks: Sink[] = [];
-  for (const sinkConfig of config.sinks || []) {
+  for (let i = 0; i < (config.sinks || []).length; i++) {
+    const sinkConfig = config.sinks[i];
     try {
-      const sink = createSink(sinkConfig);
+      const sink = createSink(sinkConfig, i);
       const health = await sink.healthCheck();
       if (health.ok) {
         sinks.push(sink);
@@ -133,7 +141,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   // Initial push
   if (sinks.length > 0 && changedSessions.size > 0) {
-    await pushToSinks(store, sinks, changedSessions, log);
+    await pushToSinks(store, sinks, changedSessions, config, log);
   }
 
   log("Watching for changes... (Ctrl+C to stop)");
@@ -152,7 +160,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       if (pendingPush.size === 0) return;
       const ids = new Set(pendingPush);
       pendingPush.clear();
-      await pushToSinks(store, sinks, ids, log);
+      await pushToSinks(store, sinks, ids, config, log);
     }, PUSH_DEBOUNCE_MS);
   };
 
@@ -247,24 +255,33 @@ async function daemonize(): Promise<void> {
   proc.unref();
 }
 
-/** Push changed sessions to all sinks */
+/** Push changed sessions to sinks, respecting per-project routing */
 async function pushToSinks(
   store: Store,
   sinks: Sink[],
   sessionIds: Set<string>,
+  config: JinConfig,
   log: (msg: string) => void
 ): Promise<void> {
-  const payloads: PushPayload[] = [];
+  // Group payloads by which sinks they should go to
+  const sinkPayloads = new Map<Sink, PushPayload[]>();
+
   for (const id of sessionIds) {
     const session = store.getSession(id);
     if (!session) continue;
     const messages = store.getMessages(id);
-    payloads.push({ session, messages });
+    const payload: PushPayload = { session, messages };
+
+    // Determine which sinks this session routes to
+    const targetSinks = sinksForSession(session, store, config, sinks);
+    for (const sink of targetSinks) {
+      if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
+      sinkPayloads.get(sink)!.push(payload);
+    }
   }
 
-  if (payloads.length === 0) return;
-
-  for (const sink of sinks) {
+  for (const [sink, payloads] of sinkPayloads) {
+    if (payloads.length === 0) continue;
     try {
       const result = await sink.push(payloads);
       log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);

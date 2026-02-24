@@ -3,11 +3,24 @@ import { join } from "path";
 import { homedir } from "os";
 import type { SinkConfig } from "./sinks/types";
 
+export interface RouteMatch {
+  project?: string;   // matches project name (case-insensitive)
+  remote?: string;    // glob against git remote URL
+  directory?: string; // glob against project directory path
+}
+
+export interface RouteConfig {
+  match: RouteMatch;
+  sinks: string[];    // sink IDs to route to
+}
+
 export interface JinConfig {
   adapters: Record<string, AdapterConfig>;
   sinks: SinkConfig[];
+  routes?: RouteConfig[];       // per-project sink routing rules
+  defaultSinks?: string[];      // sink IDs for sessions matching no route (empty = local only)
+  routeUnmatchedToAll?: boolean; // if true, unmatched sessions push to ALL sinks (company opt-in)
   team?: TeamConfig;
-  push?: PushConfig; // legacy, maps to webhook sink
   store: StoreConfig;
   watch: WatchConfig;
 }
@@ -22,12 +35,6 @@ export interface TeamConfig {
   developerId: string;
   syncMode: "realtime" | "periodic" | "manual";
   syncIntervalMs?: number; // for periodic mode
-}
-
-export interface PushConfig {
-  endpoint: string;
-  headers?: Record<string, string>;
-  batchSize: number;
 }
 
 export interface StoreConfig {
@@ -69,7 +76,6 @@ export function defaultConfig(): JinConfig {
     },
     sinks: [],
     team: undefined,
-    push: undefined,
     store: {
       dbPath: DEFAULT_DB_PATH,
       rawDir: DEFAULT_RAW_DIR,

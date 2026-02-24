@@ -370,6 +370,26 @@ export class Store {
     `);
   }
 
+  getSessionProjects(sessionId: string): Array<{
+    id: string;
+    name: string;
+    directory?: string;
+    gitRemote?: string;
+  }> {
+    const rows = this.db.prepare(
+      `SELECT p.id, p.name, p.directory, p.git_remote
+       FROM projects p
+       JOIN session_projects sp ON sp.project_id = p.id
+       WHERE sp.session_id = ?`
+    ).all(sessionId) as any[];
+    return rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      directory: r.directory || undefined,
+      gitRemote: r.git_remote || undefined,
+    }));
+  }
+
   listProjects(): any[] {
     return this.db.prepare(
       `SELECT p.*, GROUP_CONCAT(DISTINCT s.adapter_id) as tools

@@ -9,14 +9,21 @@ const SINK_FACTORIES: Record<string, (config: SinkConfig) => Sink> = {
   s3: (c) => new S3Sink(c),
 };
 
-export function createSink(config: SinkConfig): Sink {
+export function createSink(config: SinkConfig, index?: number): Sink {
   const factory = SINK_FACTORIES[config.type];
   if (!factory) {
     throw new Error(
       `Unknown sink type: "${config.type}". Available: ${Object.keys(SINK_FACTORIES).join(", ")}`
     );
   }
-  return factory(config);
+  const sink = factory(config);
+  // Override id with config-level id, or auto-generate from type + index
+  if (config.id) {
+    sink.id = config.id;
+  } else if (index !== undefined) {
+    sink.id = `${config.type}-${index}`;
+  }
+  return sink;
 }
 
 export function availableSinks(): string[] {

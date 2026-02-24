@@ -26,65 +26,142 @@ function usage(): void {
   console.log(`
   jin v${VERSION} — conversation data pipeline for agentic coding tools
 
-  Usage:
-    jin init [--team=<code>]         Detect tools, connect to team infra
-    jin watch [--daemon]             Watch + ingest + sync to sinks
-    jin status                       Show daemon status + stats
-    jin stop                         Stop the background daemon
-    jin service install|uninstall|status
-                                     OS service (survives reboot)
-    jin list  [--adapter=X] [--since=24h] [--limit=50]
-                                     List ingested sessions
-    jin show  <session-id> [--markdown]
-                                     Show a session's messages
-    jin analyze [--adapter=X]        Token/cost analysis
-    jin ingest                       One-shot ingest from all detected tools
-    jin push  [--endpoint=URL]       Push sessions to configured sinks
-    jin export [--format=json|markdown] [--output=dir]
-                                     Export sessions to files
-    jin team-config --type=<sink> ... Generate team onboarding code
-    jin setup-skills                  Register /jin in Claude Code, Gemini CLI, Codex
-    jin update [--quiet]             Self-update to latest version
-    jin rollback                     Revert to previous version
-    jin version                      Show version
-    jin ui [--port=4000] [--dev]     Launch dashboard (foreground)
-    jin ui start [--port=4000]       Start dashboard in background
-    jin ui stop                      Stop background dashboard
-    jin ui status                    Show dashboard status
-    jin tui                          Terminal UI dashboard
+  Setup:
+    init [--team=<code>]               Detect tools, configure sinks
+    setup-skills                       Register /jin in AI coding tools
 
-  Sinks (output destinations):
-    webhook    — POST to any HTTP endpoint
-    postgres   — Insert into PostgreSQL (Neon, Supabase, self-hosted)
-    s3         — Upload to S3, R2, MinIO, GCS
+  Running:
+    start [--service|--ui|--all]       Start watcher in background
+    watch                              Watch + ingest (foreground)
+    stop [--watcher|--ui]              Stop all running components
+    restart                            Restart watcher
+    status [--json|--short]            Status of all components
 
-  Adapters (input sources):
-    claude-code, cursor, codex, warp, gemini-cli,
-    kiro, amp, opencode, pi, piagent
+  Dashboard:
+    ui [--port=4000]                   Web dashboard (foreground)
+    ui start [--port=4000]             Start dashboard in background
+    ui stop                            Stop background dashboard
+    tui                                Terminal UI
 
-  Team setup:
-    1. Team lead runs:  jin team-config --type=postgres --connection-string=... --team-id=myteam
-    2. Outputs a code:  eyJzaW5rIjoicG9zdGdyZXMiLC4uLn0=
-    3. Devs run:        jin init --team=eyJzaW5rIjoicG9zdGdyZXMiLC4uLn0=
-    4. Then:            jin watch
+  Data:
+    list [--adapter=X] [--since=24h]   List sessions
+    show <id> [--markdown]             Show session messages
+    analyze [--adapter=X]              Token/cost analysis
+    ingest                             One-shot ingest
+    push [--endpoint=URL]              Push to sinks
+    export [--format=json|md]          Export sessions
 
+  Routing:
+    route list                         Show sink routing rules
+    route add --project=X --sink=Y     Route project to specific sink
+    route remove <index>               Remove a routing rule
+
+  Admin:
+    service install|uninstall|status   OS service (systemd/launchd)
+    team-config --type=<sink>          Generate team onboarding code
+    update [--quiet]                   Self-update
+    rollback                           Revert last update
+    version                            Show version
+
+  Quick start:  jin init && jin start && jin ui
   Config: ~/.config/jin/config.json
 `);
 }
 
 async function main(): Promise<void> {
   switch (command) {
+    // ── Lifecycle ──────────────────────────────────────────────────────
+    case "start":
+    case "up": {
+      const { startCommand } = await import("./commands/start");
+      await startCommand({
+        service: !!flags.service,
+        ui: !!flags.ui,
+        all: !!flags.all,
+        port: flags.port ? parseInt(flags.port as string) : undefined,
+      });
+      break;
+    }
+    case "stop":
+    case "down": {
+      const { stopCommand } = await import("./commands/stop");
+      await stopCommand({
+        watcher: !!flags.watcher,
+        ui: !!flags.ui,
+      });
+      break;
+    }
+    case "restart":
+    case "rs": {
+      const { restartCommand } = await import("./commands/start");
+      await restartCommand({
+        service: !!flags.service,
+        ui: !!flags.ui,
+        all: !!flags.all,
+        port: flags.port ? parseInt(flags.port as string) : undefined,
+      });
+      break;
+    }
+    case "status":
+    case "s": {
+      const { statusCommand } = await import("./commands/status");
+      await statusCommand({
+        json: !!flags.json,
+        short: !!flags.short,
+      });
+      break;
+    }
+
+    // ── Setup ──────────────────────────────────────────────────────────
     case "init": {
       const { initCommand } = await import("./commands/init");
       await initCommand({ team: flags.team as string | undefined, json: !!flags.json });
       break;
     }
+    case "setup-skills": {
+      const { setupSkillsCommand } = await import("./commands/setup-skills");
+      await setupSkillsCommand();
+      break;
+    }
+
+    // ── Interactive / Foreground ────────────────────────────────────────
     case "watch": {
       const { watchCommand } = await import("./commands/watch");
       await watchCommand({ daemon: !!flags.daemon });
       break;
     }
-    case "list": {
+    case "ui": {
+      const subcommand = args[1];
+      const port = flags.port ? parseInt(flags.port as string) : 4000;
+      if (subcommand === "start") {
+        const { startDetached } = await import("./api/server");
+        await startDetached({ port });
+      } else if (subcommand === "stop") {
+        const { stopServer } = await import("./api/server");
+        stopServer();
+      } else if (subcommand === "status") {
+        const { serverStatus } = await import("./api/server");
+        serverStatus();
+      } else {
+        // Default: foreground mode
+        const { startServer } = await import("./api/server");
+        await startServer({
+          port,
+          dev: !!flags.dev,
+          open: !flags["no-open"],
+        });
+      }
+      break;
+    }
+    case "tui": {
+      const { launchTui } = await import("./tui/app");
+      await launchTui();
+      break;
+    }
+
+    // ── Data ───────────────────────────────────────────────────────────
+    case "list":
+    case "ls": {
       const { listCommand } = await import("./commands/list");
       await listCommand({
         adapter: flags.adapter as string | undefined,
@@ -141,6 +218,28 @@ async function main(): Promise<void> {
       });
       break;
     }
+
+    // ── Routing ────────────────────────────────────────────────────────
+    case "route": {
+      const { routeCommand } = await import("./commands/route");
+      const subcommand = args[1];
+      await routeCommand(subcommand, {
+        project: flags.project as string | undefined,
+        remote: flags.remote as string | undefined,
+        directory: flags.directory as string | undefined,
+        sink: flags.sink as string | undefined,
+        index: args[2] ? parseInt(args[2]) : undefined,
+      });
+      break;
+    }
+
+    // ── Admin ──────────────────────────────────────────────────────────
+    case "service": {
+      const { serviceCommand } = await import("./commands/service");
+      const action = args[1];
+      await serviceCommand(action);
+      break;
+    }
     case "team-config": {
       const { teamConfigCommand } = await import("./commands/team-config");
       await teamConfigCommand({
@@ -156,27 +255,6 @@ async function main(): Promise<void> {
         teamId: (flags["team-id"] || flags.teamId) as string | undefined,
         headers: flags.headers as string | undefined,
       });
-      break;
-    }
-    case "status": {
-      const { statusCommand } = await import("./commands/status");
-      await statusCommand();
-      break;
-    }
-    case "stop": {
-      const { stopCommand } = await import("./commands/stop");
-      await stopCommand();
-      break;
-    }
-    case "service": {
-      const { serviceCommand } = await import("./commands/service");
-      const action = args[1];
-      await serviceCommand(action);
-      break;
-    }
-    case "setup-skills": {
-      const { setupSkillsCommand } = await import("./commands/setup-skills");
-      await setupSkillsCommand();
       break;
     }
     case "update": {
@@ -195,34 +273,8 @@ async function main(): Promise<void> {
     case "-v":
       console.log(`jin ${VERSION}`);
       break;
-    case "ui": {
-      const subcommand = args[1];
-      const port = flags.port ? parseInt(flags.port as string) : 4000;
-      if (subcommand === "start") {
-        const { startDetached } = await import("./api/server");
-        await startDetached({ port });
-      } else if (subcommand === "stop") {
-        const { stopServer } = await import("./api/server");
-        stopServer();
-      } else if (subcommand === "status") {
-        const { serverStatus } = await import("./api/server");
-        serverStatus();
-      } else {
-        // Default: foreground mode (like Prisma Studio)
-        const { startServer } = await import("./api/server");
-        await startServer({
-          port,
-          dev: !!flags.dev,
-          open: !flags["no-open"],
-        });
-      }
-      break;
-    }
-    case "tui": {
-      const { launchTui } = await import("./tui/app");
-      await launchTui();
-      break;
-    }
+
+    // ── Help ───────────────────────────────────────────────────────────
     case "help":
     case "--help":
     case "-h":

@@ -1,68 +1,57 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { join } from "path";
-import { configDir } from "../config";
+import {
+  stopAll,
+  stopWatcher,
+  stopDashboard,
+  getWatcherState,
+  getDashboardState,
+} from "../lifecycle";
 
-const PID_FILE = join(configDir(), "jin.pid");
-
-export async function stopCommand(): Promise<void> {
-  // Check if running as OS service
-  const { isServiceActive, isServiceInstalled } = await import("../runguard");
-  if (isServiceActive()) {
-    console.log("  jin is running as an OS service.");
-    console.log("  Use `jin service uninstall` to stop and remove the service,");
-    console.log("  or manage it directly:");
-    if (process.platform === "linux") {
-      console.log("    systemctl --user stop jin.service");
-    } else if (process.platform === "darwin") {
-      console.log("    launchctl unload ~/Library/LaunchAgents/com.jin.agent.plist");
+export async function stopCommand(opts?: {
+  watcher?: boolean;
+  ui?: boolean;
+}): Promise<void> {
+  if (opts?.watcher) {
+    const state = getWatcherState();
+    if (state.status === "stopped") {
+      console.log("  Watcher is not running.");
+      return;
     }
+    const label = state.mode === "service" ? "service" : `PID ${state.pid}`;
+    console.log(`  Stopping watcher (${label})...`);
+    await stopWatcher();
+    console.log("  Watcher stopped.");
     return;
   }
 
-  if (!existsSync(PID_FILE)) {
-    if (isServiceInstalled()) {
-      console.log("  jin is not running, but OS service is installed (inactive).");
-      console.log("  Use `jin service uninstall` to remove it.");
-    } else {
-      console.log("  jin is not running.");
+  if (opts?.ui) {
+    const state = getDashboardState();
+    if (state.status === "stopped") {
+      console.log("  Dashboard is not running.");
+      return;
     }
+    console.log(`  Stopping dashboard (PID ${state.pid})...`);
+    await stopDashboard();
+    console.log("  Dashboard stopped.");
     return;
   }
 
-  const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim());
+  // Default: stop everything
+  const watcherState = getWatcherState();
+  const dashboardState = getDashboardState();
 
-  try {
-    // Check if alive
-    process.kill(pid, 0);
-
-    // Send SIGTERM for graceful shutdown
-    console.log(`  Stopping jin (PID ${pid})...`);
-    process.kill(pid, "SIGTERM");
-
-    // Wait for it to die (up to 5 seconds)
-    for (let i = 0; i < 50; i++) {
-      await Bun.sleep(100);
-      try {
-        process.kill(pid, 0);
-      } catch {
-        // Process is dead
-        console.log("  Stopped.");
-        cleanup();
-        return;
-      }
-    }
-
-    // Force kill if still alive
-    console.log("  Force killing...");
-    process.kill(pid, "SIGKILL");
-    cleanup();
-    console.log("  Killed.");
-  } catch {
-    console.log(`  Process ${pid} is not running. Cleaning up PID file.`);
-    cleanup();
+  if (watcherState.status === "stopped" && dashboardState.status === "stopped") {
+    console.log("  jin is not running.");
+    return;
   }
-}
 
-function cleanup(): void {
-  try { unlinkSync(PID_FILE); } catch {}
+  if (watcherState.status === "running") {
+    const label = watcherState.mode === "service" ? "service" : `PID ${watcherState.pid}`;
+    console.log(`  Stopping watcher (${label})...`);
+  }
+  if (dashboardState.status === "running") {
+    console.log(`  Stopping dashboard (PID ${dashboardState.pid})...`);
+  }
+
+  await stopAll();
+  console.log("  Stopped.");
 }
