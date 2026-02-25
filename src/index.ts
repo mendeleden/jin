@@ -28,7 +28,15 @@ function usage(): void {
 
   Setup:
     init [--team=<code>]               Detect tools, configure sinks
+    setup                              Guided project → sink wiring
     setup-skills                       Register /jin in AI coding tools
+
+  Connections:
+    connect <project> --postgres=...   Connect project to a sink
+    connect <project> --sink=<id>      Route project to existing sink
+    connect <project> --team=<code>    Connect using team code
+    connections                        List all project connections
+    disconnect <project>               Remove a project connection
 
   Running:
     start [--service|--ui|--all]       Start watcher in background
@@ -121,6 +129,49 @@ async function main(): Promise<void> {
     case "setup-skills": {
       const { setupSkillsCommand } = await import("./commands/setup-skills");
       await setupSkillsCommand();
+      break;
+    }
+    case "setup": {
+      const { setupCommand } = await import("./commands/setup");
+      await setupCommand({ json: !!flags.json });
+      break;
+    }
+
+    // ── Connections ───────────────────────────────────────────────────────
+    case "connect": {
+      const { connectCommand } = await import("./commands/connect");
+      const project = args[1] && !args[1].startsWith("--") ? args[1] : "";
+      await connectCommand(project, {
+        postgres: flags.postgres as string | undefined,
+        s3: flags.s3 as string | undefined,
+        webhook: flags.webhook as string | undefined,
+        sink: flags.sink as string | undefined,
+        team: flags.team as string | undefined,
+        id: flags.id as string | undefined,
+        "team-id": flags["team-id"] as string | undefined,
+        teamId: flags.teamId as string | undefined,
+        region: flags.region as string | undefined,
+        endpoint: flags.endpoint as string | undefined,
+        "access-key-id": flags["access-key-id"] as string | undefined,
+        accessKeyId: flags.accessKeyId as string | undefined,
+        "secret-access-key": flags["secret-access-key"] as string | undefined,
+        secretAccessKey: flags.secretAccessKey as string | undefined,
+        prefix: flags.prefix as string | undefined,
+      });
+      break;
+    }
+    case "connections": {
+      const { connectionsCommand } = await import("./commands/connect");
+      await connectionsCommand();
+      break;
+    }
+    case "disconnect": {
+      const { disconnectCommand } = await import("./commands/connect");
+      const project = args[1] && !args[1].startsWith("--") ? args[1] : "";
+      await disconnectCommand(project, {
+        "remove-sink": !!flags["remove-sink"],
+        removeSink: !!flags.removeSink,
+      });
       break;
     }
 
