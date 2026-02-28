@@ -175,7 +175,7 @@ export async function connectCommand(
       } else {
         console.log(`  Sink already configured (${result.sinkId})`);
       }
-      return interactiveConnect({ json: opts.json });
+      return interactiveConnect({ json: opts.json, sinkId: result.sinkId });
     }
 
     // No match target — check if any sink opts were given
@@ -324,7 +324,7 @@ interface ProjectRow {
   directory: string;
 }
 
-export async function interactiveConnect(opts: { json?: boolean }): Promise<void> {
+export async function interactiveConnect(opts: { json?: boolean; sinkId?: string }): Promise<void> {
   const config = await loadConfig();
 
   // Load projects from store
@@ -430,6 +430,13 @@ export async function interactiveConnect(opts: { json?: boolean }): Promise<void
         projectName = input;
         console.log(`  Note: "${input}" not found in store. Route will be created anyway.`);
       }
+    }
+
+    // If a sink was pre-selected (e.g. from --team), skip the sink menu
+    if (opts.sinkId) {
+      await connectCommand(projectName, { sink: opts.sinkId });
+      connectCount++;
+      continue;
     }
 
     // Choose sink type

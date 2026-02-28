@@ -297,6 +297,7 @@ async function main(): Promise<void> {
     case "team-config": {
       const { teamConfigCommand } = await import("./commands/team-config");
       await teamConfigCommand({
+        name: flags.name as string | undefined,
         type: flags.type as string | undefined,
         url: flags.url as string | undefined,
         connectionString: (flags["connection-string"] || flags.connectionString) as string | undefined,

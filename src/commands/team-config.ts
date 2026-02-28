@@ -3,6 +3,7 @@ import { availableSinks } from "../sinks/registry";
 
 export async function teamConfigCommand(opts: {
   type?: string;
+  name?: string;
   url?: string;
   connectionString?: string;
   bucket?: string;
@@ -20,9 +21,13 @@ export async function teamConfigCommand(opts: {
   jin team-config — generate a team onboarding code
 
   Usage:
-    jin team-config --type=webhook --url=https://your-api.com/jin --team-id=myteam
-    jin team-config --type=postgres --connection-string=postgres://... --team-id=myteam
-    jin team-config --type=s3 --bucket=my-jin-data --region=us-east-1 --access-key-id=AK... --secret-access-key=SK... --team-id=myteam
+    jin team-config --type=webhook --url=https://your-api.com/jin --name=team-prod
+    jin team-config --type=postgres --connection-string=postgres://... --name=team-prod
+    jin team-config --type=s3 --bucket=my-jin-data --region=us-east-1 --name=team-prod
+
+  Options:
+    --name=<label>         Human-readable sink name (e.g. "team-prod", "acme-db")
+    --team-id=<id>         Team identifier for multi-tenant setups
 
   Available sink types: ${availableSinks().join(", ")}
 
@@ -34,6 +39,7 @@ export async function teamConfigCommand(opts: {
 
   const config: SinkConfig = {
     type: sinkType as SinkConfig["type"],
+    id: opts.name,
     url: opts.url,
     connectionString: opts.connectionString,
     bucket: opts.bucket,
