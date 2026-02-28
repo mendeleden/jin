@@ -58,13 +58,13 @@ export async function teamConfigCommand(opts: {
 
   --- Share this with your team ---
 
-  One-liner install + connect:
+  Fresh install:
 
-    curl -fsSL https://your-host/jin/install.sh | sh && jin init --team=${encoded}
+    curl -fsSL https://raw.githubusercontent.com/mendeleden/jin/main/install.sh | sh && jin init --team=${encoded}
 
-  Or if jin is already installed:
+  Existing install (add sink + connect projects):
 
-    jin init --team=${encoded}
+    jin connect --team=${encoded}
 
   --- Config details ---
   ${JSON.stringify(clean, null, 2)}

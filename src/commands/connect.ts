@@ -138,8 +138,48 @@ export async function connectCommand(
   },
 ): Promise<void> {
   if (!project && !opts.remote && !opts.directory) {
+    // --team with no project: add the team sink, then launch interactive connect
+    if (opts.team) {
+      ensureConfigDir();
+      const config = await loadConfig();
+      const decoded = decodeTeamConfig(opts.team);
+      const result = findOrCreateSink(config, {
+        type: decoded.type,
+        connectionString: decoded.connectionString,
+        url: decoded.url,
+        bucket: decoded.bucket,
+        region: decoded.region,
+        endpoint: decoded.endpoint,
+        accessKeyId: decoded.accessKeyId,
+        secretAccessKey: decoded.secretAccessKey,
+        prefix: decoded.prefix,
+        id: opts.id,
+        teamId: decoded.teamId || (opts["team-id"] || opts.teamId) as string | undefined,
+      });
+      if (result.isNew) {
+        const sinkConfig = config.sinks[config.sinks.length - 1];
+        try {
+          const sink = createSink(sinkConfig, config.sinks.length - 1);
+          const health = await sink.healthCheck();
+          if (health.ok) {
+            console.log(`  Testing connection... \u25cf connected`);
+          } else {
+            console.log(`  Testing connection... \u25cb failed: ${health.error}`);
+          }
+          await sink.close();
+        } catch (err: any) {
+          console.log(`  Testing connection... \u25cb error: ${err.message}`);
+        }
+        await saveConfig(config);
+        console.log(`  Added sink: ${decoded.type} (${result.sinkId})`);
+      } else {
+        console.log(`  Sink already configured (${result.sinkId})`);
+      }
+      return interactiveConnect({ json: opts.json });
+    }
+
     // No match target — check if any sink opts were given
-    const hasSinkOpts = !!(opts.postgres || opts.s3 || opts.webhook || opts.sink || opts.team);
+    const hasSinkOpts = !!(opts.postgres || opts.s3 || opts.webhook || opts.sink);
     if (!hasSinkOpts) {
       return interactiveConnect({ json: opts.json });
     }
