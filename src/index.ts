@@ -26,16 +26,20 @@ function usage(): void {
   console.log(`
   jin v${VERSION} — conversation data pipeline for agentic coding tools
 
-  Setup:
-    init [--team=<code>]               Detect tools, configure sinks
-    setup                              Guided project → sink wiring
-    setup-skills                       Register /jin in AI coding tools
+  Getting started:
+    jin init                           Detect tools + ingest projects
+    jin connect                        Interactive project → sink wiring
+    jin start                          Start watcher in background
+
+  Team one-liner:
+    jin init --team=<code> && jin start
 
   Connections:
     connect <project> --postgres=...   Connect project to a sink
+    connect --remote=<url> --team=...  Connect by git remote
+    connect --directory=<path> --sink= Connect by directory path
     connect <project> --sink=<id>      Route project to existing sink
-    connect <project> --team=<code>    Connect using team code
-    connections                        List all project connections
+    connections                        List all connections & sinks
     disconnect <project>               Remove a project connection
 
   Running:
@@ -65,13 +69,14 @@ function usage(): void {
     route remove <index>               Remove a routing rule
 
   Admin:
+    setup-skills                       Register /jin in AI coding tools
     service install|uninstall|status   OS service (systemd/launchd)
     team-config --type=<sink>          Generate team onboarding code
     update [--quiet]                   Self-update
     rollback                           Revert last update
     version                            Show version
 
-  Quick start:  jin init && jin start && jin ui
+  Quick start:  jin init && jin connect && jin start
   Config: ~/.config/jin/config.json
 `);
 }
@@ -131,11 +136,6 @@ async function main(): Promise<void> {
       await setupSkillsCommand();
       break;
     }
-    case "setup": {
-      const { setupCommand } = await import("./commands/setup");
-      await setupCommand({ json: !!flags.json });
-      break;
-    }
 
     // ── Connections ───────────────────────────────────────────────────────
     case "connect": {
@@ -157,6 +157,9 @@ async function main(): Promise<void> {
         "secret-access-key": flags["secret-access-key"] as string | undefined,
         secretAccessKey: flags.secretAccessKey as string | undefined,
         prefix: flags.prefix as string | undefined,
+        remote: flags.remote as string | undefined,
+        directory: flags.directory as string | undefined,
+        json: !!flags.json,
       });
       break;
     }

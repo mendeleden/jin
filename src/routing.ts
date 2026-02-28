@@ -43,20 +43,18 @@ export function matchesRoute(match: RouteMatch, project: ProjectInfo): boolean {
     if (project.name.toLowerCase() === match.project.toLowerCase()) return true;
   }
   if (match.remote && project.gitRemote) {
-    if (globMatch(match.remote, project.gitRemote)) return true;
+    if (normalizeRemote(match.remote) === normalizeRemote(project.gitRemote)) return true;
   }
   if (match.directory && project.directory) {
-    if (globMatch(match.directory, project.directory)) return true;
+    if (project.directory.toLowerCase() === match.directory.toLowerCase()) return true;
   }
   return false;
 }
 
-/** Simple glob matching supporting * as wildcard */
-function globMatch(pattern: string, value: string): boolean {
-  // Escape regex special chars except *
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*");
-  const regex = new RegExp(`^${escaped}$`, "i");
-  return regex.test(value);
+/** Normalize a git remote URL for comparison: lowercase, strip .git suffix and trailing slashes */
+function normalizeRemote(remote: string): string {
+  return remote
+    .toLowerCase()
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
 }

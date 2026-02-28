@@ -2,6 +2,7 @@
 // Runs after each ingest cycle to enrich the store with grouping metadata.
 
 import { createHash } from "crypto";
+import { execSync } from "child_process";
 import type { Store } from "./store";
 import type { Session, Message } from "./adapters/types";
 
@@ -17,6 +18,28 @@ function projectNameFromCwd(cwd: string): string {
   const parts = cwd.replace(/\/+$/, "").split("/");
   // Use the last directory component
   return parts[parts.length - 1] || cwd;
+}
+
+/** Detect git remote origin URL from a directory (returns undefined if not a git repo) */
+function gitRemoteFromCwd(cwd: string): string | undefined {
+  try {
+    return execSync("git remote get-url origin", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"] })
+      .toString()
+      .trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Detect current git branch from a directory */
+function gitBranchFromCwd(cwd: string): string | undefined {
+  try {
+    return execSync("git rev-parse --abbrev-ref HEAD", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"] })
+      .toString()
+      .trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Detect primary language from file paths mentioned in tool uses */
@@ -90,6 +113,8 @@ export function autoTagSession(
       id: projId,
       name: projName,
       directory: cwd,
+      gitRemote: gitRemoteFromCwd(cwd),
+      gitBranch: gitBranchFromCwd(cwd),
       language: detectLanguage(messages),
     });
     store.linkSessionToProject(session.id, projId);

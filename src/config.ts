@@ -47,17 +47,12 @@ export interface WatchConfig {
   pollIntervalMs: number;
 }
 
-const CONFIG_DIR = join(homedir(), ".config", "jin");
-const CONFIG_PATH = join(CONFIG_DIR, "config.json");
-const DEFAULT_DB_PATH = join(CONFIG_DIR, "store.db");
-const DEFAULT_RAW_DIR = join(CONFIG_DIR, "raw");
-
 export function configDir(): string {
-  return CONFIG_DIR;
+  return process.env.JIN_CONFIG_DIR || join(homedir(), ".config", "jin");
 }
 
 export function configPath(): string {
-  return CONFIG_PATH;
+  return join(configDir(), "config.json");
 }
 
 export function defaultConfig(): JinConfig {
@@ -77,8 +72,8 @@ export function defaultConfig(): JinConfig {
     sinks: [],
     team: undefined,
     store: {
-      dbPath: DEFAULT_DB_PATH,
-      rawDir: DEFAULT_RAW_DIR,
+      dbPath: join(configDir(), "store.db"),
+      rawDir: join(configDir(), "raw"),
     },
     watch: {
       debounceMs: 200,
@@ -88,15 +83,17 @@ export function defaultConfig(): JinConfig {
 }
 
 export function ensureConfigDir(): void {
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+  const dir = configDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
 export async function loadConfig(): Promise<JinConfig> {
   ensureConfigDir();
-  if (existsSync(CONFIG_PATH)) {
-    const raw = await Bun.file(CONFIG_PATH).text();
+  const cfgPath = configPath();
+  if (existsSync(cfgPath)) {
+    const raw = await Bun.file(cfgPath).text();
     const saved = JSON.parse(raw) as Partial<JinConfig>;
     return { ...defaultConfig(), ...saved };
   }
@@ -105,5 +102,5 @@ export async function loadConfig(): Promise<JinConfig> {
 
 export async function saveConfig(config: JinConfig): Promise<void> {
   ensureConfigDir();
-  await Bun.write(CONFIG_PATH, JSON.stringify(config, null, 2));
+  await Bun.write(configPath(), JSON.stringify(config, null, 2));
 }
