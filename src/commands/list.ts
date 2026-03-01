@@ -21,8 +21,8 @@ export async function listCommand(opts: {
     limit: opts.limit || 50,
   });
 
-  if (opts.json !== false) {
-    // Default to JSON output
+  if (opts.json) {
+    // JSON output
     console.log(JSON.stringify(sessions, null, 2));
   } else {
     // Table format

@@ -25,7 +25,7 @@ export async function analyzeCommand(opts: {
     byModel,
   };
 
-  if (opts.json !== false) {
+  if (opts.json) {
     console.log(JSON.stringify(analysis, null, 2));
   } else {
     console.log("\n  === Jin Analysis ===\n");

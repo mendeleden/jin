@@ -15,7 +15,7 @@ import { createHash } from "crypto";
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
-export async function watchCommand(opts: { daemon?: boolean; skipDeprecation?: boolean }): Promise<void> {
+export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const { isServiceActive, isDaemonRunning, isServiceInstalled } = await import("../runguard");
 
   // Block if OS service is running — but not if WE are the service
@@ -29,13 +29,6 @@ export async function watchCommand(opts: { daemon?: boolean; skipDeprecation?: b
 
   // Daemon mode: fork to background (used internally by startCommand)
   if (opts.daemon) {
-    if (!opts.skipDeprecation) {
-      // User ran `jin watch --daemon` directly — redirect to `jin start`
-      console.log('  "jin watch --daemon" has been replaced by "jin start".\n');
-      const { startCommand } = await import("./start");
-      return startCommand({});
-    }
-
     // Internal call from startCommand
     if (isRunning()) {
       const pid = readFileSync(PID_FILE, "utf-8").trim();
@@ -119,7 +112,7 @@ export async function watchCommand(opts: { daemon?: boolean; skipDeprecation?: b
     })
   ).catch(() => {});
 
-  console.log(`jin watch — monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
+  console.log(`jin start --foreground — monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
   for (const a of activeAdapters) {
     console.log(`  [~] ${a.name}`);
   }
@@ -231,8 +224,8 @@ async function daemonize(): Promise<void> {
   // Detect if running as compiled binary or via bun
   const isCompiled = !exe.endsWith("bun") && !exe.endsWith("node");
   const cmd = isCompiled
-    ? [exe, "watch"]
-    : [exe, "run", process.argv[1], "watch"];
+    ? [exe, "start", "--foreground"]
+    : [exe, "run", process.argv[1], "start", "--foreground"];
 
   const logFd = require("fs").openSync(LOG_FILE, "a");
 

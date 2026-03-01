@@ -44,7 +44,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=JIN_LAUNCHED_BY_SERVICE=1
-ExecStart=${binPath} watch
+ExecStart=${binPath} start --foreground
 Restart=on-failure
 RestartSec=5s
 StandardOutput=append:${join(configDir(), "jin.log")}
@@ -144,7 +144,8 @@ function launchdPlist(binPath: string): string {
     <key>ProgramArguments</key>
     <array>
         <string>${binPath}</string>
-        <string>watch</string>
+        <string>start</string>
+        <string>--foreground</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -274,7 +275,7 @@ async function windowsInstall(): Promise<void> {
   console.log(`  Binary: ${binPath}`);
 
   const ps = [
-    `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument 'watch'`,
+    `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument 'start --foreground'`,
     `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
     `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
     `Register-ScheduledTask -TaskName 'jin' -Action $action -Trigger $trigger -Settings $settings -Description 'jin conversation data pipeline'`,
@@ -384,7 +385,7 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
       console.log(`    jin service uninstall   Remove OS service registration`);
       console.log(`    jin service status      Check OS service status`);
       console.log(``);
-      console.log(`  This is separate from \`jin watch --daemon\` which is a simple`);
+      console.log(`  This is separate from \`jin start\` which is a simple`);
       console.log(`  background process. \`jin service install\` registers with your`);
       console.log(`  OS service manager so jin auto-starts on boot/login.`);
       console.log(``);

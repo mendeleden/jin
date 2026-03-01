@@ -53,7 +53,7 @@ export async function startCommand(opts: {
     }
     // Daemonize
     const { watchCommand } = await import("./watch");
-    await watchCommand({ daemon: true, skipDeprecation: true });
+    await watchCommand({ daemon: true });
   }
 
   // --all: also start dashboard

@@ -13,8 +13,8 @@
 ##   docker compose exec postgres psql -U jin -d jin -c "SELECT * FROM jin_sessions;"
 ##
 ## One-shot commands:
-##   docker compose run --rm jin list
-##   docker compose run --rm jin analyze
+##   docker compose run --rm jin sessions
+##   docker compose run --rm jin stats
 ##   docker compose run --rm jin show <session-id>
 ##
 
@@ -81,7 +81,7 @@ services:
     command:
       - |
         jin init --team=$${JIN_TEAM_CONFIG} 2>/dev/null
-        exec jin watch
+        exec jin start --foreground
     restart: unless-stopped
 
 volumes:

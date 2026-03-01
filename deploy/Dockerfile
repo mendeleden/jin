@@ -17,4 +17,4 @@ COPY --from=builder /usr/local/bin/jin /usr/local/bin/jin
 VOLUME /root/.config/jin
 
 ENTRYPOINT ["jin"]
-CMD ["watch"]
+CMD ["start", "--foreground"]

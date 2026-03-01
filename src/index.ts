@@ -27,54 +27,43 @@ function usage(): void {
   jin v${VERSION} — conversation data pipeline for agentic coding tools
 
   Getting started:
-    jin init                           Detect tools + ingest projects
-    jin connect                        Interactive project → sink wiring
-    jin start                          Start watcher in background
+    jin init [--team=<code>] [--skills]  Detect tools, ingest, register skills
+    jin connect [project]                Interactive project → sink wiring
+    jin start                            Start watcher in background
 
   Team one-liner:
     jin init --team=<code> && jin start
 
   Connections:
-    connect <project> --postgres=...   Connect project to a sink
-    connect --remote=<url> --team=...  Connect by git remote
-    connect --directory=<path> --sink= Connect by directory path
-    connect <project> --sink=<id>      Route project to existing sink
-    connections                        List all connections & sinks
-    disconnect <project>               Remove a project connection
+    connect <project> --postgres=...     Connect project to a sink
+    connect --remote=<url> --sink=<id>   Connect by git remote
+    connect --directory=<path> --sink=   Connect by directory path
+    connections                          List all connections & sinks
+    disconnect <project>                 Remove a project connection
+    team-config --type=<sink>            Generate team onboarding code
 
   Running:
-    start [--service|--ui|--all]       Start watcher in background
-    watch                              Watch + ingest (foreground)
-    stop [--watcher|--ui]              Stop all running components
-    restart                            Restart watcher
-    status [--json|--short]            Status of all components
+    start [--service|--ui|--all]         Start watcher in background
+    start --foreground                   Watch + ingest (foreground)
+    stop [--watcher|--ui]                Stop all running components
+    restart                              Restart watcher
+    status [--json|--short]              Status of all components
 
   Dashboard:
-    ui [--port=4000]                   Web dashboard (foreground)
-    ui start [--port=4000]             Start dashboard in background
-    ui stop                            Stop background dashboard
-    tui                                Terminal UI
+    ui [--port=4000]                     Web dashboard (foreground)
+    ui start/stop/status                 Background dashboard management
+    ui --tui                             Terminal UI
 
   Data:
-    list [--adapter=X] [--since=24h]   List sessions
-    show <id> [--markdown]             Show session messages
-    analyze [--adapter=X]              Token/cost analysis
-    ingest                             One-shot ingest
-    push [--endpoint=URL]              Push to sinks
-    export [--format=json|md]          Export sessions
-
-  Routing:
-    route list                         Show sink routing rules
-    route add --project=X --sink=Y     Route project to specific sink
-    route remove <index>               Remove a routing rule
+    sessions [--adapter=X] [--since=24h] List sessions (--json for JSON)
+    show <id> [--json]                   Show session messages
+    stats [--adapter=X] [--since=24h]    Token/cost analysis (--json for JSON)
+    export [--format=json|md]            Export sessions to files
 
   Admin:
-    setup-skills                       Register /jin in AI coding tools
-    service install|uninstall|status   OS service (systemd/launchd)
-    team-config --type=<sink>          Generate team onboarding code
-    update [--quiet]                   Self-update
-    rollback                           Revert last update
-    version                            Show version
+    service install|uninstall|status     OS service (systemd/launchd)
+    update [--quiet|--rollback]          Self-update or rollback
+    version                              Show version
 
   Quick start:  jin init && jin connect && jin start
   Config: ~/.config/jin/config.json
@@ -84,19 +73,22 @@ function usage(): void {
 async function main(): Promise<void> {
   switch (command) {
     // ── Lifecycle ──────────────────────────────────────────────────────
-    case "start":
-    case "up": {
-      const { startCommand } = await import("./commands/start");
-      await startCommand({
-        service: !!flags.service,
-        ui: !!flags.ui,
-        all: !!flags.all,
-        port: flags.port ? parseInt(flags.port as string) : undefined,
-      });
+    case "start": {
+      if (flags.foreground) {
+        const { watchCommand } = await import("./commands/watch");
+        await watchCommand({ daemon: false });
+      } else {
+        const { startCommand } = await import("./commands/start");
+        await startCommand({
+          service: !!flags.service,
+          ui: !!flags.ui,
+          all: !!flags.all,
+          port: flags.port ? parseInt(flags.port as string) : undefined,
+        });
+      }
       break;
     }
-    case "stop":
-    case "down": {
+    case "stop": {
       const { stopCommand } = await import("./commands/stop");
       await stopCommand({
         watcher: !!flags.watcher,
@@ -104,8 +96,7 @@ async function main(): Promise<void> {
       });
       break;
     }
-    case "restart":
-    case "rs": {
+    case "restart": {
       const { restartCommand } = await import("./commands/start");
       await restartCommand({
         service: !!flags.service,
@@ -115,8 +106,7 @@ async function main(): Promise<void> {
       });
       break;
     }
-    case "status":
-    case "s": {
+    case "status": {
       const { statusCommand } = await import("./commands/status");
       await statusCommand({
         json: !!flags.json,
@@ -128,12 +118,11 @@ async function main(): Promise<void> {
     // ── Setup ──────────────────────────────────────────────────────────
     case "init": {
       const { initCommand } = await import("./commands/init");
-      await initCommand({ team: flags.team as string | undefined, json: !!flags.json });
-      break;
-    }
-    case "setup-skills": {
-      const { setupSkillsCommand } = await import("./commands/setup-skills");
-      await setupSkillsCommand();
+      await initCommand({
+        team: flags.team as string | undefined,
+        json: !!flags.json,
+        skills: !!flags.skills,
+      });
       break;
     }
 
@@ -179,49 +168,43 @@ async function main(): Promise<void> {
     }
 
     // ── Interactive / Foreground ────────────────────────────────────────
-    case "watch": {
-      const { watchCommand } = await import("./commands/watch");
-      await watchCommand({ daemon: !!flags.daemon });
-      break;
-    }
     case "ui": {
-      const subcommand = args[1];
-      const port = flags.port ? parseInt(flags.port as string) : 4000;
-      if (subcommand === "start") {
-        const { startDetached } = await import("./api/server");
-        await startDetached({ port });
-      } else if (subcommand === "stop") {
-        const { stopServer } = await import("./api/server");
-        stopServer();
-      } else if (subcommand === "status") {
-        const { serverStatus } = await import("./api/server");
-        serverStatus();
+      if (flags.tui) {
+        const { launchTui } = await import("./tui/app");
+        await launchTui();
       } else {
-        // Default: foreground mode
-        const { startServer } = await import("./api/server");
-        await startServer({
-          port,
-          dev: !!flags.dev,
-          open: !flags["no-open"],
-        });
+        const subcommand = args[1];
+        const port = flags.port ? parseInt(flags.port as string) : 4000;
+        if (subcommand === "start") {
+          const { startDetached } = await import("./api/server");
+          await startDetached({ port });
+        } else if (subcommand === "stop") {
+          const { stopServer } = await import("./api/server");
+          stopServer();
+        } else if (subcommand === "status") {
+          const { serverStatus } = await import("./api/server");
+          serverStatus();
+        } else {
+          // Default: foreground mode
+          const { startServer } = await import("./api/server");
+          await startServer({
+            port,
+            dev: !!flags.dev,
+            open: !flags["no-open"],
+          });
+        }
       }
-      break;
-    }
-    case "tui": {
-      const { launchTui } = await import("./tui/app");
-      await launchTui();
       break;
     }
 
     // ── Data ───────────────────────────────────────────────────────────
-    case "list":
-    case "ls": {
+    case "sessions": {
       const { listCommand } = await import("./commands/list");
       await listCommand({
         adapter: flags.adapter as string | undefined,
         since: flags.since as string | undefined,
         limit: flags.limit ? parseInt(flags.limit as string) : undefined,
-        json: !flags.table,
+        json: !!flags.json,
       });
       break;
     }
@@ -229,35 +212,21 @@ async function main(): Promise<void> {
       const { showCommand } = await import("./commands/show");
       const sessionId = args[1];
       if (!sessionId || sessionId.startsWith("--")) {
-        console.error("Usage: jin show <session-id> [--markdown]");
+        console.error("Usage: jin show <session-id> [--json]");
         process.exit(1);
       }
       await showCommand(sessionId, {
-        json: !flags.markdown,
-        markdown: !!flags.markdown,
+        json: !!flags.json,
+        markdown: !flags.json,
       });
       break;
     }
-    case "analyze": {
+    case "stats": {
       const { analyzeCommand } = await import("./commands/analyze");
       await analyzeCommand({
         adapter: flags.adapter as string | undefined,
         since: flags.since as string | undefined,
-        json: !flags.table,
-      });
-      break;
-    }
-    case "ingest": {
-      const { ingestCommand } = await import("./commands/ingest");
-      await ingestCommand();
-      break;
-    }
-    case "push": {
-      const { pushCommand } = await import("./commands/push");
-      await pushCommand({
-        endpoint: flags.endpoint as string | undefined,
-        batchSize: flags["batch-size"] ? parseInt(flags["batch-size"] as string) : undefined,
-        since: flags.since as string | undefined,
+        json: !!flags.json,
       });
       break;
     }
@@ -269,20 +238,6 @@ async function main(): Promise<void> {
         adapter: flags.adapter as string | undefined,
         since: flags.since as string | undefined,
         limit: flags.limit ? parseInt(flags.limit as string) : undefined,
-      });
-      break;
-    }
-
-    // ── Routing ────────────────────────────────────────────────────────
-    case "route": {
-      const { routeCommand } = await import("./commands/route");
-      const subcommand = args[1];
-      await routeCommand(subcommand, {
-        project: flags.project as string | undefined,
-        remote: flags.remote as string | undefined,
-        directory: flags.directory as string | undefined,
-        sink: flags.sink as string | undefined,
-        index: args[2] ? parseInt(args[2]) : undefined,
       });
       break;
     }
@@ -313,14 +268,14 @@ async function main(): Promise<void> {
       break;
     }
     case "update": {
-      const { selfUpdate } = await import("./updater");
-      const quiet = args.includes("--quiet") || args.includes("-q");
-      await selfUpdate({ quiet });
-      break;
-    }
-    case "rollback": {
-      const { rollback } = await import("./updater");
-      await rollback();
+      if (flags.rollback) {
+        const { rollback } = await import("./updater");
+        await rollback();
+      } else {
+        const { selfUpdate } = await import("./updater");
+        const quiet = args.includes("--quiet") || args.includes("-q");
+        await selfUpdate({ quiet });
+      }
       break;
     }
     case "version":

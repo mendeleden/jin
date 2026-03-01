@@ -16,8 +16,8 @@ allowed-tools: Bash(jin *)
 Run jin with the provided arguments and report the results.
 
 Available commands:
-- \`jin list\` — list recent sessions across all tools
-- \`jin analyze\` — token/cost breakdown by tool and model
+- \`jin sessions\` — list recent sessions across all tools
+- \`jin stats\` — token/cost breakdown by tool and model
 - \`jin show <id>\` — show a session's messages
 - \`jin status\` — daemon and ingestion status
 
@@ -31,7 +31,7 @@ const GEMINI_COMMAND = `description = "Query jin conversation data — sessions,
 prompt = """
 Run jin with the user's arguments and report the results clearly.
 
-Available commands: list, analyze, show <id>, status
+Available commands: sessions, stats, show <id>, status
 
 !{jin {{args}}}
 """
@@ -40,8 +40,8 @@ Available commands: list, analyze, show <id>, status
 const CODEX_AGENTS_SNIPPET = `## jin — conversation data pipeline
 
 When the user asks about coding session history, token usage, costs, or conversation data:
-- Run \`jin list\` to show recent sessions
-- Run \`jin analyze\` to show cost/token breakdown
+- Run \`jin sessions\` to show recent sessions
+- Run \`jin stats\` to show cost/token breakdown
 - Run \`jin show <session-id>\` to show a specific session
 - Run \`jin status\` to check daemon status
 `;

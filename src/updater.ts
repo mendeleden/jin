@@ -11,7 +11,7 @@ const PID_FILE = join(configDir(), "jin.pid");
 const BACKUP_PATH_FILE = join(configDir(), "jin.bak.path");
 
 // Embedded at build time — bump in package.json
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";
 
 interface GithubRelease {
   tag_name: string;
@@ -154,7 +154,7 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
     log("Starting new daemon...");
     const binPath = process.execPath;
     const logFd = require("fs").openSync(join(configDir(), "jin.log"), "a");
-    const proc = Bun.spawn([binPath, "watch"], {
+    const proc = Bun.spawn([binPath, "start", "--foreground"], {
       stdout: logFd,
       stderr: logFd,
       stdin: "ignore",
@@ -323,7 +323,7 @@ export async function selfUpdate(opts?: { quiet?: boolean }): Promise<boolean> {
 
     process.stdout.write("\r\x1b[K");
     log(`${c.green}✓${c.reset} Installed to ${c.dim}${binPath}${c.reset}`);
-    log(`${c.dim}  rollback: ${c.reset}${c.yellow}jin rollback${c.reset}`);
+    log(`${c.dim}  rollback: ${c.reset}${c.yellow}jin update --rollback${c.reset}`);
   } catch (err) {
     process.stdout.write("\r\x1b[K");
     log(`${c.red}✗${c.reset} Install failed: ${err}`);

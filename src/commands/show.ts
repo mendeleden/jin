@@ -32,8 +32,8 @@ function showSession(
   const session = store.getSession(sessionId)!;
   const messages = store.getMessages(sessionId);
 
-  if (opts.markdown) {
-    // Markdown output
+  if (!opts.json) {
+    // Markdown output (default)
     console.log(`# Session: ${session.name}\n`);
     console.log(`**Adapter**: ${session.adapterName}`);
     console.log(`**Created**: ${session.createdAt}`);
@@ -72,7 +72,7 @@ function showSession(
       console.log(`\n---\n`);
     }
   } else {
-    // JSON output (default)
+    // JSON output
     console.log(
       JSON.stringify(
         {

@@ -5,7 +5,7 @@ import { decodeTeamConfig } from "../sinks/types";
 import { createSink, availableSinks } from "../sinks/registry";
 import { ingestCommand } from "./ingest";
 
-export async function initCommand(opts?: { team?: string; json?: boolean }): Promise<void> {
+export async function initCommand(opts?: { team?: string; json?: boolean; skills?: boolean }): Promise<void> {
   ensureConfigDir();
   const config = await loadConfig();
 
@@ -139,5 +139,11 @@ export async function initCommand(opts?: { team?: string; json?: boolean }): Pro
     }
   } else {
     console.log(`\n  Next: \x1b[1mjin start\x1b[0m`);
+  }
+
+  // Register /jin in coding tools (idempotent)
+  if (opts?.skills) {
+    const { setupSkillsCommand } = await import("./setup-skills");
+    await setupSkillsCommand();
   }
 }

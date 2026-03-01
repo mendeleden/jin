@@ -80,8 +80,8 @@ export function detectRunMode(): RunMode {
 export function runModeLabel(mode: RunMode): string {
   switch (mode) {
     case "service": return "OS service (systemd/launchd/Task Scheduler)";
-    case "daemon": return "background daemon (jin watch --daemon)";
-    case "foreground": return "foreground (jin watch)";
+    case "daemon": return "background daemon (jin start)";
+    case "foreground": return "foreground (jin start --foreground)";
     default: return "not running";
   }
 }
