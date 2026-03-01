@@ -137,6 +137,7 @@ async function main(): Promise<void> {
         sink: flags.sink as string | undefined,
         team: flags.team as string | undefined,
         id: flags.id as string | undefined,
+        name: flags.name as string | undefined,
         "team-id": flags["team-id"] as string | undefined,
         teamId: flags.teamId as string | undefined,
         region: flags.region as string | undefined,

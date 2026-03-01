@@ -28,6 +28,7 @@ export interface PushResult {
 export interface SinkConfig {
   type: "webhook" | "postgres" | "s3";
   id?: string; // unique identifier for routing; auto-generated as type-index if omitted
+  name?: string; // human-readable label, e.g. "early-warning", "jin-inner-team"
 
   // Webhook
   url?: string;

@@ -144,7 +144,7 @@ async function printFull(config: JinConfig, states: ComponentState[]): Promise<v
   if (config.sinks && config.sinks.length > 0) {
     const sinkLabels = config.sinks.map((s, i) => {
       const id = s.id || `${s.type}-${i}`;
-      const label = s.teamId ? `${s.type}/${s.teamId}` : id;
+      const label = s.name || (s.teamId ? `${s.type}/${s.teamId}` : id);
       return `${green("\u25cf")} ${label}`;
     });
     console.log(`  sinks       ${sinkLabels.join("   ")}`);

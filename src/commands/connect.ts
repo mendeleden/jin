@@ -13,6 +13,12 @@ function sinkId(config: SinkConfig, index: number): string {
   return config.id || `${config.type}-${index}`;
 }
 
+/** Human-readable display label: "my-name (postgres)" or "postgres-0 (postgres)" */
+function sinkDisplayLabel(config: SinkConfig, index: number): string {
+  const label = config.name || config.id || `${config.type}-${index}`;
+  return `${label} (${config.type})`;
+}
+
 /**
  * Find an existing sink with matching connection details, or create a new one.
  * Returns the sink ID and whether it was newly created.
@@ -30,6 +36,7 @@ function findOrCreateSink(
     secretAccessKey?: string;
     prefix?: string;
     id?: string;
+    name?: string;
     teamId?: string;
   },
 ): { sinkId: string; isNew: boolean } {
@@ -61,6 +68,8 @@ function findOrCreateSink(
     const count = config.sinks.filter((s) => s.type === opts.type).length;
     newSink.id = `${opts.type}-${count}`;
   }
+
+  if (opts.name) newSink.name = opts.name;
 
   if (opts.type === "postgres") {
     newSink.connectionString = opts.connectionString;
@@ -123,6 +132,7 @@ export async function connectCommand(
     sink?: string;
     team?: string;
     id?: string;
+    name?: string;
     "team-id"?: string;
     teamId?: string;
     region?: string;
@@ -154,6 +164,7 @@ export async function connectCommand(
         secretAccessKey: decoded.secretAccessKey,
         prefix: decoded.prefix,
         id: opts.id,
+        name: opts.name,
         teamId: decoded.teamId || (opts["team-id"] || opts.teamId) as string | undefined,
       });
       if (result.isNew) {
@@ -171,7 +182,8 @@ export async function connectCommand(
           console.log(`  Testing connection... \u25cb error: ${err.message}`);
         }
         await saveConfig(config);
-        console.log(`  Added sink: ${decoded.type} (${result.sinkId})`);
+        const addedLabel = sinkDisplayLabel(sinkConfig, config.sinks.length - 1);
+        console.log(`  Added sink: ${addedLabel}`);
       } else {
         console.log(`  Sink already configured (${result.sinkId})`);
       }
@@ -214,11 +226,13 @@ export async function connectCommand(
       secretAccessKey: decoded.secretAccessKey,
       prefix: decoded.prefix,
       id: opts.id,
+      name: opts.name,
       teamId: decoded.teamId || teamId,
     });
     resultSinkId = result.sinkId;
     isNew = result.isNew;
-    sinkLabel = `${decoded.type} (${resultSinkId})`;
+    const teamSinkConfig = config.sinks.find((s, i) => sinkId(s, i) === resultSinkId);
+    sinkLabel = teamSinkConfig ? sinkDisplayLabel(teamSinkConfig, config.sinks.indexOf(teamSinkConfig)) : `${decoded.type} (${resultSinkId})`;
   } else if (opts.sink) {
     // Route to existing sink
     const allSinkIds = (config.sinks || []).map((s, i) => sinkId(s, i));
@@ -228,28 +242,32 @@ export async function connectCommand(
       process.exit(1);
     }
     resultSinkId = opts.sink;
-    const sinkConfig = config.sinks.find((s, i) => sinkId(s, i) === opts.sink);
-    sinkLabel = `${sinkConfig?.type || "unknown"} (${resultSinkId})`;
+    const existSinkConfig = config.sinks.find((s, i) => sinkId(s, i) === opts.sink);
+    sinkLabel = existSinkConfig ? sinkDisplayLabel(existSinkConfig, config.sinks.indexOf(existSinkConfig)) : resultSinkId;
   } else if (opts.postgres) {
     const result = findOrCreateSink(config, {
       type: "postgres",
       connectionString: opts.postgres,
       id: opts.id,
+      name: opts.name,
       teamId,
     });
     resultSinkId = result.sinkId;
     isNew = result.isNew;
-    sinkLabel = `postgres (${resultSinkId})`;
+    const pgSinkConfig = config.sinks.find((s, i) => sinkId(s, i) === resultSinkId);
+    sinkLabel = pgSinkConfig ? sinkDisplayLabel(pgSinkConfig, config.sinks.indexOf(pgSinkConfig)) : `postgres (${resultSinkId})`;
   } else if (opts.webhook) {
     const result = findOrCreateSink(config, {
       type: "webhook",
       url: opts.webhook,
       id: opts.id,
+      name: opts.name,
       teamId,
     });
     resultSinkId = result.sinkId;
     isNew = result.isNew;
-    sinkLabel = `webhook (${resultSinkId})`;
+    const whSinkConfig = config.sinks.find((s, i) => sinkId(s, i) === resultSinkId);
+    sinkLabel = whSinkConfig ? sinkDisplayLabel(whSinkConfig, config.sinks.indexOf(whSinkConfig)) : `webhook (${resultSinkId})`;
   } else if (opts.s3) {
     const result = findOrCreateSink(config, {
       type: "s3",
@@ -260,11 +278,13 @@ export async function connectCommand(
       secretAccessKey: (opts["secret-access-key"] || opts.secretAccessKey) as string | undefined,
       prefix: opts.prefix as string | undefined,
       id: opts.id,
+      name: opts.name,
       teamId,
     });
     resultSinkId = result.sinkId;
     isNew = result.isNew;
-    sinkLabel = `s3 (${resultSinkId})`;
+    const s3SinkConfig = config.sinks.find((s, i) => sinkId(s, i) === resultSinkId);
+    sinkLabel = s3SinkConfig ? sinkDisplayLabel(s3SinkConfig, config.sinks.indexOf(s3SinkConfig)) : `s3 (${resultSinkId})`;
   } else {
     console.error("  Error: Specify a sink type or existing sink:");
     console.error('    --postgres="postgresql://..."');
@@ -393,7 +413,7 @@ export async function interactiveConnect(opts: { json?: boolean; sinkId?: string
     for (const r of connectedRoutes) {
       const sid = r.sinks[0];
       const s = config.sinks.find((s, i) => sinkId(s, i) === sid);
-      const label = s ? `${s.type} (${sid})` : sid;
+      const label = s ? sinkDisplayLabel(s, config.sinks.indexOf(s)) : sid;
       console.log(`    ${r.match.project} \u2192 ${label}`);
     }
   }
@@ -447,7 +467,7 @@ export async function interactiveConnect(opts: { json?: boolean; sinkId?: string
     if (existingSinks.length > 0) {
       for (let i = 0; i < existingSinks.length; i++) {
         const es = existingSinks[i];
-        console.log(`    ${4 + i}. Use existing: ${es.config.type} (${es.id})`);
+        console.log(`    ${4 + i}. Use existing: ${sinkDisplayLabel(es.config, i)}`);
       }
     }
 
@@ -573,7 +593,7 @@ export async function connectionsCommand(): Promise<void> {
   for (const route of routes) {
     const sid = route.sinks[0];
     const s = sinkMap.get(sid);
-    const sinkDesc = s ? `${s.type} (${sid})` : sid;
+    const sinkDesc = s ? sinkDisplayLabel(s, sinks.indexOf(s)) : sid;
     const host = s ? sinkHostLabel(s) : "";
 
     if (route.match.project) {
@@ -633,7 +653,8 @@ export async function connectionsCommand(): Promise<void> {
       const usage = routeCount > 0
         ? `${routeCount} route${routeCount === 1 ? "" : "s"}`
         : "\x1b[2munused\x1b[0m";
-      console.log(`    ${id.padEnd(20)}  ${s.type}${hostStr}  (${usage})`);
+      const displayId = s.name || id;
+      console.log(`    ${displayId.padEnd(20)}  ${s.type}${hostStr}  (${usage})`);
     }
   }
 
