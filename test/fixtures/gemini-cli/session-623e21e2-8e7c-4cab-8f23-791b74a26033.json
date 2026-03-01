@@ -1,0 +1,29 @@
+{
+  "sessionId": "623e21e2-8e7c-4cab-8f23-791b74a26033",
+  "projectHash": "a9b7cf3496befcd8e3f7ad9f6a9c610f76f69f40ff004842d874f8031adb7367",
+  "startTime": "2026-03-01T01:50:22.649Z",
+  "lastUpdated": "2026-03-01T01:50:54.912Z",
+  "messages": [
+    {
+      "id": "fd95359b-d297-4bd8-b072-5563fe41287b",
+      "timestamp": "2026-03-01T01:50:22.649Z",
+      "type": "user",
+      "content": [
+        {
+          "text": "Analyze the project structure and identify the main entry points."
+        }
+      ]
+    },
+    {
+      "id": "6e2542fb-3342-4704-a4c7-2355e39ed885",
+      "timestamp": "2026-03-01T01:50:54.912Z",
+      "type": "model",
+      "content": [
+        {
+          "text": "The project has the following entry points:\n1. src/index.ts - Main CLI entry\n2. src/commands/ - Command handlers\n3. src/adapters/ - Data source adapters"
+        }
+      ]
+    }
+  ],
+  "kind": "subagent"
+}

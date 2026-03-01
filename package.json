@@ -11,7 +11,8 @@
     "dev": "bun run src/index.ts",
     "build": "bun run scripts/embed-spa.ts && bun build ./src/index.ts --compile --outfile jin",
     "build:dashboard": "cd dashboard && bun install && bun run build && cd .. && bun run scripts/embed-spa.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:integration": "docker compose -f test/docker-compose.integration.yml up -d --wait && bun test test/integration.test.ts; docker compose -f test/docker-compose.integration.yml down -v"
   },
   "dependencies": {
     "ink": "^5.1.0",
