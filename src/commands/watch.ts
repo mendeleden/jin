@@ -1,4 +1,4 @@
-import { loadConfig, configDir } from "../config";
+import { loadConfig, saveConfig, configDir } from "../config";
 import type { JinConfig } from "../config";
 import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
@@ -95,6 +95,21 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
         activeAdapters.push(adapter);
       }
     } catch {}
+  }
+
+  // Auto-detect newly installed tools that were previously disabled
+  for (const adapter of adapters) {
+    if (config.adapters[adapter.id]?.enabled) continue; // already handled
+    try {
+      if (await adapter.detect()) {
+        activeAdapters.push(adapter);
+        config.adapters[adapter.id] = { enabled: true };
+        log(`New tool detected: ${adapter.name} — auto-enabled`);
+      }
+    } catch {}
+  }
+  if (Object.values(config.adapters).some((a) => a.enabled)) {
+    await saveConfig(config);
   }
 
   if (activeAdapters.length === 0) {
