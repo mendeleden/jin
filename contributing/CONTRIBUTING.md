@@ -24,8 +24,7 @@ During development you can run commands directly without compiling:
 
 ```bash
 bun run src/index.ts init
-bun run src/index.ts ingest
-bun run src/index.ts list
+bun run src/index.ts sessions
 ```
 
 ---
@@ -65,15 +64,14 @@ jin/
 
     commands/
       init.ts             jin init — detect tools, apply team config
-      watch.ts            jin watch — foreground/daemon watcher
+      watch.ts            jin start --foreground — foreground watcher (internal)
       stop.ts             jin stop — stop daemon
       status.ts           jin status — show running mode + stats
       service.ts          jin service install|uninstall|status — OS service management
-      ingest.ts           jin ingest — one-shot ingest from all detected adapters
-      push.ts             jin push — push sessions to configured sinks
-      list.ts             jin list — list ingested sessions
+      ingest.ts           One-shot ingest (used internally by init)
+      list.ts             jin sessions — list ingested sessions
       show.ts             jin show — display a session's messages
-      analyze.ts          jin analyze — token/cost analysis
+      analyze.ts          jin stats — token/cost analysis
       export.ts           jin export — export to JSON or Markdown files
       team-config.ts      jin team-config — generate base64 onboarding code
 
@@ -250,9 +248,8 @@ For local-only testing without Docker, you can test against your own tool data:
 
 ```bash
 bun run src/index.ts init
-bun run src/index.ts ingest
-bun run src/index.ts list
-bun run src/index.ts analyze
+bun run src/index.ts sessions
+bun run src/index.ts stats
 ```
 
 ---
@@ -261,7 +258,7 @@ bun run src/index.ts analyze
 
 1. Fork the repository and create a feature branch from `main`.
 2. Make your changes. Run `bun run typecheck` to verify types.
-3. Test with `jin ingest` and `jin list` against real or sample data.
+3. Test with `jin sessions` and `jin stats` against real or sample data.
 4. If adding an adapter or sink, test with the Docker Compose harness.
 5. Open a PR against `main` with a clear description of what changed and why.
 6. Keep PRs focused -- one adapter, one sink, or one feature per PR.

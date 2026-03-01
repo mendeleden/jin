@@ -43,14 +43,14 @@ flowchart LR
 
 ---
 
-## What happens when you run `jin watch`
+## What happens when you run `jin start`
 
 This is the core loop. Here is the exact sequence of operations:
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant CLI as jin watch
+    participant CLI as jin start
     participant Cfg as Config
     participant Reg as Adapter Registry
     participant FW as FileWatcher
@@ -58,7 +58,7 @@ sequenceDiagram
     participant Store as SQLite Store
     participant Sink
 
-    User->>CLI: jin watch [--daemon]
+    User->>CLI: jin start [--foreground]
     CLI->>CLI: Run guard check (PID file, service detection)
     CLI->>Cfg: loadConfig()
     CLI->>Reg: detectAdapters()

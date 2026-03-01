@@ -157,9 +157,9 @@ directories where the tool writes conversation data. The watcher emits
 Debounce is configured via `watch.debounceMs` in the config (default: 200ms).
 This prevents duplicate ingestion from rapid file writes.
 
-The `jin watch` command sets up the watcher, and on each event, re-ingests
-the affected adapter. With `--daemon`, it forks to background and writes a
-PID file.
+The `jin start --foreground` command sets up the watcher, and on each event,
+re-ingests the affected adapter. `jin start` (without `--foreground`) forks
+to background and writes a PID file.
 
 ---
 
@@ -169,8 +169,8 @@ jin can run in three modes:
 
 | Mode        | How to start            | How it persists                    |
 |------------|-------------------------|------------------------------------|
-| Foreground | `jin watch`             | Runs in the terminal, Ctrl+C stops |
-| Daemon     | `jin watch --daemon`    | Forks to background, PID file at `~/.config/jin/jin.pid` |
+| Foreground | `jin start --foreground` | Runs in the terminal, Ctrl+C stops |
+| Daemon     | `jin start`              | Forks to background, PID file at `~/.config/jin/jin.pid` |
 | OS service | `jin service install`   | systemd (Linux), launchd (macOS), Task Scheduler (Windows) |
 
 ---
@@ -232,7 +232,7 @@ Developers onboard with:
 
 ```bash
 jin init --team=eyJ0eXBlIjoicG9zdGdyZXMiLC4uLn0=
-jin watch
+jin start
 ```
 
 The encoding/decoding functions are in `src/sinks/types.ts`:

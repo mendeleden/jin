@@ -12,7 +12,7 @@ export default function SessionTable({ sessions, compact }: SessionTableProps) {
   if (sessions.length === 0) {
     return (
       <div className="text-center py-12 text-zinc-500">
-        No sessions found. Run <code className="text-zinc-400">jin ingest</code> to import data.
+        No sessions found. Run <code className="text-zinc-400">jin init</code> to import data.
       </div>
     );
   }

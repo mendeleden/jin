@@ -293,6 +293,6 @@ Nearly identical to the Pi adapter with a different base directory.
 
 1. Create `src/adapters/yourtool.ts` implementing the `Adapter` interface
 2. Register it in `src/adapters/registry.ts`
-3. Test with `jin init` (should detect) and `jin ingest` (should parse)
+3. Test with `jin init` (should detect) and `jin sessions` (should list parsed sessions)
 
 See `contributing/ADDING_ADAPTERS.md` for a step-by-step guide with skeleton code.

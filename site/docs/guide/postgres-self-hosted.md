@@ -34,7 +34,7 @@ Each developer runs:
 
 ```sh
 jin init --team=<the-code-from-step-2>
-jin watch --daemon
+jin start
 ```
 
 ## Option B: Docker Compose

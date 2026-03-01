@@ -24,7 +24,7 @@ interface Adapter {
 
 | Method         | What it does                                           |
 |---------------|--------------------------------------------------------|
-| `detect()`    | Returns `true` if the tool's data directory exists and contains session files. Called during `jin init` and `jin ingest`. |
+| `detect()`    | Returns `true` if the tool's data directory exists and contains session files. Called during `jin init`. |
 | `sessions()`  | Scans the tool's data directory and returns a `Session[]` with metadata for every conversation found. |
 | `messages(sessionId)` | Given a session ID, parses and returns all `Message[]` objects for that conversation. |
 | `watchPaths()` | Returns an array of directory paths that `fs.watch()` should monitor for live changes. |
@@ -382,13 +382,9 @@ export function defaultConfig(): JinConfig {
 bun run src/index.ts init
 # Should show "my-tool" as detected (if its data exists on your machine)
 
-# Run ingestion
-bun run src/index.ts ingest
-# Should print "Ingesting My Tool..." and show session/message counts
-
 # Verify data
-bun run src/index.ts list --adapter=my-tool
-bun run src/index.ts analyze
+bun run src/index.ts sessions --adapter=my-tool
+bun run src/index.ts stats
 ```
 
 **Typecheck:**
@@ -417,4 +413,4 @@ volume so `jin-watch` can pick it up.
 - [ ] Registered in `src/adapters/registry.ts`
 - [ ] Default config added in `src/config.ts`
 - [ ] `bun run typecheck` passes
-- [ ] Tested with `jin init` and `jin ingest`
+- [ ] Tested with `jin init` and `jin sessions`

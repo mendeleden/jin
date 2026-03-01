@@ -102,7 +102,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["sh", "-c", "jin init --team=$${JIN_TEAM_CONFIG} && jin watch"]
+    command: ["sh", "-c", "jin init --team=$${JIN_TEAM_CONFIG} && jin start --foreground"]
 
   ## ── Jin Analyze (one-shot) ────────────────────────────────────────
 

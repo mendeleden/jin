@@ -6,7 +6,7 @@ jin supports team-wide collection of AI coding session data. Each developer runs
 
 ```
 Developer A (macOS)          Developer B (Linux)
-  jin watch --daemon           jin watch --daemon
+  jin start                    jin start
        │                            │
        └──────────┬─────────────────┘
                   ▼
@@ -43,7 +43,7 @@ Send it via Slack, email, or your team wiki. It contains the connection details 
 
 ```sh
 jin init --team=eyJzaW5rIjoicG9zdGdyZXMiLCJjb25uZWN0aW9uU3RyaW5nIjoi...
-jin watch --daemon
+jin start
 ```
 
 That's it. Sessions from every developer's local tools are now streaming to your shared Postgres.

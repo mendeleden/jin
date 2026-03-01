@@ -23,7 +23,7 @@ flowchart TB
 
     subgraph Docker["Docker Compose"]
         subgraph JinContainer["jin container (debian:bookworm-slim)"]
-            JIN["jin watch<br/>(compiled binary)"]
+            JIN["jin start --foreground<br/>(compiled binary)"]
             JINDB["SQLite Store<br/>/root/.config/jin/store.db"]
         end
 
@@ -126,7 +126,7 @@ flowchart TD
 - `pgdata`: Postgres data directory. Your sessions survive `docker compose down` + `up`.
 - `jin-state`: jin's SQLite store, config, logs, and raw file copies.
 
-**Entrypoint override:** The Dockerfile sets `ENTRYPOINT ["jin"]` and `CMD ["watch"]`, but the compose file overrides with a shell command that runs `jin init --team=$JIN_TEAM_CONFIG` first, then `exec jin watch`. The `exec` replaces the shell process so jin becomes PID 1 and receives signals properly.
+**Entrypoint override:** The Dockerfile sets `ENTRYPOINT ["jin"]` and `CMD ["start", "--foreground"]`, but the compose file overrides with a shell command that runs `jin init --team=$JIN_TEAM_CONFIG` first, then `exec jin start --foreground`. The `exec` replaces the shell process so jin becomes PID 1 and receives signals properly.
 
 ---
 
@@ -180,9 +180,9 @@ FROM jin_messages WHERE tool_uses != '[]' LIMIT 20;
 Or use jin's own CLI:
 
 ```bash
-docker compose run --rm --entrypoint jin jin list --limit=10
-docker compose run --rm --entrypoint jin jin analyze
-docker compose run --rm --entrypoint jin jin show <session-id> --markdown
+docker compose run --rm --entrypoint jin jin sessions --limit=10
+docker compose run --rm --entrypoint jin jin stats
+docker compose run --rm --entrypoint jin jin show <session-id>
 ```
 
 ---

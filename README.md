@@ -31,12 +31,12 @@ bun build ./src/index.ts --compile --outfile jin
 jin init
 
 # 2. Start watching (background daemon)
-jin watch --daemon
+jin start
 
 # Done. Jin is now ingesting conversations as you work.
 # Check what it found:
-jin list --since=1h
-jin analyze
+jin sessions --since=1h
+jin stats
 ```
 
 That's it. jin auto-detects your installed tools, watches their data directories with `fs.watch`, and ingests sessions as they update. The local SQLite store lives at `~/.config/jin/store.db`.
@@ -79,18 +79,21 @@ Sinks are configured in `~/.config/jin/config.json` or injected via team onboard
 ## Commands
 
 ```
-jin init [--team=<code>]                    Detect tools, connect to team infra
-jin watch [--daemon]                        Watch + ingest + sync to sinks
-jin status                                  Show daemon status + stats
-jin stop                                    Stop the background daemon
-jin service install|uninstall|status        OS service (survives reboot)
-jin list [--adapter=X] [--since=24h]        List ingested sessions
-jin show <session-id> [--markdown]          Show a session's messages
-jin analyze [--adapter=X]                   Token/cost analysis
-jin ingest                                  One-shot ingest from all detected tools
-jin push                                    Push sessions to configured sinks
-jin export [--format=json|md] [--output=.]  Export sessions to files
+jin init [--team=<code>] [--skills]          Detect tools, ingest, register skills
+jin start                                   Start watcher in background
+jin start --foreground                      Watch + ingest (foreground)
+jin stop                                    Stop all running components
+jin status [--json|--short]                 Status of all components
+jin connect [project]                       Interactive project → sink wiring
+jin connections                             List all connections & sinks
+jin disconnect <project>                    Remove a project connection
+jin sessions [--adapter=X] [--since=24h]    List sessions (--json for JSON)
+jin show <session-id> [--json]              Show a session's messages
+jin stats [--adapter=X] [--since=24h]       Token/cost analysis (--json for JSON)
+jin export [--format=json|md]               Export sessions to files
+jin service install|uninstall|status        OS service (systemd/launchd)
 jin team-config --type=<sink> ...           Generate team onboarding code
+jin update [--quiet|--rollback]             Self-update or rollback
 ```
 
 ### Key workflows
@@ -99,16 +102,16 @@ jin team-config --type=<sink> ...           Generate team onboarding code
 
 ```sh
 jin init
-jin ingest
-jin analyze
+jin sessions
+jin stats
 ```
 
 **Background daemon** -- continuous ingestion as you work:
 
 ```sh
-jin watch --daemon
-jin status          # check it's running
-jin list --since=4h # see recent sessions
+jin start
+jin status              # check it's running
+jin sessions --since=4h # see recent sessions
 ```
 
 **Persistent service** -- survives reboots, starts at login:
@@ -180,7 +183,7 @@ jin team-config \
 jin tracks token usage and estimates costs across all tools and models. The pricing engine covers Claude (Opus, Sonnet, Haiku), GPT-4/4o, o1/o3, and Gemini Pro/Flash families, with cache-aware cost calculation.
 
 ```sh
-jin analyze
+jin stats
 ```
 
 ```json
@@ -199,8 +202,8 @@ jin analyze
 Filter by adapter or time range:
 
 ```sh
-jin analyze --adapter=claude-code
-jin list --since=7d --adapter=cursor
+jin stats --adapter=claude-code
+jin sessions --since=7d --adapter=cursor
 ```
 
 ---
@@ -216,7 +219,7 @@ jin list --since=7d --adapter=cursor
 | Gemini CLI       |   |    (read-only, passive)      +------+-----+
 | Kiro / Amp / ... |---+                                     |
 +------------------+                                         |
-                                                             | jin push / jin watch --daemon
+                                                             | jin start (auto-push)
                                                              v
                                                     +-----------------+
                                                     | PostgreSQL      |
@@ -296,7 +299,7 @@ bun install
 
 # Run from source
 bun run src/index.ts init
-bun run src/index.ts watch
+bun run src/index.ts start --foreground
 
 # Type check
 bun run typecheck

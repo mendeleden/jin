@@ -85,5 +85,5 @@ esac
 
 echo "  Get started:"
 echo "    jin init          # detect your coding tools"
-echo "    jin watch --daemon  # start background monitoring"
+echo "    jin start           # start background monitoring"
 echo "    jin update        # self-update to latest version"

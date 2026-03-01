@@ -70,7 +70,7 @@ export default function Feed() {
       </div>
 
       <p className="text-xs text-zinc-500">
-        Real-time events from jin ingestion. Keep <code className="text-zinc-400">jin watch</code> running to see activity.
+        Real-time events from jin ingestion. Keep <code className="text-zinc-400">jin start</code> running to see activity.
       </p>
 
       <div ref={feedRef} className="space-y-1 max-h-[70vh] overflow-y-auto">

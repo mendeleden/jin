@@ -5,7 +5,7 @@ jin can register itself as a slash command in your AI coding tools so you can qu
 ## Install
 
 ```sh
-jin setup-skills
+jin init --skills
 ```
 
 ```
@@ -18,8 +18,8 @@ jin setup-skills
 
 | Tool | File | Command |
 |------|------|---------|
-| Claude Code | `~/.claude/skills/jin/SKILL.md` | `/jin list`, `/jin analyze` |
-| Gemini CLI | `~/.gemini/commands/jin.toml` | `/jin list`, `/jin analyze` |
+| Claude Code | `~/.claude/skills/jin/SKILL.md` | `/jin sessions`, `/jin stats` |
+| Gemini CLI | `~/.gemini/commands/jin.toml` | `/jin sessions`, `/jin stats` |
 | Codex | `~/.codex/AGENTS.md` (appended) | Behavioral — mention "jin" or "session history" |
 
 ## Usage
@@ -27,8 +27,8 @@ jin setup-skills
 In Claude Code or Gemini CLI:
 
 ```
-/jin list
-/jin analyze
+/jin sessions
+/jin stats
 /jin show abc123
 ```
 

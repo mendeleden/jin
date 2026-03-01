@@ -10,8 +10,8 @@ jin supports three ways to run, with a guard system that prevents them from conf
 stateDiagram-v2
     [*] --> None: jin installed, not running
 
-    None --> Foreground: jin watch
-    None --> Daemon: jin watch --daemon
+    None --> Foreground: jin start --foreground
+    None --> Daemon: jin start
     None --> Service: jin service install
 
     Foreground --> None: Ctrl+C / SIGTERM
@@ -33,7 +33,7 @@ stateDiagram-v2
 
 ## The Three Modes
 
-### 1. Foreground (`jin watch`)
+### 1. Foreground (`jin start --foreground`)
 
 The simplest mode. jin runs in the terminal, logs to stdout, and exits on Ctrl+C.
 
@@ -48,7 +48,7 @@ The simplest mode. jin runs in the terminal, logs to stdout, and exits on Ctrl+C
 
 **When to use:** Debugging, development, one-off testing.
 
-### 2. Daemon (`jin watch --daemon`)
+### 2. Daemon (`jin start`)
 
 Forks to background and returns control to the terminal.
 
@@ -56,7 +56,7 @@ Forks to background and returns control to the terminal.
 1. Run guard check
 2. Resolve the real binary path via `/proc/self/exe` (compiled Bun binaries report a virtual `/$bunfs/root/` path — this gets the actual filesystem path)
 3. Open log file descriptor: `fs.openSync(LOG_FILE, "a")`
-4. Spawn self: `Bun.spawn([exe, "watch"], { stdout: logFd, stderr: logFd, stdin: "ignore" })`
+4. Spawn self: `Bun.spawn([exe, "start", "--foreground"], { stdout: logFd, stderr: logFd, stdin: "ignore" })`
 5. Wait 500ms, check `proc.exitCode !== null` (if it already died, report error)
 6. Write child PID to `jin.pid`
 7. `proc.unref()` — detach from parent, let child run independently
@@ -65,14 +65,14 @@ Forks to background and returns control to the terminal.
 ```mermaid
 sequenceDiagram
     participant User
-    participant Parent as jin watch --daemon
-    participant Child as jin watch (forked)
+    participant Parent as jin start
+    participant Child as jin start --foreground (forked)
     participant FS as File System
 
     User->>Parent: Run command
     Parent->>Parent: Resolve /proc/self/exe
     Parent->>FS: Open jin.log (append mode)
-    Parent->>Child: Bun.spawn([exe, "watch"])
+    Parent->>Child: Bun.spawn([exe, "start", "--foreground"])
     Parent->>Parent: Wait 500ms
     Parent->>FS: Write child PID to jin.pid
     Parent->>User: "jin daemon started (PID X)"
@@ -124,7 +124,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/path/to/jin watch
+ExecStart=/path/to/jin start --foreground
 Restart=on-failure
 RestartSec=5s
 StandardOutput=append:~/.config/jin/jin.log
@@ -164,7 +164,7 @@ The run guard system prevents multiple jin instances from running simultaneously
 flowchart TD
     A[User runs a jin command] --> B{Which command?}
 
-    B -->|jin watch| C{Launched by systemd?}
+    B -->|jin start --foreground| C{Launched by systemd?}
     C -->|Yes, INVOCATION_ID set| D[Skip service check]
     C -->|No| E{isServiceActive?}
     E -->|Yes| F[BLOCK: running as OS service]
@@ -173,7 +173,7 @@ flowchart TD
     G -->|Yes| H[BLOCK: already running PID X]
     G -->|No| I[Proceed: start watching]
 
-    B -->|jin watch --daemon| J{isServiceActive?}
+    B -->|jin start| J{isServiceActive?}
     J -->|Yes| K[BLOCK: running as OS service]
     J -->|No| L{PID file + alive?}
     L -->|Yes| M[BLOCK: already running]
@@ -198,7 +198,7 @@ flowchart TD
 
 ### The INVOCATION_ID Problem
 
-When `jin service install` registers the systemd unit, systemd runs `jin watch`. But `jin watch` checks `isServiceActive()` which calls `systemctl --user is-active jin.service` — and since the service IS starting (it's running us!), it returns `activating`. This creates a circular block: the service can never start because it blocks itself.
+When `jin service install` registers the systemd unit, systemd runs `jin start --foreground`. But `jin start --foreground` checks `isServiceActive()` which calls `systemctl --user is-active jin.service` — and since the service IS starting (it's running us!), it returns `activating`. This creates a circular block: the service can never start because it blocks itself.
 
 **Fix:** Check for `INVOCATION_ID` or `JOURNAL_STREAM` environment variables, which systemd sets for processes it manages. If present, we know WE are the service, so we skip the service check.
 
@@ -217,16 +217,16 @@ In Docker containers, there's no systemd. Calling `Bun.spawnSync(["systemctl", .
 
 | Already running as | User tries | Result |
 |---|---|---|
-| Daemon | `jin watch` (foreground) | **Blocked**: "already running (PID X)" |
-| Daemon | `jin watch --daemon` | **Blocked**: "already running (PID X)" |
+| Daemon | `jin start --foreground` | **Blocked**: "already running (PID X)" |
+| Daemon | `jin start` | **Blocked**: "already running (PID X)" |
 | Daemon | `jin service install` | **Auto-stops** daemon, installs service |
-| Service | `jin watch` (foreground) | **Blocked**: "running as OS service" |
-| Service | `jin watch --daemon` | **Blocked**: "running as OS service" |
+| Service | `jin start --foreground` | **Blocked**: "running as OS service" |
+| Service | `jin start` | **Blocked**: "running as OS service" |
 | Service | `jin service install` | systemd won't double-start |
 | Service | `jin stop` | **Redirects**: "use jin service uninstall" |
-| Foreground | `jin watch --daemon` | **Blocked** via PID file |
+| Foreground | `jin start` | **Blocked** via PID file |
 | Foreground | `jin service install` | **Auto-stops** foreground, installs service |
-| None (service installed, inactive) | `jin watch --daemon` | **Warning** about reboot conflict |
+| None (service installed, inactive) | `jin start` | **Warning** about reboot conflict |
 
 ---
 
@@ -234,8 +234,8 @@ In Docker containers, there's no systemd. Calling `Bun.spawnSync(["systemctl", .
 
 | Command | What it does |
 |---------|-------------|
-| `jin watch` | Run in foreground (Ctrl+C to stop) |
-| `jin watch --daemon` | Fork to background, write PID file |
+| `jin start --foreground` | Run in foreground (Ctrl+C to stop) |
+| `jin start` | Fork to background, write PID file |
 | `jin service install` | Register with OS service manager |
 | `jin service uninstall` | Stop + deregister from OS |
 | `jin service status` | Show OS service state |
