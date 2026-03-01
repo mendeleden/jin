@@ -76,6 +76,7 @@ const { GeminiCliAdapter } = await import("../src/adapters/gemini-cli");
 const { Store } = await import("../src/store");
 const { PostgresSink } = await import("../src/sinks/postgres");
 const { S3Sink } = await import("../src/sinks/s3");
+const { PostgresSearcher } = await import("../src/sinks/postgres-search");
 import type { Session, Message } from "../src/adapters/types";
 import type { PushPayload } from "../src/sinks/types";
 
@@ -327,6 +328,95 @@ describe("postgres sink: push and query", () => {
     );
     expect(rows[0].team_id).toBe("test-team");
     expect(rows[0].developer_id).toBe("test-dev");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Postgres search tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("postgres search: FTS via PostgresSearcher", () => {
+  let searcher: InstanceType<typeof PostgresSearcher>;
+
+  beforeAll(async () => {
+    searcher = new PostgresSearcher({ connectionString: PG_CONN });
+  });
+
+  afterAll(async () => {
+    await searcher.close();
+  });
+
+  test("ensureSearchSchema creates column, index, and trigger", async () => {
+    await searcher.ensureSearchSchema();
+
+    // Verify column exists
+    const pgConn = new SQL(PG_CONN);
+    const cols = await pgConn.unsafe(
+      "SELECT column_name FROM information_schema.columns WHERE table_name='jin_messages' AND column_name='content_tsv'"
+    );
+    expect(cols.length).toBe(1);
+
+    // Verify index exists
+    const idx = await pgConn.unsafe(
+      "SELECT indexname FROM pg_indexes WHERE tablename='jin_messages' AND indexname='idx_jin_msg_fts'"
+    );
+    expect(idx.length).toBe(1);
+
+    pgConn.close();
+  });
+
+  test("backfillTsvector populates existing rows", async () => {
+    await searcher.backfillTsvector();
+
+    // Verify tsvector is populated
+    const pgConn = new SQL(PG_CONN);
+    const rows = await pgConn.unsafe(
+      "SELECT COUNT(*) as cnt FROM public.jin_messages WHERE content_tsv IS NOT NULL AND content IS NOT NULL"
+    );
+    const totalWithContent = await pgConn.unsafe(
+      "SELECT COUNT(*) as cnt FROM public.jin_messages WHERE content IS NOT NULL AND content != ''"
+    );
+    expect(Number(rows[0].cnt)).toBe(Number(totalWithContent[0].cnt));
+    pgConn.close();
+  });
+
+  test("search returns results for known fixture content", async () => {
+    // Search for something likely in the fixture data
+    const pgConn = new SQL(PG_CONN);
+    const sample = await pgConn.unsafe(
+      "SELECT content FROM public.jin_messages WHERE content IS NOT NULL AND length(content) > 20 LIMIT 1"
+    );
+    pgConn.close();
+
+    if (sample.length > 0) {
+      // Extract a word from the content to search for
+      const words = String(sample[0].content).split(/\s+/).filter(w => w.length > 4);
+      if (words.length > 0) {
+        const searchTerm = words[0].replace(/[^a-zA-Z]/g, "");
+        if (searchTerm.length > 3) {
+          const results = await searcher.search({ query: searchTerm, limit: 5 });
+          expect(results.length).toBeGreaterThan(0);
+          expect(results[0].snippet).toBeTruthy();
+          expect(results[0].sessionId).toBeTruthy();
+        }
+      }
+    }
+  });
+
+  test("search returns empty for nonsense query", async () => {
+    const results = await searcher.search({ query: "xyzzy_nonexistent_gibberish_42", limit: 5 });
+    expect(results.length).toBe(0);
+  });
+
+  test("adapter filter works in search", async () => {
+    const allResults = await searcher.search({ query: "the", limit: 50 });
+    if (allResults.length > 0) {
+      const adapterId = allResults[0].adapterId;
+      const filtered = await searcher.search({ query: "the", adapterId, limit: 50 });
+      for (const r of filtered) {
+        expect(r.adapterId).toBe(adapterId);
+      }
+    }
   });
 });
 

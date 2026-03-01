@@ -17,6 +17,7 @@ Run jin with the provided arguments and report the results.
 
 Available commands:
 - \`jin sessions\` — list recent sessions across all tools
+- \`jin search "query"\` — search conversation content across team
 - \`jin stats\` — token/cost breakdown by tool and model
 - \`jin show <id>\` — show a session's messages
 - \`jin status\` — daemon and ingestion status
@@ -31,7 +32,7 @@ const GEMINI_COMMAND = `description = "Query jin conversation data — sessions,
 prompt = """
 Run jin with the user's arguments and report the results clearly.
 
-Available commands: sessions, stats, show <id>, status
+Available commands: sessions, search "query", stats, show <id>, status
 
 !{jin {{args}}}
 """
@@ -41,6 +42,7 @@ const CODEX_AGENTS_SNIPPET = `## jin — conversation data pipeline
 
 When the user asks about coding session history, token usage, costs, or conversation data:
 - Run \`jin sessions\` to show recent sessions
+- Run \`jin search "query"\` to search conversation content across team
 - Run \`jin stats\` to show cost/token breakdown
 - Run \`jin show <session-id>\` to show a specific session
 - Run \`jin status\` to check daemon status

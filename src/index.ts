@@ -56,6 +56,7 @@ function usage(): void {
 
   Data:
     sessions [--adapter=X] [--since=24h] List sessions (--json for JSON)
+    search "query" [--since=7d]          Full-text search across conversations
     show <id> [--json]                   Show session messages
     stats [--adapter=X] [--since=24h]    Token/cost analysis (--json for JSON)
     export [--format=json|md]            Export sessions to files
@@ -204,6 +205,24 @@ async function main(): Promise<void> {
       await listCommand({
         adapter: flags.adapter as string | undefined,
         since: flags.since as string | undefined,
+        limit: flags.limit ? parseInt(flags.limit as string) : undefined,
+        json: !!flags.json,
+      });
+      break;
+    }
+    case "search": {
+      const { searchCommand } = await import("./commands/search");
+      const query = args[1] && !args[1].startsWith("--") ? args[1] : "";
+      if (!query) {
+        console.error('Usage: jin search "query" [--adapter=X] [--since=7d] [--local] [--sink=<id>]');
+        process.exit(1);
+      }
+      await searchCommand(query, {
+        adapter: flags.adapter as string | undefined,
+        since: flags.since as string | undefined,
+        local: !!flags.local,
+        sink: flags.sink as string | undefined,
+        allSinks: !!flags["all-sinks"],
         limit: flags.limit ? parseInt(flags.limit as string) : undefined,
         json: !!flags.json,
       });

@@ -260,6 +260,61 @@ export class Store {
     return row.cnt;
   }
 
+  searchMessages(opts: {
+    query: string;
+    adapterId?: string;
+    since?: string;
+    limit?: number;
+  }): Array<{
+    messageId: string;
+    sessionId: string;
+    role: string;
+    timestamp: string;
+    adapterId: string;
+    sessionName: string;
+    createdAt: string;
+    snippet: string;
+    rank: number;
+  }> {
+    const limit = opts.limit || 20;
+    let query = `
+      SELECT m.id AS message_id, m.session_id, m.role, m.timestamp,
+             s.adapter_id, s.name AS session_name, s.created_at,
+             snippet(messages_fts, 0, '>>>', '<<<', '...', 30) AS snippet,
+             rank
+      FROM messages_fts
+      JOIN messages m ON m.rowid = messages_fts.rowid
+      JOIN sessions s ON s.id = m.session_id
+      WHERE messages_fts MATCH ?
+    `;
+    const params: (string | number)[] = [opts.query];
+
+    if (opts.adapterId) {
+      query += " AND s.adapter_id = ?";
+      params.push(opts.adapterId);
+    }
+    if (opts.since) {
+      query += " AND s.updated_at >= ?";
+      params.push(opts.since);
+    }
+
+    query += " ORDER BY rank LIMIT ?";
+    params.push(limit);
+
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map((r) => ({
+      messageId: r.message_id,
+      sessionId: r.session_id,
+      role: r.role,
+      timestamp: r.timestamp || "",
+      adapterId: r.adapter_id,
+      sessionName: r.session_name || "",
+      createdAt: r.created_at || "",
+      snippet: r.snippet || "",
+      rank: r.rank || 0,
+    }));
+  }
+
   unpushedSessions(endpoint: string, limit: number): Session[] {
     const rows = this.db
       .prepare(
@@ -606,6 +661,33 @@ export class Store {
     const msgCols = pragmaColumns("messages");
     if (!msgCols.has("record_type")) {
       this.db.exec("ALTER TABLE messages ADD COLUMN record_type TEXT DEFAULT ''");
+    }
+
+    // FTS5 virtual table for full-text search on message content
+    const hasFts = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'"
+    ).get();
+    if (!hasFts) {
+      this.db.exec(`CREATE VIRTUAL TABLE messages_fts USING fts5(content, content='messages', content_rowid='rowid')`);
+      // Triggers to keep FTS in sync
+      this.db.exec(`
+        CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+          INSERT INTO messages_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+        END
+      `);
+      this.db.exec(`
+        CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+        END
+      `);
+      this.db.exec(`
+        CREATE TRIGGER messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+          INSERT INTO messages_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+        END
+      `);
+      // Backfill existing messages
+      this.db.exec(`INSERT INTO messages_fts(rowid, content) SELECT rowid, content FROM messages WHERE content IS NOT NULL`);
     }
   }
 

@@ -168,6 +168,38 @@ export class PostgresSink implements Sink {
     await this.query(
       `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_msg_sess ON ${this.messagesTable}(session_id)`
     );
+
+    // Full-text search support: tsvector column + GIN index + auto-populate trigger
+    await this.query(
+      `ALTER TABLE ${this.messagesTable} ADD COLUMN IF NOT EXISTS content_tsv tsvector`
+    );
+    await this.query(
+      `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_msg_fts ON ${this.messagesTable} USING GIN(content_tsv)`
+    );
+    await this.query(`
+      CREATE OR REPLACE FUNCTION jin_messages_tsv_trigger() RETURNS trigger AS $$
+      BEGIN
+        NEW.content_tsv := to_tsvector('english', COALESCE(NEW.content, ''));
+        RETURN NEW;
+      END; $$ LANGUAGE plpgsql
+    `);
+    await this.query(
+      `DROP TRIGGER IF EXISTS jin_messages_tsv_update ON ${this.messagesTable}`
+    );
+    await this.query(`
+      CREATE TRIGGER jin_messages_tsv_update BEFORE INSERT OR UPDATE OF content
+        ON ${this.messagesTable} FOR EACH ROW EXECUTE FUNCTION jin_messages_tsv_trigger()
+    `);
+
+    // pg_trgm for fuzzy matching (optional — not all providers support it)
+    try {
+      await this.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+      await this.query(
+        `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_msg_trgm ON ${this.messagesTable} USING GIN(content gin_trgm_ops)`
+      );
+    } catch {
+      // pg_trgm not available — fuzzy search will be skipped
+    }
   }
 
   /**
