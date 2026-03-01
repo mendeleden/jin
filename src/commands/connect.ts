@@ -5,6 +5,7 @@ import type { SinkConfig } from "../sinks/types";
 import { decodeTeamConfig } from "../sinks/types";
 import { createSink } from "../sinks/registry";
 import { Store } from "../store";
+import { homedir } from "os";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -621,22 +622,21 @@ export async function connectionsCommand(): Promise<void> {
     const maxLabel = Math.max(...routeLines.map((r) => r.label.length));
     for (const r of routeLines) {
       const name = r.label.padEnd(maxLabel);
-      const hostStr = r.host ? `  ${r.host}` : "";
-      const detailStr = r.detail ? `  \x1b[2m${r.detail}\x1b[0m` : "";
-      console.log(`    ${name}  \u2192 ${r.sinkDesc}${hostStr}  \u25cf connected${detailStr}`);
+      console.log(`    ${name}  \u2192 ${r.sinkDesc}`);
     }
   }
 
-  // Unrouted projects with full paths
+  // Unrouted projects
   const unrouted = allProjects.filter((p: any) => !connectedProjects.has(p.name.toLowerCase()));
   if (unrouted.length > 0) {
     console.log("\n  Unrouted (local only):\n");
+    const home = homedir();
     const maxName = Math.max(...unrouted.map((p: any) => p.name.length));
     for (const p of unrouted) {
       const name = p.name.padEnd(maxName);
-      const dir = p.directory ? `  \x1b[2m${p.directory}\x1b[0m` : "";
-      const remote = p.git_remote ? `  \x1b[2m${p.git_remote}\x1b[0m` : "";
-      console.log(`    ${name}${dir}${remote}`);
+      const shortDir = p.directory ? p.directory.replace(home, "~") : "";
+      const dir = shortDir ? `  \x1b[2m${shortDir}\x1b[0m` : "";
+      console.log(`    ${name}${dir}`);
     }
   }
 
@@ -646,7 +646,8 @@ export async function connectionsCommand(): Promise<void> {
     for (let i = 0; i < sinks.length; i++) {
       const s = sinks[i];
       const id = sinkId(s, i);
-      const host = sinkHostLabel(s);
+      let host = sinkHostLabel(s);
+      if (host.length > 30) host = host.slice(0, 27) + "...";
       const hostStr = host ? `  ${host}` : "";
       // Check how many routes use this sink
       const routeCount = routes.filter((r) => r.sinks.includes(id)).length;

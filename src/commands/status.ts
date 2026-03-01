@@ -152,17 +152,13 @@ async function printFull(config: JinConfig, states: ComponentState[]): Promise<v
 
   // Routes
   if (config.routes && config.routes.length > 0) {
-    const routeLabels = config.routes.map((r) => {
-      const match = r.match.project || r.match.remote || r.match.directory || "?";
-      return `${match} \u2192 ${r.sinks.join(",")}`;
-    });
+    const count = config.routes.length;
     const defaultLabel = config.routeUnmatchedToAll
       ? "all sinks"
       : config.defaultSinks?.length
         ? config.defaultSinks.join(",")
         : "local only";
-    routeLabels.push(`* \u2192 ${defaultLabel}`);
-    console.log(`  routes      ${routeLabels.join(" | ")}`);
+    console.log(`  routes      ${count} connected, unmatched \u2192 ${defaultLabel}`);
   }
 
   console.log("");
