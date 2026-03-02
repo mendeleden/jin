@@ -15,6 +15,8 @@ allowed-tools: Bash(jin *)
 
 Run jin with the provided arguments and report the results.
 
+Run \`jin help <command>\` to see all flags for any command.
+
 Available commands:
 - \`jin sessions\` — list recent sessions across all tools
 - \`jin search "query"\` — search conversation content across team
@@ -32,6 +34,7 @@ const GEMINI_COMMAND = `description = "Query jin conversation data — sessions,
 prompt = """
 Run jin with the user's arguments and report the results clearly.
 
+Run \`jin help <command>\` for full options on any command.
 Available commands: sessions, search "query", stats, show <id>, status
 
 !{jin {{args}}}

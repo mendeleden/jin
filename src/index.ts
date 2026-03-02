@@ -22,6 +22,157 @@ function parseFlags(args: string[]): Record<string, string | boolean> {
 
 const flags = parseFlags(args.slice(1));
 
+const COMMAND_HELP: Record<string, string> = {
+  search: `
+  Full-text search across team conversations
+
+  USAGE
+    jin search "query" [flags]
+
+  FLAGS
+    --adapter=<id>     Filter by adapter (e.g. claude-code, codex, gemini-cli)
+    --since=<duration> Only search recent conversations (e.g. 7d, 24h, 2w)
+    --limit=<n>        Max results (default: 20)
+    --json             Output as JSON
+    --local            Search local SQLite (FTS5) instead of Postgres
+    --sink=<id>        Search a specific Postgres sink by ID
+    --all-sinks        Search all configured Postgres sinks
+
+  EXAMPLES
+    $ jin search "authentication flow"
+    $ jin search "N+1 query" --all-sinks --limit=5
+    $ jin search "migration" --adapter=claude-code --since=30d
+    $ jin search "deploy" --local --json
+`,
+  sessions: `
+  List recent sessions across all tools
+
+  USAGE
+    jin sessions [flags]
+
+  FLAGS
+    --adapter=<id>     Filter by adapter (e.g. claude-code, codex)
+    --since=<duration> Only show recent sessions (e.g. 24h, 7d, 2w)
+    --limit=<n>        Max results (default: 50)
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin sessions --since=7d
+    $ jin sessions --adapter=claude-code --json
+`,
+  show: `
+  Show session messages
+
+  USAGE
+    jin show <session-id> [flags]
+
+  FLAGS
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin show abc12345
+    $ jin show abc12345 --json
+`,
+  stats: `
+  Token and cost analysis by adapter and model
+
+  USAGE
+    jin stats [flags]
+
+  FLAGS
+    --adapter=<id>     Filter by adapter
+    --since=<duration> Time range (e.g. 24h, 7d)
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin stats --since=30d
+    $ jin stats --adapter=claude-code --json
+`,
+  connect: `
+  Wire a project to a sink
+
+  USAGE
+    jin connect [project] [flags]
+
+  FLAGS
+    --postgres=<url>   Connect to a Postgres sink
+    --s3=<url>         Connect to an S3 sink
+    --webhook=<url>    Connect to a webhook sink
+    --sink=<id>        Use an existing sink by ID
+    --remote=<url>     Match by git remote URL
+    --directory=<path> Match by directory path
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin connect myproject --postgres=postgresql://...
+    $ jin connect --remote=github.com/org/repo --sink=pg-team
+`,
+  export: `
+  Export sessions to files
+
+  USAGE
+    jin export [flags]
+
+  FLAGS
+    --format=json|md   Output format (default: json)
+    --output=<path>    Output directory
+    --adapter=<id>     Filter by adapter
+    --since=<duration> Time range
+    --limit=<n>        Max sessions
+
+  EXAMPLES
+    $ jin export --format=md --since=7d
+    $ jin export --adapter=codex --output=./exports
+`,
+  init: `
+  Detect tools, ingest sessions, and register skills
+
+  USAGE
+    jin init [flags]
+
+  FLAGS
+    --team=<code>      Join a team (base64 config code)
+    --skills           Install jin as a skill/command in detected coding tools
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin init
+    $ jin init --team=<code> --skills
+`,
+  start: `
+  Start the watcher daemon
+
+  USAGE
+    jin start [flags]
+
+  FLAGS
+    --foreground       Run in foreground (no daemon)
+    --service          Also install OS service
+    --ui               Also start dashboard
+    --all              Start watcher + UI
+    --port=<n>         Dashboard port (default: 4000)
+
+  EXAMPLES
+    $ jin start
+    $ jin start --foreground
+    $ jin start --all --port=8080
+`,
+  status: `
+  Show status of all components
+
+  USAGE
+    jin status [flags]
+
+  FLAGS
+    --json             Output as JSON
+    --short            Compact one-line output
+
+  EXAMPLES
+    $ jin status
+    $ jin status --json
+`,
+};
+
 function usage(): void {
   console.log(`
   jin v${VERSION} — conversation data pipeline for agentic coding tools
@@ -68,10 +219,17 @@ function usage(): void {
 
   Quick start:  jin init && jin connect && jin start
   Config: ~/.config/jin/config.json
+  Help:   jin help <command> for details (e.g. jin help search)
 `);
 }
 
 async function main(): Promise<void> {
+  // Any command with --help or -h shows per-command help
+  if ((flags.help || args.includes("-h")) && command && COMMAND_HELP[command]) {
+    console.log(COMMAND_HELP[command]);
+    return;
+  }
+
   switch (command) {
     // ── Lifecycle ──────────────────────────────────────────────────────
     case "start": {
@@ -308,9 +466,15 @@ async function main(): Promise<void> {
     case "help":
     case "--help":
     case "-h":
-    case undefined:
-      usage();
+    case undefined: {
+      const topic = args[1];
+      if (topic && COMMAND_HELP[topic]) {
+        console.log(COMMAND_HELP[topic]);
+      } else {
+        usage();
+      }
       break;
+    }
     default:
       console.error(`Unknown command: ${command}`);
       usage();
