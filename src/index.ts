@@ -8,7 +8,9 @@ const command = args[0];
 function parseFlags(args: string[]): Record<string, string | boolean> {
   const flags: Record<string, string | boolean> = {};
   for (const arg of args) {
-    if (arg.startsWith("--")) {
+    if (arg === "-h") {
+      flags.help = true;
+    } else if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
       if (eq >= 0) {
         flags[arg.slice(2, eq)] = arg.slice(eq + 1);
@@ -225,7 +227,7 @@ function usage(): void {
 
 async function main(): Promise<void> {
   // Any command with --help or -h shows per-command help
-  if ((flags.help || args.includes("-h")) && command && COMMAND_HELP[command]) {
+  if (flags.help && command && COMMAND_HELP[command]) {
     console.log(COMMAND_HELP[command]);
     return;
   }
