@@ -63,17 +63,23 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin sessions --adapter=claude-code --json
 `,
   show: `
-  Show session messages
+  Show session messages (local or remote)
+
+  Checks local SQLite first. If not found, searches configured Postgres
+  sinks automatically. Supports prefix matching on session IDs.
 
   USAGE
     jin show <session-id> [flags]
 
   FLAGS
     --json             Output as JSON
+    --sink=<id>        Look in a specific Postgres sink
+    --all-sinks        Search all configured Postgres sinks
 
   EXAMPLES
     $ jin show abc12345
     $ jin show abc12345 --json
+    $ jin show abc12345 --sink=postgres-1
 `,
   stats: `
   Token and cost analysis by adapter and model
@@ -391,13 +397,15 @@ async function main(): Promise<void> {
     case "show": {
       const { showCommand } = await import("./commands/show");
       const sessionId = args[1];
-      if (!sessionId || sessionId.startsWith("--")) {
-        console.error("Usage: jin show <session-id> [--json]");
+      if (!sessionId || sessionId.startsWith("--") || sessionId === "-h") {
+        console.error("Usage: jin show <session-id> [--json] [--sink=<id>] [--all-sinks]");
         process.exit(1);
       }
       await showCommand(sessionId, {
         json: !!flags.json,
         markdown: !flags.json,
+        sink: flags.sink as string | undefined,
+        allSinks: !!flags["all-sinks"],
       });
       break;
     }

@@ -23,6 +23,34 @@ export interface PostgresSearchResult {
   rank: number;
 }
 
+export interface RemoteSession {
+  id: string;
+  adapterId: string;
+  adapterName: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMs: number;
+  totalTokens: number;
+  estCost: number;
+  messageCount: number;
+  developerId: string;
+  teamId: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface RemoteMessage {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  toolUses: any[];
+  thinkingBlocks: any[];
+}
+
 export class PostgresSearcher {
   private connectionString: string;
   private schema: string;
@@ -154,6 +182,55 @@ export class PostgresSearcher {
 
     const rows = await this.query(sql, params) as any[];
     return rows.map(rowToSearchResult);
+  }
+
+  /** Fetch a session by ID (exact or prefix match) */
+  async getSession(sessionId: string): Promise<RemoteSession | null> {
+    // Try exact match first, then prefix
+    let rows = await this.query(
+      `SELECT * FROM ${this.sessionsTable} WHERE id = $1`, [sessionId]
+    ) as any[];
+    if (rows.length === 0) {
+      rows = await this.query(
+        `SELECT * FROM ${this.sessionsTable} WHERE id LIKE $1 LIMIT 1`, [sessionId + "%"]
+      ) as any[];
+    }
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      id: r.id,
+      adapterId: r.adapter_id,
+      adapterName: r.adapter_name,
+      name: r.name || "",
+      createdAt: toIsoString(r.created_at),
+      updatedAt: toIsoString(r.updated_at),
+      durationMs: r.duration_ms || 0,
+      totalTokens: r.total_tokens || 0,
+      estCost: Number(r.est_cost) || 0,
+      messageCount: r.message_count || 0,
+      developerId: r.developer_id || "",
+      teamId: r.team_id || "",
+      metadata: typeof r.metadata === "string" ? JSON.parse(r.metadata) : (r.metadata || {}),
+    };
+  }
+
+  /** Fetch all messages for a session, ordered by timestamp */
+  async getMessages(sessionId: string): Promise<RemoteMessage[]> {
+    const rows = await this.query(
+      `SELECT * FROM ${this.messagesTable} WHERE session_id = $1 ORDER BY timestamp ASC`,
+      [sessionId]
+    ) as any[];
+    return rows.map((r: any) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content || "",
+      timestamp: toIsoString(r.timestamp),
+      model: r.model || "",
+      inputTokens: r.input_tokens || 0,
+      outputTokens: r.output_tokens || 0,
+      toolUses: typeof r.tool_uses === "string" ? JSON.parse(r.tool_uses) : (r.tool_uses || []),
+      thinkingBlocks: typeof r.thinking_blocks === "string" ? JSON.parse(r.thinking_blocks) : (r.thinking_blocks || []),
+    }));
   }
 
   /** One-time backfill: populate content_tsv for existing rows */
