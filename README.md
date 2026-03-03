@@ -91,6 +91,7 @@ jin sessions [--adapter=X] [--since=24h]    List sessions (--json for JSON)
 jin show <session-id> [--json]              Show a session's messages
 jin stats [--adapter=X] [--since=24h]       Token/cost analysis (--json for JSON)
 jin export [--format=json|md]               Export sessions to files
+jin reingest [--push] [--adapter=X]         Re-read all files & update store
 jin service install|uninstall|status        OS service (systemd/launchd)
 jin team-config --type=<sink> ...           Generate team onboarding code
 jin update [--quiet|--rollback]             Self-update or rollback

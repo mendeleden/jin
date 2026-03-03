@@ -135,6 +135,26 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin benchmark
     $ jin benchmark --json
 `,
+  reingest: `
+  Re-read all session files and update the local store
+
+  Useful after updating jin to apply parsing improvements (e.g. better
+  session naming) to already-ingested sessions. With --push, also pushes
+  all updated sessions to configured sinks.
+
+  USAGE
+    jin reingest [flags]
+
+  FLAGS
+    --push             Also push all sessions to configured sinks
+    --adapter=<id>     Only re-ingest a specific adapter
+    --json             Output as JSON
+
+  EXAMPLES
+    $ jin reingest
+    $ jin reingest --push
+    $ jin reingest --adapter=claude-code
+`,
   export: `
   Export sessions to files
 
@@ -239,6 +259,7 @@ function usage(): void {
     show <id> [--json]                   Show session messages
     stats [--adapter=X] [--since=24h]    Token/cost analysis (--json for JSON)
     export [--format=json|md]            Export sessions to files
+    reingest [--push] [--adapter=X]      Re-read all files & update store
 
   Performance:
     benchmark [--json]                   Measure resource usage & ingest speed
@@ -389,6 +410,15 @@ async function main(): Promise<void> {
     }
 
     // ── Data ───────────────────────────────────────────────────────────
+    case "reingest": {
+      const { reingestCommand } = await import("./commands/reingest");
+      await reingestCommand({
+        push: !!flags.push,
+        adapter: flags.adapter as string | undefined,
+        json: !!flags.json,
+      });
+      break;
+    }
     case "sessions": {
       const { listCommand } = await import("./commands/list");
       await listCommand({
