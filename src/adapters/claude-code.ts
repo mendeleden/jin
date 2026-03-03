@@ -16,6 +16,7 @@ interface RawLine {
   slug?: string;
   cwd?: string;
   summary?: string;
+  customTitle?: string;
   leafUuid?: string;
   compactMetadata?: { trigger?: string; preTokens?: number };
   message?: {
@@ -260,6 +261,8 @@ export class ClaudeCodeAdapter implements Adapter {
     let firstUserMessage = "";
     let primaryModel = "";
     let isCompacted = false;
+    let customTitle = "";
+    let summary = "";
 
     for (const line of lines) {
       try {
@@ -267,6 +270,16 @@ export class ClaudeCodeAdapter implements Adapter {
         if (!sessionId && raw.sessionId) sessionId = raw.sessionId;
         if (!slug && raw.slug) slug = raw.slug;
         if (!cwd && raw.cwd) cwd = raw.cwd;
+
+        // Capture custom-title entries (set via /rename, last one wins)
+        if (raw.type === "custom-title" && raw.customTitle) {
+          customTitle = raw.customTitle;
+        }
+
+        // Capture summary entries (auto-generated during compaction, last one wins)
+        if (raw.type === "summary" && raw.summary) {
+          summary = raw.summary;
+        }
 
         // Detect compaction
         if (raw.type === "summary" || (raw.type === "system" && raw.subtype === "compact_boundary")) {
@@ -280,11 +293,16 @@ export class ClaudeCodeAdapter implements Adapter {
 
           if (raw.type === "user" && !firstUserMessage && raw.message?.content) {
             const content = raw.message.content;
+            let candidate = "";
             if (typeof content === "string") {
-              firstUserMessage = content.slice(0, 120);
+              candidate = content;
             } else if (Array.isArray(content)) {
               const textBlock = (content as ContentBlock[]).find((b) => b.type === "text");
-              if (textBlock?.text) firstUserMessage = textBlock.text.slice(0, 120);
+              if (textBlock?.text) candidate = textBlock.text;
+            }
+            // Skip synthetic messages injected on /resume
+            if (candidate && !candidate.startsWith("[Request interrupted")) {
+              firstUserMessage = candidate.slice(0, 120);
             }
           }
 
@@ -305,10 +323,19 @@ export class ClaudeCodeAdapter implements Adapter {
 
     if (!sessionId) sessionId = basename(filePath, ".jsonl");
 
-    // Clean XML tags from title
-    let name = firstUserMessage.replace(/<[^>]+>/g, "").trim();
+    // Strip XML tags used by Claude Code (system-reminder, tick, command-name, etc.)
+    const stripTags = (s: string) => s.replace(/<[^>]+>/g, "").trim().replace(/\n/g, " ");
+
+    // Title priority matches Claude Code's /resume: customTitle > summary > firstPrompt > slug > id
+    let name = "";
+    if (customTitle) {
+      name = stripTags(customTitle);
+    } else if (summary && summary !== "No prompt") {
+      name = stripTags(summary);
+    } else {
+      name = stripTags(firstUserMessage);
+    }
     if (name.length > 120) name = name.slice(0, 117) + "...";
-    name = name.replace(/\n/g, " ");
 
     const estCost = estimateCost(
       primaryModel,
