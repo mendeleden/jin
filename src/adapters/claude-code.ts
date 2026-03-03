@@ -46,12 +46,26 @@ interface ContentBlock {
 
 const HOME = homedir();
 
+function hasJsonlFiles(dir: string): boolean {
+  try {
+    return readdirSync(dir).some((d) => {
+      const sub = join(dir, d);
+      try {
+        if (!statSync(sub).isDirectory()) return false;
+        return readdirSync(sub).some((f) => f.endsWith(".jsonl"));
+      } catch { return false; }
+    });
+  } catch { return false; }
+}
+
 function findProjectsDir(): string {
-  // v1.0.30+ XDG path (preferred)
   const xdg = join(HOME, ".config", "claude", "projects");
-  if (existsSync(xdg)) return xdg;
-  // Legacy path
   const legacy = join(HOME, ".claude", "projects");
+  // Prefer whichever path actually contains session data
+  if (existsSync(xdg) && hasJsonlFiles(xdg)) return xdg;
+  if (existsSync(legacy) && hasJsonlFiles(legacy)) return legacy;
+  // Fall back: prefer XDG if it exists, else legacy
+  if (existsSync(xdg)) return xdg;
   if (existsSync(legacy)) return legacy;
   return xdg;
 }
