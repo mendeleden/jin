@@ -68,18 +68,20 @@ export class PostgresSink implements Sink {
           `INSERT INTO ${this.sessionsTable}
            (id, adapter_id, adapter_name, name, created_at, updated_at, duration_ms,
             is_active, total_tokens, est_cost, message_count, source_path,
-            is_sub_agent, metadata, team_id, developer_id, ingested_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            is_sub_agent, parent_session_id, metadata, team_id, developer_id, ingested_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
            ON CONFLICT (id) DO UPDATE SET
             name=EXCLUDED.name, updated_at=EXCLUDED.updated_at,
             total_tokens=EXCLUDED.total_tokens, est_cost=EXCLUDED.est_cost,
             message_count=EXCLUDED.message_count, metadata=EXCLUDED.metadata,
+            parent_session_id=EXCLUDED.parent_session_id,
             ingested_at=EXCLUDED.ingested_at`,
           [
             session.id, session.adapterId, session.adapterName, session.name,
             session.createdAt, session.updatedAt, session.durationMs,
             session.isActive, session.totalTokens, session.estCost,
             session.messageCount, session.sourcePath, session.isSubAgent,
+            session.parentSessionId || "",
             JSON.stringify(session.metadata), this.teamId, this.developerId,
             new Date().toISOString(),
           ]
@@ -114,7 +116,7 @@ export class PostgresSink implements Sink {
               tool_uses, thinking_blocks)
              VALUES ${valueClauses.join(",")}
              ON CONFLICT (id) DO UPDATE SET
-              content=EXCLUDED.content, tool_uses=EXCLUDED.tool_uses`,
+              session_id=EXCLUDED.session_id, content=EXCLUDED.content, tool_uses=EXCLUDED.tool_uses`,
             params
           );
         }
@@ -159,12 +161,18 @@ export class PostgresSink implements Sink {
         message_count INTEGER DEFAULT 0,
         source_path TEXT,
         is_sub_agent BOOLEAN DEFAULT FALSE,
+        parent_session_id TEXT DEFAULT '',
         metadata JSONB DEFAULT '{}',
         team_id TEXT DEFAULT '',
         developer_id TEXT DEFAULT '',
         ingested_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
+    // Migration: add parent_session_id for existing tables
+    await this.query(
+      `ALTER TABLE ${this.sessionsTable} ADD COLUMN IF NOT EXISTS parent_session_id TEXT DEFAULT ''`
+    );
 
     await this.query(`
       CREATE TABLE IF NOT EXISTS ${this.messagesTable} (

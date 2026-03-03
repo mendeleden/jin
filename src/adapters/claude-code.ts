@@ -154,8 +154,11 @@ export class ClaudeCodeAdapter implements Adapter {
       const meta = await this.parseSessionMeta(filePath);
       if (!meta || meta.msgCount === 0) return;
 
+      // Sub-agents share the parent's sessionId in JSONL, so use the filename as a unique ID
+      const id = isSubAgent ? basename(filePath, ".jsonl") : meta.sessionId;
+
       const session: Session = {
-        id: meta.sessionId,
+        id,
         name: meta.name || meta.sessionId.slice(0, 8),
         adapterId: this.id,
         adapterName: this.name,
@@ -218,7 +221,8 @@ export class ClaudeCodeAdapter implements Adapter {
         for (const file of readdirSync(dirPath)) {
           if (!file.endsWith(".jsonl")) continue;
           const filePath = join(dirPath, file);
-          if (await checkFile(filePath)) return filePath;
+          // Match by filename (sub-agent IDs) or by JSONL content
+          if (basename(file, ".jsonl") === sessionId || await checkFile(filePath)) return filePath;
         }
 
         // Check nested subagent directories: <uuid>/subagents/agent-*.jsonl
@@ -229,7 +233,7 @@ export class ClaudeCodeAdapter implements Adapter {
             for (const agentFile of readdirSync(subagentsDir)) {
               if (!agentFile.endsWith(".jsonl")) continue;
               const filePath = join(subagentsDir, agentFile);
-              if (await checkFile(filePath)) return filePath;
+              if (basename(agentFile, ".jsonl") === sessionId || await checkFile(filePath)) return filePath;
             }
           } catch { /* not a dir or no subagents */ }
         }
