@@ -68,14 +68,16 @@ export class PostgresSink implements Sink {
           `INSERT INTO ${this.sessionsTable}
            (id, adapter_id, adapter_name, name, created_at, updated_at, duration_ms,
             is_active, total_tokens, est_cost, message_count, source_path,
-            is_sub_agent, parent_session_id, metadata, team_id, developer_id, ingested_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+            is_sub_agent, parent_session_id, metadata, team_id, developer_id, ingested_at,
+            is_compacted)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
            ON CONFLICT (id) DO UPDATE SET
             name=EXCLUDED.name, updated_at=EXCLUDED.updated_at,
             total_tokens=EXCLUDED.total_tokens, est_cost=EXCLUDED.est_cost,
             message_count=EXCLUDED.message_count, metadata=EXCLUDED.metadata,
             parent_session_id=EXCLUDED.parent_session_id,
-            ingested_at=EXCLUDED.ingested_at`,
+            ingested_at=EXCLUDED.ingested_at,
+            is_compacted=EXCLUDED.is_compacted`,
           [
             session.id, session.adapterId, session.adapterName, session.name,
             session.createdAt, session.updatedAt, session.durationMs,
@@ -84,12 +86,13 @@ export class PostgresSink implements Sink {
             session.parentSessionId || "",
             JSON.stringify(session.metadata), this.teamId, this.developerId,
             new Date().toISOString(),
+            session.isCompacted ?? false,
           ]
         );
 
         // Batch upsert messages (100 per INSERT to stay within Postgres param limits)
         const BATCH_SIZE = 100;
-        const COLS_PER_ROW = 12;
+        const COLS_PER_ROW = 13;
         for (let i = 0; i < messages.length; i += BATCH_SIZE) {
           const batch = messages.slice(i, i + BATCH_SIZE);
           const valueClauses: string[] = [];
@@ -99,13 +102,14 @@ export class PostgresSink implements Sink {
             const msg = batch[j];
             const offset = j * COLS_PER_ROW;
             valueClauses.push(
-              `($${offset+1},$${offset+2},$${offset+3},$${offset+4},$${offset+5},$${offset+6},$${offset+7},$${offset+8},$${offset+9},$${offset+10},$${offset+11},$${offset+12})`
+              `($${offset+1},$${offset+2},$${offset+3},$${offset+4},$${offset+5},$${offset+6},$${offset+7},$${offset+8},$${offset+9},$${offset+10},$${offset+11},$${offset+12},$${offset+13})`
             );
             params.push(
               msg.id, session.id, msg.role, msg.content, msg.timestamp,
               msg.model, msg.inputTokens, msg.outputTokens,
               msg.cacheRead, msg.cacheWrite,
               JSON.stringify(msg.toolUses), JSON.stringify(msg.thinkingBlocks),
+              msg.recordType || "",
             );
           }
 
@@ -113,10 +117,11 @@ export class PostgresSink implements Sink {
             `INSERT INTO ${this.messagesTable}
              (id, session_id, role, content, timestamp, model,
               input_tokens, output_tokens, cache_read, cache_write,
-              tool_uses, thinking_blocks)
+              tool_uses, thinking_blocks, record_type)
              VALUES ${valueClauses.join(",")}
              ON CONFLICT (id) DO UPDATE SET
-              session_id=EXCLUDED.session_id, content=EXCLUDED.content, tool_uses=EXCLUDED.tool_uses`,
+              session_id=EXCLUDED.session_id, content=EXCLUDED.content,
+              tool_uses=EXCLUDED.tool_uses, record_type=EXCLUDED.record_type`,
             params
           );
         }
@@ -162,6 +167,7 @@ export class PostgresSink implements Sink {
         source_path TEXT,
         is_sub_agent BOOLEAN DEFAULT FALSE,
         parent_session_id TEXT DEFAULT '',
+        is_compacted BOOLEAN DEFAULT FALSE,
         metadata JSONB DEFAULT '{}',
         team_id TEXT DEFAULT '',
         developer_id TEXT DEFAULT '',
@@ -169,9 +175,12 @@ export class PostgresSink implements Sink {
       )
     `);
 
-    // Migration: add parent_session_id for existing tables
+    // Migrations for existing tables
     await this.query(
       `ALTER TABLE ${this.sessionsTable} ADD COLUMN IF NOT EXISTS parent_session_id TEXT DEFAULT ''`
+    );
+    await this.query(
+      `ALTER TABLE ${this.sessionsTable} ADD COLUMN IF NOT EXISTS is_compacted BOOLEAN DEFAULT FALSE`
     );
 
     await this.query(`
@@ -187,9 +196,15 @@ export class PostgresSink implements Sink {
         cache_read INTEGER DEFAULT 0,
         cache_write INTEGER DEFAULT 0,
         tool_uses JSONB DEFAULT '[]',
-        thinking_blocks JSONB DEFAULT '[]'
+        thinking_blocks JSONB DEFAULT '[]',
+        record_type TEXT DEFAULT ''
       )
     `);
+
+    // Migration: add record_type for existing tables
+    await this.query(
+      `ALTER TABLE ${this.messagesTable} ADD COLUMN IF NOT EXISTS record_type TEXT DEFAULT ''`
+    );
 
     await this.query(
       `CREATE INDEX IF NOT EXISTS idx_${this.schema}_jin_sess_team ON ${this.sessionsTable}(team_id)`
