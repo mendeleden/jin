@@ -59,11 +59,18 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   // Write PID file
   writeFileSync(PID_FILE, String(process.pid));
 
+  // When daemonized, stdout is already redirected to LOG_FILE by daemonize().
+  // Only use appendFileSync in foreground mode where stdout goes to terminal.
+  const isDaemon = !!process.env.JIN_DAEMON;
   const log = (msg: string) => {
     const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
     const line = `[${ts}] ${msg}`;
-    console.log(`  ${line}`);
-    try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
+    if (isDaemon) {
+      console.log(line);
+    } else {
+      console.log(`  ${line}`);
+      try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
+    }
   };
 
   // Set up sinks
@@ -172,12 +179,32 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     }, PUSH_DEBOUNCE_MS);
   };
 
+  // Build a set of paths to exclude from watching to prevent feedback loops.
+  // When jin watches its own active session directory, every ingest/push cycle
+  // triggers new watch events, creating a runaway loop.
+  const excludePaths = new Set<string>();
+  // Exclude the jin project directory itself (this process is running in it)
+  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "-");
+  // Also detect via environment
+  if (process.env.CLAUDE_PROJECT_DIR) {
+    excludePaths.add(process.env.CLAUDE_PROJECT_DIR);
+  }
+
   // Set up file watcher
   const watcher = new FileWatcher({
     debounceMs: config.watch.debounceMs,
     onChange: async (event: WatchEvent) => {
       const adapter = activeAdapters.find((a) => a.id === event.adapterId);
       if (!adapter) return;
+
+      // Skip events from jin's own project directory to prevent feedback loop:
+      // file change → ingest → push → log → repeat
+      if (excludePaths.size > 0) {
+        const skip = [...excludePaths].some(p => event.path.includes(p));
+        if (skip) return;
+      }
+      // Also skip if the path contains the cwd slug (jin watching its own project)
+      if (cwdSlug && event.path.includes(cwdSlug)) return;
 
       log(`${event.type} — ${adapter.name}: ${basename(event.path)}`);
 
@@ -248,7 +275,7 @@ async function daemonize(): Promise<void> {
     stdout: logFd,
     stderr: logFd,
     stdin: "ignore",
-    env: { ...process.env },
+    env: { ...process.env, JIN_DAEMON: "1" },
   });
 
   require("fs").closeSync(logFd);
@@ -269,7 +296,8 @@ async function daemonize(): Promise<void> {
   proc.unref();
 }
 
-/** Push changed sessions to sinks, respecting per-project routing */
+/** Push changed sessions to sinks, respecting per-project routing.
+ *  Uses push_log to skip sessions that haven't changed since last successful push. */
 async function pushToSinks(
   store: Store,
   sinks: Sink[],
@@ -280,17 +308,26 @@ async function pushToSinks(
   // Group payloads by which sinks they should go to
   const sinkPayloads = new Map<Sink, PushPayload[]>();
 
+  // Pre-compute which sessions actually need pushing per sink
+  const needsPush = new Map<string, Set<string>>();
+  for (const sink of sinks) {
+    needsPush.set(sink.id, store.sessionsNeedingPush(sink.id));
+  }
+
   for (const id of sessionIds) {
     const session = store.getSession(id);
     if (!session) continue;
-    const messages = store.getMessages(id);
-    const payload: PushPayload = { session, messages };
 
     // Determine which sinks this session routes to
     const targetSinks = sinksForSession(session, store, config, sinks);
     for (const sink of targetSinks) {
+      // Skip if this session hasn't changed since last successful push to this sink
+      const sinkNeeds = needsPush.get(sink.id);
+      if (sinkNeeds && !sinkNeeds.has(id)) continue;
+
       if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
-      sinkPayloads.get(sink)!.push(payload);
+      const messages = store.getMessages(id);
+      sinkPayloads.get(sink)!.push({ session, messages });
     }
   }
 
@@ -299,6 +336,12 @@ async function pushToSinks(
     try {
       const result = await sink.push(payloads);
       log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
+
+      // Log successful pushes so we skip them next cycle
+      for (const { session } of payloads) {
+        store.logPush(session.id, sink.id, 200, "ok");
+      }
+
       if (result.errors.length > 0) {
         for (const e of result.errors.slice(0, 3)) log(`  Error: ${e}`);
       }

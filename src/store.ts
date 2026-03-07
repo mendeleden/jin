@@ -326,6 +326,21 @@ export class Store {
     return rows.map(rowToSession);
   }
 
+  /** Sessions that were never pushed OR changed since last successful push to this endpoint */
+  sessionsNeedingPush(endpoint: string): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT s.id FROM sessions s
+         WHERE s.id NOT IN (
+           SELECT pl.session_id FROM push_log pl
+           WHERE pl.endpoint = ? AND pl.status = 200
+             AND pl.pushed_at >= s.ingested_at
+         )`
+      )
+      .all(endpoint) as any[];
+    return new Set(rows.map((r: any) => r.id));
+  }
+
   logPush(sessionId: string, endpoint: string, status: number, response: string): void {
     this.db.run(
       `INSERT INTO push_log (session_id, endpoint, pushed_at, status, response) VALUES (?, ?, ?, ?, ?)`,

@@ -18,6 +18,7 @@ export class PostgresSink implements Sink {
   private teamId: string;
   private developerId: string;
   private conn: SQL | null = null;
+  private tablesEnsured = false;
 
   constructor(config: SinkConfig) {
     if (!config.connectionString) {
@@ -34,6 +35,11 @@ export class PostgresSink implements Sink {
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
     try {
       await this.query("SELECT 1");
+      // Ensure tables on first successful connection, not on every push
+      if (!this.tablesEnsured) {
+        await this.ensureTables();
+        this.tablesEnsured = true;
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String(err) };
@@ -45,11 +51,14 @@ export class PostgresSink implements Sink {
     let failed = 0;
     const errors: string[] = [];
 
-    // Ensure tables exist
-    try {
-      await this.ensureTables();
-    } catch (err) {
-      return { pushed: 0, failed: data.length, errors: [`Table creation failed: ${err}`] };
+    // Ensure tables exist (only runs once, on first healthCheck)
+    if (!this.tablesEnsured) {
+      try {
+        await this.ensureTables();
+        this.tablesEnsured = true;
+      } catch (err) {
+        return { pushed: 0, failed: data.length, errors: [`Table creation failed: ${err}`] };
+      }
     }
 
     for (const { session, messages } of data) {

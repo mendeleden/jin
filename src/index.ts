@@ -115,6 +115,26 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin connect myproject --postgres=postgresql://...
     $ jin connect --remote=github.com/org/repo --sink=pg-team
 `,
+  benchmark: `
+  Run performance benchmark and measure resource usage
+
+  USAGE
+    jin benchmark [flags]
+
+  FLAGS
+    --json             Output as JSON (for CI)
+
+  Measures:
+    - Source data profile (files, size, lines)
+    - Daemon resource usage (CPU, RSS, FDs, I/O) if running
+    - Cold ingest time and peak memory
+
+  Results saved to ~/.config/jin/benchmarks/
+
+  EXAMPLES
+    $ jin benchmark
+    $ jin benchmark --json
+`,
   export: `
   Export sessions to files
 
@@ -219,6 +239,9 @@ function usage(): void {
     show <id> [--json]                   Show session messages
     stats [--adapter=X] [--since=24h]    Token/cost analysis (--json for JSON)
     export [--format=json|md]            Export sessions to files
+
+  Performance:
+    benchmark [--json]                   Measure resource usage & ingest speed
 
   Admin:
     service install|uninstall|status     OS service (systemd/launchd)
@@ -427,6 +450,13 @@ async function main(): Promise<void> {
         since: flags.since as string | undefined,
         limit: flags.limit ? parseInt(flags.limit as string) : undefined,
       });
+      break;
+    }
+
+    // ── Performance ────────────────────────────────────────────────────
+    case "benchmark": {
+      const { benchmarkCommand } = await import("./commands/benchmark");
+      await benchmarkCommand({ json: !!flags.json });
       break;
     }
 

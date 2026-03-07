@@ -163,17 +163,11 @@ export class ClaudeCodeAdapter implements Adapter {
   }
 
   watchPaths(): string[] {
+    // Return only the top-level projects directory with recursive watch.
+    // Previously returned every subdirectory, causing overlapping watchers
+    // that fired 3-6x per file change (each with recursive:true).
     if (!existsSync(this.projectsDir)) return [];
-    const paths: string[] = [];
-    try {
-      for (const d of readdirSync(this.projectsDir)) {
-        const sub = join(this.projectsDir, d);
-        if (existsSync(sub) && statSync(sub).isDirectory()) {
-          paths.push(sub);
-        }
-      }
-    } catch { /* ignore */ }
-    return paths;
+    return [this.projectsDir];
   }
 
   private async findSessionFile(sessionId: string): Promise<string | null> {
