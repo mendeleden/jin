@@ -8,7 +8,7 @@ import { autoTagSession } from "../tagger";
 import { sinksForSession } from "../routing";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
-import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync } from "fs";
+import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
 import { createHash } from "crypto";
 
@@ -326,7 +326,12 @@ async function pushToSinks(
       if (sinkNeeds && !sinkNeeds.has(id)) continue;
 
       if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
-      const messages = store.getMessages(id);
+      const allMessages = store.getMessages(id);
+      // Delta push: only send messages beyond what was last pushed
+      const lastCount = store.lastPushedMessageCount(id, sink.id);
+      const messages = lastCount > 0 && lastCount < allMessages.length
+        ? allMessages.slice(lastCount)
+        : allMessages;
       sinkPayloads.get(sink)!.push({ session, messages });
     }
   }
@@ -337,9 +342,10 @@ async function pushToSinks(
       const result = await sink.push(payloads);
       log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
 
-      // Log successful pushes so we skip them next cycle
+      // Log successful pushes with total message count so we can delta-push next time
       for (const { session } of payloads) {
-        store.logPush(session.id, sink.id, 200, "ok");
+        const totalMsgCount = store.getMessages(session.id).length;
+        store.logPush(session.id, sink.id, 200, "ok", totalMsgCount);
       }
 
       if (result.errors.length > 0) {
@@ -351,6 +357,10 @@ async function pushToSinks(
   }
 }
 
+// Track file stat to skip re-reading unchanged files during periodic ingest.
+// Key: filePath, Value: { size, mtimeMs } from last successful ingest.
+const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
+
 /** Ingest adapter, return list of session IDs that were ingested */
 async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
   const ingested: string[] = [];
@@ -358,9 +368,19 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
     const sessions = await adapter.sessions();
     for (const session of sessions) {
       store.upsertSession(session);
-      ingested.push(session.id);
 
+      // Skip full re-ingest if the source file hasn't changed (stat-based)
       if (session.sourcePath && existsSync(session.sourcePath)) {
+        const stat = statSync(session.sourcePath);
+        const cached = ingestStatCache.get(session.sourcePath);
+        if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+          // File unchanged — no need to re-hash, re-copy, or re-parse messages
+          continue;
+        }
+
+        // File changed (or first time) — full ingest
+        ingested.push(session.id);
+
         try {
           const dest = join(rawDir, adapter.id, `${session.id}${getExt(session.sourcePath)}`);
           const destDir = join(rawDir, adapter.id);
@@ -376,15 +396,28 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
             store.upsertSession(session);
           }
         } catch {}
-      }
 
-      try {
-        const messages = await adapter.messages(session.id, session.sourcePath);
-        if (messages.length > 0) {
-          store.upsertMessages(session.id, messages);
-          autoTagSession(store, session, messages);
-        }
-      } catch {}
+        try {
+          const messages = await adapter.messages(session.id, session.sourcePath);
+          if (messages.length > 0) {
+            store.upsertMessages(session.id, messages);
+            autoTagSession(store, session, messages);
+          }
+        } catch {}
+
+        // Update stat cache after successful ingest
+        ingestStatCache.set(session.sourcePath, { size: stat.size, mtimeMs: stat.mtimeMs });
+      } else {
+        // No source path — always ingest
+        ingested.push(session.id);
+        try {
+          const messages = await adapter.messages(session.id, session.sourcePath);
+          if (messages.length > 0) {
+            store.upsertMessages(session.id, messages);
+            autoTagSession(store, session, messages);
+          }
+        } catch {}
+      }
     }
   } catch {}
   return ingested;

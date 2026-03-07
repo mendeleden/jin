@@ -59,12 +59,19 @@ function findClaudeDir(): string {
   return join(HOME, ".claude");
 }
 
+interface FileStatCache {
+  size: number;
+  mtimeMs: number;
+  session: Session;
+}
+
 export class ClaudeCodeAdapter implements Adapter {
   id = "claude-code";
   name = "Claude Code";
   icon = "◆";
   private projectsDir: string;
   private claudeDir: string;
+  private statCache = new Map<string, FileStatCache>();
 
   constructor() {
     this.projectsDir = findProjectsDir();
@@ -119,6 +126,12 @@ export class ClaudeCodeAdapter implements Adapter {
       }
     }
 
+    // Prune cache entries for files no longer seen
+    const seenPaths = new Set(sessions.map(s => s.sourcePath).filter(Boolean));
+    for (const path of this.statCache.keys()) {
+      if (!seenPaths.has(path)) this.statCache.delete(path);
+    }
+
     sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return sessions;
   }
@@ -127,11 +140,21 @@ export class ClaudeCodeAdapter implements Adapter {
     filePath: string, isSubAgent: boolean, parentSessionId: string, sessions: Session[]
   ): Promise<void> {
     try {
+      const stat = statSync(filePath);
+
+      // Stat cache: skip full re-parse if file hasn't changed
+      const cached = this.statCache.get(filePath);
+      if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+        // Recompute isActive since it's time-dependent
+        cached.session.isActive = Date.now() - new Date(cached.session.updatedAt).getTime() < 5 * 60 * 1000;
+        sessions.push(cached.session);
+        return;
+      }
+
       const meta = await this.parseSessionMeta(filePath);
       if (!meta || meta.msgCount === 0) return;
 
-      const stat = statSync(filePath);
-      sessions.push({
+      const session: Session = {
         id: meta.sessionId,
         name: meta.name || meta.sessionId.slice(0, 8),
         adapterId: this.id,
@@ -148,7 +171,11 @@ export class ClaudeCodeAdapter implements Adapter {
         parentSessionId,
         isCompacted: meta.isCompacted,
         metadata: { cwd: meta.cwd, slug: meta.slug, fileSize: stat.size },
-      });
+      };
+
+      // Cache the result keyed by file path + stat
+      this.statCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, session });
+      sessions.push(session);
     } catch { /* skip unreadable files */ }
   }
 

@@ -105,19 +105,96 @@ async function measureSourceData(config: any): Promise<Metrics["source"]> {
 }
 
 async function measureDaemon(): Promise<DaemonMetrics | null> {
-  if (process.platform !== "linux") return null;
-
   const pidFile = join(configDir(), "jin.pid");
   if (!existsSync(pidFile)) return null;
 
   let pid: number;
   try {
-    pid = parseInt(readFileSync(pidFile, "utf-8").trim());
+    pid = parseInt(readFileSync(pidFile, "utf-8").trim().split("\n")[0]);
     process.kill(pid, 0); // check alive
   } catch {
     return null;
   }
 
+  if (process.platform === "darwin") {
+    return measureDaemonDarwin(pid);
+  } else if (process.platform === "linux") {
+    return measureDaemonLinux(pid);
+  }
+  return null;
+}
+
+async function measureDaemonDarwin(pid: number): Promise<DaemonMetrics | null> {
+  const { execSync } = await import("child_process");
+  try {
+    // ps gives: pid %cpu rss vsz etime
+    const psOut = execSync(`ps -p ${pid} -o %cpu=,rss=,vsz=,etime=`, {
+      encoding: "utf-8", timeout: 5000,
+    }).trim();
+    const parts = psOut.split(/\s+/);
+    const cpuPercent = parseFloat(parts[0]) || 0;
+    const rssKB = parseInt(parts[1]) || 0;   // ps rss is already in KB on macOS
+    const vmKB = parseInt(parts[2]) || 0;
+
+    // Parse etime (dd-HH:MM:SS or HH:MM:SS or MM:SS)
+    const etime = parts[3] || "0:00";
+    const uptimeSeconds = parseEtime(etime);
+
+    // FD count via lsof (fast with -p)
+    let fdCount = 0;
+    try {
+      const lsofOut = execSync(`lsof -p ${pid} 2>/dev/null | wc -l`, {
+        encoding: "utf-8", timeout: 10000,
+      }).trim();
+      fdCount = parseInt(lsofOut) || 0;
+    } catch {}
+
+    // rusage via ps -p PID -o utime,stime (CPU time breakdown)
+    let cpuTimeSeconds = 0;
+    try {
+      // On macOS `ps -o cputime=` gives total CPU time as H:MM:SS or M:SS
+      const cpuTimeOut = execSync(`ps -p ${pid} -o cputime=`, {
+        encoding: "utf-8", timeout: 5000,
+      }).trim();
+      cpuTimeSeconds = parseEtime(cpuTimeOut);
+    } catch {}
+
+    // Disk I/O via `proc_info` is not easily available on macOS without dtrace.
+    // We use 0 and note it in the output.
+    return {
+      pid,
+      uptimeSeconds,
+      cpuPercent: Math.round(cpuPercent * 10) / 10,
+      rssKB,
+      vmPeakKB: vmKB, // macOS doesn't track peak; vsz is virtual size
+      threads: 0,     // would need `ps -M` parsing; not critical
+      fdCount,
+      rcharBytes: 0,  // not available without dtrace on macOS
+      wcharBytes: 0,
+      voluntaryCtxSwitches: 0,
+      nonvoluntaryCtxSwitches: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Parse ps etime format: [[dd-]HH:]MM:SS → seconds */
+function parseEtime(etime: string): number {
+  let days = 0;
+  let rest = etime;
+  if (rest.includes("-")) {
+    const [d, r] = rest.split("-");
+    days = parseInt(d) || 0;
+    rest = r;
+  }
+  const parts = rest.split(":").map(Number);
+  if (parts.length === 3) return days * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return days * 86400 + parts[0] * 60 + parts[1];
+  return 0;
+}
+
+async function measureDaemonLinux(pid: number): Promise<DaemonMetrics | null> {
   try {
     const status = readFileSync(`/proc/${pid}/status`, "utf-8");
     const io = readFileSync(`/proc/${pid}/io`, "utf-8");
@@ -229,7 +306,7 @@ function printMetrics(m: Metrics): void {
   const fmt = (n: number, unit: string) => {
     if (unit === "MB") return `${Math.round(n / 1024)} MB`;
     if (unit === "GB") return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
-    if (unit === "KB") return `${Math.round(n)} KB`;
+    if (unit === "KB") return n >= 1024 ? `${Math.round(n / 1024)} MB` : `${Math.round(n)} KB`;
     return `${n.toLocaleString()}${unit ? " " + unit : ""}`;
   };
 
@@ -265,14 +342,18 @@ function printMetrics(m: Metrics): void {
   Metric          Value              Budget        Status
   CPU %           ${d.cpuPercent}%${" ".repeat(Math.max(0, 19 - String(d.cpuPercent).length - 1))}< 0.5% idle    ${budgetCpu}
   RSS             ${fmt(d.rssKB, "KB")}${" ".repeat(Math.max(0, 19 - fmt(d.rssKB, "KB").length))}< 80 MB        ${budgetRss}
-  VM Peak         ${fmt(d.vmPeakKB, "KB")}
-  Threads         ${d.threads}
+  VM              ${fmt(d.vmPeakKB, "MB")}${process.platform === "linux" ? " (peak)" : " (virtual)"}
+  Threads         ${d.threads || "n/a"}
   Open FDs        ${d.fdCount}${" ".repeat(Math.max(0, 19 - String(d.fdCount).length))}< 50           ${budgetFd}
-  CPU time        ${cpuMinutes} min accumulated
-  Bytes read      ${fmt(d.rcharBytes, "GB")}
-  Bytes written   ${fmt(d.wcharBytes, "GB")}
-  Ctx switches    ${fmt(d.voluntaryCtxSwitches, "")} vol / ${fmt(d.nonvoluntaryCtxSwitches, "")} invol
-`);
+  CPU time        ${cpuMinutes} min accumulated`);
+    if (d.rcharBytes > 0 || d.wcharBytes > 0) {
+      console.log(`  Bytes read      ${fmt(d.rcharBytes, "GB")}
+  Bytes written   ${fmt(d.wcharBytes, "GB")}`);
+    }
+    if (d.voluntaryCtxSwitches > 0) {
+      console.log(`  Ctx switches    ${fmt(d.voluntaryCtxSwitches, "")} vol / ${fmt(d.nonvoluntaryCtxSwitches, "")} invol`);
+    }
+    console.log("");
   } else {
     console.log("  Daemon          not running\n");
   }

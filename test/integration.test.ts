@@ -239,6 +239,19 @@ describe("store: ingest parsed sessions into SQLite", () => {
 // Postgres sink tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+// File-level cleanup: drop postgres tables after ALL tests (including search) finish
+let pgCleanupConn: SQL | null = null;
+const origAfterAll = afterAll;
+afterAll(async () => {
+  if (pgCleanupConn) {
+    try {
+      await pgCleanupConn.unsafe("DROP TABLE IF EXISTS public.jin_messages CASCADE");
+      await pgCleanupConn.unsafe("DROP TABLE IF EXISTS public.jin_sessions CASCADE");
+      pgCleanupConn.close();
+    } catch {}
+  }
+});
+
 describe("postgres sink: push and query", () => {
   let pgSink: InstanceType<typeof PostgresSink>;
   let pgConn: SQL;
@@ -251,15 +264,10 @@ describe("postgres sink: push and query", () => {
       developerId: "test-dev",
     });
     pgConn = new SQL(PG_CONN);
+    pgCleanupConn = pgConn; // share for file-level cleanup
   });
 
   afterAll(async () => {
-    // Clean up tables
-    try {
-      await pgConn.unsafe("DROP TABLE IF EXISTS public.jin_messages CASCADE");
-      await pgConn.unsafe("DROP TABLE IF EXISTS public.jin_sessions CASCADE");
-      pgConn.close();
-    } catch {}
     await pgSink.close();
   });
 
@@ -368,15 +376,15 @@ describe("postgres search: FTS via PostgresSearcher", () => {
   test("backfillTsvector populates existing rows", async () => {
     await searcher.backfillTsvector();
 
-    // Verify tsvector is populated
+    // Verify tsvector is populated for all rows with non-empty content
     const pgConn = new SQL(PG_CONN);
-    const rows = await pgConn.unsafe(
-      "SELECT COUNT(*) as cnt FROM public.jin_messages WHERE content_tsv IS NOT NULL AND content IS NOT NULL"
+    const withTsv = await pgConn.unsafe(
+      "SELECT COUNT(*) as cnt FROM public.jin_messages WHERE content_tsv IS NOT NULL AND content IS NOT NULL AND content != ''"
     );
     const totalWithContent = await pgConn.unsafe(
       "SELECT COUNT(*) as cnt FROM public.jin_messages WHERE content IS NOT NULL AND content != ''"
     );
-    expect(Number(rows[0].cnt)).toBe(Number(totalWithContent[0].cnt));
+    expect(Number(withTsv[0].cnt)).toBe(Number(totalWithContent[0].cnt));
     pgConn.close();
   });
 

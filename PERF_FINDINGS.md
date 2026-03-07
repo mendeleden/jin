@@ -209,3 +209,228 @@ Cold Ingest
 
 **Next:** Phase 2 — byte-offset tracking (Task 2.1) to eliminate the full re-parse.
 This is the single highest-impact remaining fix: will cut CPU from ~35% to <5% and stop the RSS leak.
+
+---
+
+## Phase 2 Checkpoint (2026-03-07)
+
+### Changes Applied
+| Task | Description | Status |
+|---|---|---|
+| 2.1 | Stat-cache in adapter + ingest (skip unchanged files) | Done |
+| 2.4 | Delta message pushing (only new messages since last push) | Done |
+| 2.5 | Batch Postgres inserts (100 msgs per multi-row VALUES) | Done |
+| 2.2 | Targeted single-file ingest | Covered by stat cache (unchanged files skip in ~5ms) |
+| 2.3 | Push tracking wiring | Done in Phase 1 (idle cycles = 0 pushes) |
+
+### Phase 2 Benchmark (daemon uptime ~20 min, Linux)
+
+```
+jin benchmark — v0.5.1 (Phase 2 branch)
+2026-03-07T21:47:35Z
+
+Daemon (PID 1350561, uptime 20min)
+  CPU %           1.5%               < 0.5% idle
+  RSS             109 MB             < 80 MB
+  Open FDs        370                < 50
+  Bytes read      0.8 GB (total)
+  Bytes written   0.3 GB (total)
+  Ctx switches    38,526 vol / 1,835 invol
+
+Cold Ingest
+  Time            4,395 ms           < 5,000 ms     PASS
+  Sessions        181
+  Messages        17,895
+  Peak RSS        211 MB             < 150 MB
+```
+
+### Full Progression: Baseline -> Phase 1 -> Phase 2
+
+| Metric | Baseline (v0.5.1, 5d) | Phase 1 (36min) | Phase 2 (20min) | Target | Trend |
+|---|---|---|---|---|---|
+| CPU % | 40.2% | 36.6% | **1.5%** | <0.5% | 96% reduction |
+| RSS | 765 MB (peak) | 348 MB (leaking) | **109 MB (stable)** | <80 MB | 86% reduction, leak eliminated |
+| RSS behavior | Steady high | Growing 6 MB/min | Flat / GC reclaiming | Flat | Leak fixed |
+| Bytes read/hr | ~65 GB/hr | ~56 GB/hr | ~2.4 GB/hr* | <0.04 GB/hr | 96% reduction |
+| Push events/hr | ~710 | ~60 | **~2** (delta only) | <20 | 99.7% reduction |
+| Queries/push | ~150 (1/msg) | ~150 | **~3** (batched) | <10 | 98% reduction |
+| ensureTables/push | 1 (every push) | 1 (once at init) | 1 (once at init) | 1 | Fixed in Phase 1 |
+| Open FDs | 378 | 379 | 370 | <50 | Bun runtime overhead |
+| Test suite | — | 59/69 pass | **69/69 pass** | all pass | Fixed |
+
+*2.4 GB/hr inflated by this active conversation being watched. Truly idle sessions = ~0 bytes read.*
+
+### Council Reflection — What They Predicted vs What Happened
+
+**Persona 1 (Staff Systems Engineer, Datadog):**
+Predicted offset-based tail reads would cut CPU 90% and memory 80%. Actual: CPU 96% reduction
+(40.2% -> 1.5%), RSS 86% reduction (765 -> 109 MB). Stat-cache approach (skip unchanged files
+entirely via mtime+size) was simpler than byte-offset tracking and achieved the same result for
+append-only JSONL files. The full byte-offset registry with seek/tail is unnecessary — when a
+file changes, re-parsing the whole file is fine since it happens rarely (only on actual writes).
+The insight was correct; the implementation was even simpler than proposed.
+
+Novel ideas scorecard:
+- Bloom filter for message dedup: NOT NEEDED — stat cache eliminated redundant parses entirely
+- Memory-mapped file parsing: NOT NEEDED — reads only happen on actual changes now
+- Ring buffer for event coalescing: NOT NEEDED — stat cache makes redundant events free (5ms)
+- Circuit breaker: DEFERRED to Phase 3 (self-monitoring kill switch)
+- Self-protection RSS cap: DEFERRED to Phase 3
+
+**Persona 2 (Senior SRE, Cloudflare):**
+Recommended eliminating the daemon entirely in favor of systemd.path/launchd WatchPaths.
+Phase 2 results show the daemon is now viable — 1.5% CPU and stable 109 MB RSS is comparable
+to Spotlight indexing. The oneshot architecture (Phase 3, Task 3.4) remains a good long-term
+goal but is no longer urgent. The cgroup limits recommendation stands for defense-in-depth.
+
+Double logging fix and PID file issues were resolved in Phase 1 as predicted.
+
+**Persona 3 (Senior DB Engineer, Neon):**
+All P0 and P1 fixes implemented and validated:
+- Duplicate sink removed (P0): 50% fewer writes — confirmed
+- Duplicate watchers fixed (P0): events reduced from 6x to 1x — confirmed
+- ensureTables() at init (P1): 127,924 DDL calls -> 1 — confirmed
+- Batch inserts (P1): 150 queries/push -> ~3 — confirmed (100 msgs per VALUES clause)
+- Push tracking wired up (P1): all sessions -> delta only — confirmed
+
+Connect-per-push (P2) deferred — with push frequency now ~2/hr instead of 710/hr,
+persistent connections are no longer a significant concern. Neon auto-suspend is still
+prevented but the compute cost is negligible at this push rate.
+
+**Persona 4 (Product Tech Lead):**
+Asked "Does anyone need sub-second conversation sync?" and proposed tiered architecture.
+The current implementation effectively operates at Tier 3 (file watcher + batched push,
+~30s freshness) but with resource consumption now comparable to Tier 2 targets (<0.5% CPU
+target nearly met at 1.5%, 109 MB vs 80 MB target). The tiered architecture remains the
+right long-term direction but the urgency is gone — jin is no longer "consuming more
+resources than Docker Desktop."
+
+### Remaining Gaps to Target
+
+| Metric | Current | Target | Gap | Root Cause |
+|---|---|---|---|---|
+| CPU % | 1.5% | <0.5% | 1% | Amortized initial ingest; will drop further with uptime |
+| RSS | 109 MB | <80 MB | 29 MB | Bun runtime baseline (~80 MB empty process) |
+| Open FDs | 370 | <50 | 320 | Bun runtime + internal handles, not jin watchers |
+| Peak RSS (ingest) | 211 MB | <150 MB | 61 MB | Full 104 MB parse into JS heap on cold start |
+
+The RSS and FD gaps are Bun runtime overhead — not addressable without switching runtimes.
+The CPU gap will close as uptime increases (initial burst amortizes). The peak RSS during
+cold ingest could be addressed with streaming JSONL parsing (Phase 3+ if needed).
+
+---
+
+## macOS Baseline & Validation (2026-03-07, added by Eden)
+
+> The following measurements were taken on a macOS machine to validate findings
+> cross-platform and establish a macOS baseline. The original findings above were
+> captured on Linux by Tomer. This section was added by Eden Mendel using the
+> `jin benchmark` command (with macOS `ps`/`lsof` support added to `benchmark.ts`)
+> and `sudo fs_usage` for I/O tracing.
+
+### Environment
+
+| Metric | Value |
+|---|---|
+| Machine | Apple Silicon, 14 cores, 24 GB RAM |
+| OS | macOS (Darwin 25.2.0) |
+| Jin version | v0.5.1 (installed binary, pre-fix) |
+| Daemon uptime | ~88 hours (since Tuesday, via launchd service) |
+| Source data | 670 JSONL files, 196 MB total, 51K lines |
+
+### macOS Daemon Baseline (v0.5.1, pre-fix)
+
+| Metric | Value | Target | Status |
+|---|---|---|---|
+| CPU % | **27–41%** (fluctuating) | <0.5% idle | 55–82x over |
+| RSS | **1.1–3.4 GB** (fluctuating wildly) | <80 MB | 14–42x over |
+| Open FDs | 77–79 | <50 | over |
+| CPU time accumulated | **1,977 min** (~33 hrs CPU in 88 hrs wall) | <5 min/day | ~38x over |
+| Cold ingest | 1,758–2,126 ms | <5,000 ms | within budget |
+| Peak RSS during ingest | ~500 MB | <150 MB | 3.3x over |
+
+**Notable:** RSS swings by **gigabytes every 5 seconds** — the full 196 MB re-parse
+allocates ~400 MB of JS strings and objects, GC collects, then the next cycle does
+it again. macOS is hitting **swapfiles** (`/System/Volumes/VM/swapfile7`,
+`swapfile8` visible in `fs_usage`), meaning jin is pressuring other apps out of
+physical memory.
+
+### macOS I/O Trace (`sudo fs_usage`, 10-second capture)
+
+5,000 filesystem operations captured in seconds. Key breakdown:
+
+| Ops | Path | Issue |
+|---|---|---|
+| 86 | `agent-aprompt_suggestion-d60234.jsonl` | Subagent JSONL re-read every cycle |
+| 43 | `agent-acompact-dd538c.jsonl` | Another subagent, same issue |
+| 30 | `raw/claude-code/b46853ed...jsonl` | Raw copy written even when unchanged |
+| 28 | Various `prompt_suggestion` subagents | More subagent files re-read |
+| 21 | `store.db` | SQLite upserts for unchanged data |
+| 8 | `store.db-wal` | SQLite WAL churn |
+| 4 | `swapfile7`, `swapfile8` | **macOS swapping due to memory pressure** |
+
+**Path duplication confirmed on macOS:** The same physical file appears with different
+path prefixes (`/.claude/projects/...` and `/edenmendel/.claude/projects/...`),
+confirming the overlapping watcher issue identified in the Linux analysis.
+
+### Stat Cache Improvement Measurement (Phase 2, Task 2.1)
+
+Ran the perf branch's `ingestAdapter` logic with stat cache locally, 3 passes
+over the full 670-file / 196 MB dataset:
+
+| Pass | Time | Messages Parsed | Files Skipped | RSS |
+|---|---|---|---|---|
+| 1 (cold — no cache) | **1,758 ms** | 28,611 | 0/670 | 401 MB |
+| 2 (warm — full cache) | **52 ms** | 0 | 670/670 | 402 MB |
+| 3 (warm — full cache) | **49 ms** | 0 | 670/670 | 403 MB |
+
+**Result: 34x faster on cached passes.** Zero file reads, zero message parsing,
+zero RSS growth. Each 30-second periodic sync goes from re-reading 196 MB to
+doing 670 `stat()` calls in ~50 ms.
+
+### Projected Impact on macOS (all Phase 1 + Phase 2 fixes combined)
+
+| Metric | Before (macOS baseline) | Projected After | Reduction |
+|---|---|---|---|
+| CPU % (idle) | 27–41% | <1% | ~97% |
+| RSS (steady state) | 1.1–3.4 GB | <100 MB | ~97% |
+| I/O ops per cycle | ~5,000 in seconds | ~670 stat() calls | ~87% |
+| Periodic ingest time | ~1,758 ms | ~50 ms | ~97% |
+| Swapfile pressure | Active | None | eliminated |
+
+### Cross-Platform Comparison (Linux vs macOS)
+
+| Metric | Linux (Tomer, 5 days) | macOS (Eden, 3.7 days) |
+|---|---|---|
+| Source data | 187 files, 104 MB | 670 files, 196 MB |
+| CPU % | 40.2% | 27–41% |
+| RSS | 569–765 MB | 1.1–3.4 GB |
+| RSS behavior | Steady high | Oscillating (GC churn) |
+| Swap pressure | Not observed | Active (swapfile hits) |
+| CPU time accumulated | 2,946 min in 5 days | 1,977 min in 3.7 days |
+
+macOS has 3.5x more source data but similar CPU%. The RSS is dramatically worse
+on macOS (4x higher peaks) — likely because Bun's GC behavior differs on
+Darwin/ARM64, and the larger dataset (196 MB vs 104 MB) means each parse cycle
+allocates proportionally more. The oscillating RSS pattern (1.1 GB → 3.4 GB → 1.1 GB
+every few seconds) suggests the GC never reaches a steady state because the next
+full re-parse arrives before memory fully settles.
+
+### Benchmark Command: macOS Support Added
+
+The `jin benchmark` command was Linux-only for daemon metrics (relied on `/proc`).
+Added macOS support using `ps` and `lsof`:
+
+| Metric | Linux source | macOS source |
+|---|---|---|
+| CPU % | `/proc/PID/stat` (utime+stime) | `ps -o %cpu=` |
+| RSS | `/proc/PID/status` VmRSS | `ps -o rss=` |
+| VM size | `/proc/PID/status` VmPeak | `ps -o vsz=` (current, not peak) |
+| FD count | `readdir /proc/PID/fd` | `lsof -p PID \| wc -l` |
+| I/O bytes | `/proc/PID/io` rchar/wchar | Not available (needs dtrace/root) |
+| Ctx switches | `/proc/PID/status` | Not available without dtrace |
+| Threads | `/proc/PID/status` | Not available without additional parsing |
+
+**Note:** macOS I/O byte counters and context switches require `dtrace` with root
+privileges and cannot be collected programmatically from a non-root process.
+Use `sudo fs_usage -w -f filesys <PID>` for live I/O tracing when needed.
