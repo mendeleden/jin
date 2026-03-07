@@ -50,6 +50,13 @@ RestartSec=5s
 StandardOutput=append:${join(configDir(), "jin.log")}
 StandardError=append:${join(configDir(), "jin.log")}
 
+# Resource limits — prevent jin from starving the developer's machine
+MemoryMax=256M
+MemoryHigh=200M
+CPUQuota=10%
+TasksMax=20
+OOMPolicy=stop
+
 [Install]
 WantedBy=default.target
 `;
@@ -174,6 +181,12 @@ function launchdPlist(binPath: string): string {
 
     <key>WorkingDirectory</key>
     <string>${HOME}</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>Nice</key>
+    <integer>10</integer>
 </dict>
 </plist>
 `;
