@@ -223,9 +223,25 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     }
   }
 
+  // RSS kill switch: self-terminate if memory exceeds safe limit
+  const RSS_WARN_MB = 200;
+  const RSS_MAX_MB = 256;
+  const checkMemory = () => {
+    const rssMB = process.memoryUsage.rss() / (1024 * 1024);
+    if (rssMB > RSS_MAX_MB) {
+      log(`CRITICAL: RSS ${Math.round(rssMB)} MB exceeds ${RSS_MAX_MB} MB limit — exiting`);
+      store.close();
+      cleanup();
+      process.exit(1);
+    } else if (rssMB > RSS_WARN_MB) {
+      log(`WARNING: RSS ${Math.round(rssMB)} MB approaching ${RSS_MAX_MB} MB limit`);
+    }
+  };
+
   // Periodic sync for sinks (catch anything the watcher missed)
   const periodicInterval = config.watch.pollIntervalMs || 30_000;
   const periodicTimer = setInterval(async () => {
+    checkMemory();
     if (sinks.length === 0) return;
     for (const adapter of activeAdapters) {
       const ingested = await ingestAdapter(adapter, store, config.store.rawDir);

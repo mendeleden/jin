@@ -693,6 +693,7 @@ export class Store {
     if (!pushLogCols.has("message_count")) {
       this.db.exec("ALTER TABLE push_log ADD COLUMN message_count INTEGER DEFAULT 0");
     }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_push_log_lookup ON push_log(session_id, endpoint, status)");
 
     // FTS5 virtual table for full-text search on message content
     const hasFts = this.db.prepare(
