@@ -341,11 +341,23 @@ export class Store {
     return new Set(rows.map((r: any) => r.id));
   }
 
-  logPush(sessionId: string, endpoint: string, status: number, response: string): void {
+  logPush(sessionId: string, endpoint: string, status: number, response: string, messageCount?: number): void {
     this.db.run(
-      `INSERT INTO push_log (session_id, endpoint, pushed_at, status, response) VALUES (?, ?, ?, ?, ?)`,
-      [sessionId, endpoint, new Date().toISOString(), status, response]
+      `INSERT INTO push_log (session_id, endpoint, pushed_at, status, response, message_count) VALUES (?, ?, ?, ?, ?, ?)`,
+      [sessionId, endpoint, new Date().toISOString(), status, response, messageCount ?? 0]
     );
+  }
+
+  /** Get the number of messages last successfully pushed for a session+endpoint */
+  lastPushedMessageCount(sessionId: string, endpoint: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT message_count FROM push_log
+         WHERE session_id = ? AND endpoint = ? AND status = 200
+         ORDER BY pushed_at DESC LIMIT 1`
+      )
+      .get(sessionId, endpoint) as any;
+    return row?.message_count ?? 0;
   }
 
   /** Aggregate stats for analyze command */
@@ -676,6 +688,10 @@ export class Store {
     const msgCols = pragmaColumns("messages");
     if (!msgCols.has("record_type")) {
       this.db.exec("ALTER TABLE messages ADD COLUMN record_type TEXT DEFAULT ''");
+    }
+    const pushLogCols = pragmaColumns("push_log");
+    if (!pushLogCols.has("message_count")) {
+      this.db.exec("ALTER TABLE push_log ADD COLUMN message_count INTEGER DEFAULT 0");
     }
 
     // FTS5 virtual table for full-text search on message content

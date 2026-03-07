@@ -85,22 +85,37 @@ export class PostgresSink implements Sink {
           ]
         );
 
-        // Upsert messages
-        for (const msg of messages) {
+        // Batch upsert messages (100 per INSERT to stay within Postgres param limits)
+        const BATCH_SIZE = 100;
+        const COLS_PER_ROW = 12;
+        for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+          const batch = messages.slice(i, i + BATCH_SIZE);
+          const valueClauses: string[] = [];
+          const params: unknown[] = [];
+
+          for (let j = 0; j < batch.length; j++) {
+            const msg = batch[j];
+            const offset = j * COLS_PER_ROW;
+            valueClauses.push(
+              `($${offset+1},$${offset+2},$${offset+3},$${offset+4},$${offset+5},$${offset+6},$${offset+7},$${offset+8},$${offset+9},$${offset+10},$${offset+11},$${offset+12})`
+            );
+            params.push(
+              msg.id, session.id, msg.role, msg.content, msg.timestamp,
+              msg.model, msg.inputTokens, msg.outputTokens,
+              msg.cacheRead, msg.cacheWrite,
+              JSON.stringify(msg.toolUses), JSON.stringify(msg.thinkingBlocks),
+            );
+          }
+
           await this.query(
             `INSERT INTO ${this.messagesTable}
              (id, session_id, role, content, timestamp, model,
               input_tokens, output_tokens, cache_read, cache_write,
               tool_uses, thinking_blocks)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             VALUES ${valueClauses.join(",")}
              ON CONFLICT (id) DO UPDATE SET
               content=EXCLUDED.content, tool_uses=EXCLUDED.tool_uses`,
-            [
-              msg.id, session.id, msg.role, msg.content, msg.timestamp,
-              msg.model, msg.inputTokens, msg.outputTokens,
-              msg.cacheRead, msg.cacheWrite,
-              JSON.stringify(msg.toolUses), JSON.stringify(msg.thinkingBlocks),
-            ]
+            params
           );
         }
 

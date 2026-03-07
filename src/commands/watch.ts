@@ -326,7 +326,12 @@ async function pushToSinks(
       if (sinkNeeds && !sinkNeeds.has(id)) continue;
 
       if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
-      const messages = store.getMessages(id);
+      const allMessages = store.getMessages(id);
+      // Delta push: only send messages beyond what was last pushed
+      const lastCount = store.lastPushedMessageCount(id, sink.id);
+      const messages = lastCount > 0 && lastCount < allMessages.length
+        ? allMessages.slice(lastCount)
+        : allMessages;
       sinkPayloads.get(sink)!.push({ session, messages });
     }
   }
@@ -337,9 +342,10 @@ async function pushToSinks(
       const result = await sink.push(payloads);
       log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
 
-      // Log successful pushes so we skip them next cycle
+      // Log successful pushes with total message count so we can delta-push next time
       for (const { session } of payloads) {
-        store.logPush(session.id, sink.id, 200, "ok");
+        const totalMsgCount = store.getMessages(session.id).length;
+        store.logPush(session.id, sink.id, 200, "ok", totalMsgCount);
       }
 
       if (result.errors.length > 0) {
