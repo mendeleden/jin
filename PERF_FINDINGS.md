@@ -209,3 +209,120 @@ Cold Ingest
 
 **Next:** Phase 2 — byte-offset tracking (Task 2.1) to eliminate the full re-parse.
 This is the single highest-impact remaining fix: will cut CPU from ~35% to <5% and stop the RSS leak.
+
+---
+
+## macOS Baseline & Validation (2026-03-07, added by Eden)
+
+> The following measurements were taken on a macOS machine to validate findings
+> cross-platform and establish a macOS baseline. The original findings above were
+> captured on Linux by Tomer. This section was added by Eden Mendel using the
+> `jin benchmark` command (with macOS `ps`/`lsof` support added to `benchmark.ts`)
+> and `sudo fs_usage` for I/O tracing.
+
+### Environment
+
+| Metric | Value |
+|---|---|
+| Machine | Apple Silicon, 14 cores, 24 GB RAM |
+| OS | macOS (Darwin 25.2.0) |
+| Jin version | v0.5.1 (installed binary, pre-fix) |
+| Daemon uptime | ~88 hours (since Tuesday, via launchd service) |
+| Source data | 670 JSONL files, 196 MB total, 51K lines |
+
+### macOS Daemon Baseline (v0.5.1, pre-fix)
+
+| Metric | Value | Target | Status |
+|---|---|---|---|
+| CPU % | **27–41%** (fluctuating) | <0.5% idle | 55–82x over |
+| RSS | **1.1–3.4 GB** (fluctuating wildly) | <80 MB | 14–42x over |
+| Open FDs | 77–79 | <50 | over |
+| CPU time accumulated | **1,977 min** (~33 hrs CPU in 88 hrs wall) | <5 min/day | ~38x over |
+| Cold ingest | 1,758–2,126 ms | <5,000 ms | within budget |
+| Peak RSS during ingest | ~500 MB | <150 MB | 3.3x over |
+
+**Notable:** RSS swings by **gigabytes every 5 seconds** — the full 196 MB re-parse
+allocates ~400 MB of JS strings and objects, GC collects, then the next cycle does
+it again. macOS is hitting **swapfiles** (`/System/Volumes/VM/swapfile7`,
+`swapfile8` visible in `fs_usage`), meaning jin is pressuring other apps out of
+physical memory.
+
+### macOS I/O Trace (`sudo fs_usage`, 10-second capture)
+
+5,000 filesystem operations captured in seconds. Key breakdown:
+
+| Ops | Path | Issue |
+|---|---|---|
+| 86 | `agent-aprompt_suggestion-d60234.jsonl` | Subagent JSONL re-read every cycle |
+| 43 | `agent-acompact-dd538c.jsonl` | Another subagent, same issue |
+| 30 | `raw/claude-code/b46853ed...jsonl` | Raw copy written even when unchanged |
+| 28 | Various `prompt_suggestion` subagents | More subagent files re-read |
+| 21 | `store.db` | SQLite upserts for unchanged data |
+| 8 | `store.db-wal` | SQLite WAL churn |
+| 4 | `swapfile7`, `swapfile8` | **macOS swapping due to memory pressure** |
+
+**Path duplication confirmed on macOS:** The same physical file appears with different
+path prefixes (`/.claude/projects/...` and `/edenmendel/.claude/projects/...`),
+confirming the overlapping watcher issue identified in the Linux analysis.
+
+### Stat Cache Improvement Measurement (Phase 2, Task 2.1)
+
+Ran the perf branch's `ingestAdapter` logic with stat cache locally, 3 passes
+over the full 670-file / 196 MB dataset:
+
+| Pass | Time | Messages Parsed | Files Skipped | RSS |
+|---|---|---|---|---|
+| 1 (cold — no cache) | **1,758 ms** | 28,611 | 0/670 | 401 MB |
+| 2 (warm — full cache) | **52 ms** | 0 | 670/670 | 402 MB |
+| 3 (warm — full cache) | **49 ms** | 0 | 670/670 | 403 MB |
+
+**Result: 34x faster on cached passes.** Zero file reads, zero message parsing,
+zero RSS growth. Each 30-second periodic sync goes from re-reading 196 MB to
+doing 670 `stat()` calls in ~50 ms.
+
+### Projected Impact on macOS (all Phase 1 + Phase 2 fixes combined)
+
+| Metric | Before (macOS baseline) | Projected After | Reduction |
+|---|---|---|---|
+| CPU % (idle) | 27–41% | <1% | ~97% |
+| RSS (steady state) | 1.1–3.4 GB | <100 MB | ~97% |
+| I/O ops per cycle | ~5,000 in seconds | ~670 stat() calls | ~87% |
+| Periodic ingest time | ~1,758 ms | ~50 ms | ~97% |
+| Swapfile pressure | Active | None | eliminated |
+
+### Cross-Platform Comparison (Linux vs macOS)
+
+| Metric | Linux (Tomer, 5 days) | macOS (Eden, 3.7 days) |
+|---|---|---|
+| Source data | 187 files, 104 MB | 670 files, 196 MB |
+| CPU % | 40.2% | 27–41% |
+| RSS | 569–765 MB | 1.1–3.4 GB |
+| RSS behavior | Steady high | Oscillating (GC churn) |
+| Swap pressure | Not observed | Active (swapfile hits) |
+| CPU time accumulated | 2,946 min in 5 days | 1,977 min in 3.7 days |
+
+macOS has 3.5x more source data but similar CPU%. The RSS is dramatically worse
+on macOS (4x higher peaks) — likely because Bun's GC behavior differs on
+Darwin/ARM64, and the larger dataset (196 MB vs 104 MB) means each parse cycle
+allocates proportionally more. The oscillating RSS pattern (1.1 GB → 3.4 GB → 1.1 GB
+every few seconds) suggests the GC never reaches a steady state because the next
+full re-parse arrives before memory fully settles.
+
+### Benchmark Command: macOS Support Added
+
+The `jin benchmark` command was Linux-only for daemon metrics (relied on `/proc`).
+Added macOS support using `ps` and `lsof`:
+
+| Metric | Linux source | macOS source |
+|---|---|---|
+| CPU % | `/proc/PID/stat` (utime+stime) | `ps -o %cpu=` |
+| RSS | `/proc/PID/status` VmRSS | `ps -o rss=` |
+| VM size | `/proc/PID/status` VmPeak | `ps -o vsz=` (current, not peak) |
+| FD count | `readdir /proc/PID/fd` | `lsof -p PID \| wc -l` |
+| I/O bytes | `/proc/PID/io` rchar/wchar | Not available (needs dtrace/root) |
+| Ctx switches | `/proc/PID/status` | Not available without dtrace |
+| Threads | `/proc/PID/status` | Not available without additional parsing |
+
+**Note:** macOS I/O byte counters and context switches require `dtrace` with root
+privileges and cannot be collected programmatically from a non-root process.
+Use `sudo fs_usage -w -f filesys <PID>` for live I/O tracing when needed.
