@@ -342,11 +342,15 @@ async function pushToSinks(
 
       if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
       const allMessages = store.getMessages(id);
-      // Delta push: only send messages beyond what was last pushed
-      const lastCount = store.lastPushedMessageCount(id, sink.id);
-      const messages = lastCount > 0 && lastCount < allMessages.length
-        ? allMessages.slice(lastCount)
-        : allMessages;
+      // Delta push: only for sinks that support merge semantics (e.g. Postgres ON CONFLICT).
+      // Sinks like S3 (last-write-wins) must always receive ALL messages.
+      let messages = allMessages;
+      if (sink.supportsDelta) {
+        const lastCount = store.lastPushedMessageCount(id, sink.id);
+        if (lastCount > 0 && lastCount < allMessages.length) {
+          messages = allMessages.slice(lastCount);
+        }
+      }
       sinkPayloads.get(sink)!.push({ session, messages });
     }
   }

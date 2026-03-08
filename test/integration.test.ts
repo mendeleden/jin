@@ -517,3 +517,302 @@ describe("s3 sink: push to MinIO", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// E2E round-trip correctness: push twice, verify no data loss
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("e2e: postgres multi-push round-trip", () => {
+  let pgSink: InstanceType<typeof PostgresSink>;
+  let pgConn: SQL;
+  const E2E_SCHEMA = "e2e_test";
+
+  beforeAll(async () => {
+    pgConn = new SQL(PG_CONN);
+    await pgConn.unsafe(`CREATE SCHEMA IF NOT EXISTS ${E2E_SCHEMA}`);
+    pgSink = new PostgresSink({
+      type: "postgres",
+      connectionString: PG_CONN,
+      schema: E2E_SCHEMA,
+      table: "roundtrip_sessions",
+      teamId: "e2e-team",
+      developerId: "e2e-dev",
+    });
+  });
+
+  afterAll(async () => {
+    await pgConn.unsafe(`DROP SCHEMA IF EXISTS ${E2E_SCHEMA} CASCADE`);
+    pgConn.close();
+    await pgSink.close();
+  });
+
+  test("push 5 messages, then push 10 — all 10 present in postgres", async () => {
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: "e2e-roundtrip-pg",
+      name: "E2E Roundtrip Test",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
+      createdAt: now,
+      updatedAt: now,
+      durationMs: 0,
+      isActive: false,
+      totalTokens: 150,
+      estCost: 0,
+      messageCount: 5,
+      sourcePath: "",
+      isSubAgent: false,
+      parentSessionId: "",
+      isCompacted: false,
+      metadata: {},
+    };
+
+    const makeMsg = (i: number): Message => ({
+      id: `e2e-msg-${i}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `E2E test message number ${i}`,
+      timestamp: new Date(Date.now() + i * 1000).toISOString(),
+      model: "test-model",
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      toolUses: [],
+      thinkingBlocks: [],
+      recordType: "",
+    });
+
+    // First push: 5 messages
+    const first5 = Array.from({ length: 5 }, (_, i) => makeMsg(i));
+    const r1 = await pgSink.push([{ session, messages: first5 }]);
+    if (r1.failed > 0) console.log("  PG E2E push errors:", r1.errors);
+    expect(r1.pushed).toBe(1);
+    expect(r1.failed).toBe(0);
+
+    // Verify 5 messages
+    const count1 = await pgConn.unsafe(
+      `SELECT count(*) as cnt FROM ${E2E_SCHEMA}.roundtrip_sessions_messages WHERE session_id = 'e2e-roundtrip-pg'`
+    );
+    expect(Number(count1[0].cnt)).toBe(5);
+
+    // Second push: only the 5 NEW messages (simulating delta push)
+    session.messageCount = 10;
+    const next5 = Array.from({ length: 5 }, (_, i) => makeMsg(i + 5));
+    const r2 = await pgSink.push([{ session, messages: next5 }]);
+    expect(r2.pushed).toBe(1);
+
+    // Verify all 10 messages present (ON CONFLICT merge works)
+    const count2 = await pgConn.unsafe(
+      `SELECT count(*) as cnt FROM ${E2E_SCHEMA}.roundtrip_sessions_messages WHERE session_id = 'e2e-roundtrip-pg'`
+    );
+    expect(Number(count2[0].cnt)).toBe(10);
+
+    // Verify content integrity — each message has correct content
+    const rows = await pgConn.unsafe(
+      `SELECT id, content FROM ${E2E_SCHEMA}.roundtrip_sessions_messages WHERE session_id = 'e2e-roundtrip-pg' ORDER BY id`
+    );
+    for (let i = 0; i < 10; i++) {
+      const row = rows.find((r: any) => r.id === `e2e-msg-${i}`);
+      expect(row).toBeTruthy();
+      expect(row.content).toBe(`E2E test message number ${i}`);
+    }
+  });
+});
+
+describe("e2e: s3 multi-push round-trip", () => {
+  let s3Sink: InstanceType<typeof S3Sink>;
+  let s3Sign: (method: string, path: string, body?: string) => Record<string, string>;
+
+  beforeAll(async () => {
+    const { createHash, createHmac } = await import("crypto");
+
+    s3Sign = (method: string, path: string, body?: string) => {
+      const now = new Date();
+      const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, "");
+      const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z/, "Z");
+      const region = "us-east-1";
+      const scope = `${dateStamp}/${region}/s3/aws4_request`;
+      const payloadHash = createHash("sha256").update(body || "").digest("hex");
+      const host = "localhost:9444";
+      const headers: Record<string, string> = {
+        Host: host, "X-Amz-Date": amzDate, "X-Amz-Content-Sha256": payloadHash,
+      };
+      const signedHeaderKeys = Object.keys(headers).map(k => k.toLowerCase()).sort();
+      const canonicalHeaders = signedHeaderKeys
+        .map(k => `${k}:${headers[Object.keys(headers).find(h => h.toLowerCase() === k)!].trim()}`)
+        .join("\n") + "\n";
+      const signedHeaders = signedHeaderKeys.join(";");
+      const canonicalRequest = [method, path, "", canonicalHeaders, signedHeaders, payloadHash].join("\n");
+      const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, createHash("sha256").update(canonicalRequest).digest("hex")].join("\n");
+      const kDate = createHmac("sha256", "AWS4minioadmin").update(dateStamp).digest();
+      const kRegion = createHmac("sha256", kDate).update(region).digest();
+      const kService = createHmac("sha256", kRegion).update("s3").digest();
+      const kSigning = createHmac("sha256", kService).update("aws4_request").digest();
+      const signature = createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+      headers["Authorization"] = `AWS4-HMAC-SHA256 Credential=minioadmin/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+      return headers;
+    };
+
+    try {
+      const headers = s3Sign("PUT", `/${S3_BUCKET}/`);
+      await fetch(`${S3_ENDPOINT}/${S3_BUCKET}/`, { method: "PUT", headers });
+    } catch { /* bucket may already exist */ }
+
+    s3Sink = new S3Sink({
+      type: "s3",
+      bucket: S3_BUCKET,
+      endpoint: S3_ENDPOINT,
+      region: "us-east-1",
+      accessKeyId: "minioadmin",
+      secretAccessKey: "minioadmin",
+      prefix: "jin/",
+      teamId: "e2e-team",
+      developerId: "e2e-dev",
+    });
+  });
+
+  afterAll(async () => {
+    await s3Sink.close();
+  });
+
+  test("push 5 messages, then push 10 — S3 object contains all 10", async () => {
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: "e2e-roundtrip-s3",
+      name: "E2E S3 Roundtrip",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
+      createdAt: now,
+      updatedAt: now,
+      durationMs: 0,
+      isActive: false,
+      totalTokens: 150,
+      estCost: 0,
+      messageCount: 5,
+      sourcePath: "",
+      isSubAgent: false,
+      parentSessionId: "",
+      isCompacted: false,
+      metadata: {},
+    };
+
+    const makeMsg = (i: number): Message => ({
+      id: `e2e-s3-msg-${i}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `S3 roundtrip message ${i}`,
+      timestamp: new Date(Date.now() + i * 1000).toISOString(),
+      model: "test-model",
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      toolUses: [],
+      thinkingBlocks: [],
+      recordType: "",
+    });
+
+    // First push: 5 messages
+    const first5 = Array.from({ length: 5 }, (_, i) => makeMsg(i));
+    const r1 = await s3Sink.push([{ session, messages: first5 }]);
+    if (r1.pushed === 0) {
+      console.log(`  S3 E2E skipped: push failed — ${r1.errors.join("; ")}`);
+      return;
+    }
+    expect(r1.pushed).toBe(1);
+
+    // Second push: ALL 10 messages (S3 = replace semantics, must send all)
+    session.messageCount = 10;
+    const all10 = Array.from({ length: 10 }, (_, i) => makeMsg(i));
+    const r2 = await s3Sink.push([{ session, messages: all10 }]);
+    expect(r2.pushed).toBe(1);
+
+    // Read back from S3 and verify all 10 messages
+    const key = `jin/e2e-team/e2e-dev/claude-code/e2e-roundtrip-s3.json`;
+    const getPath = `/${S3_BUCKET}/${key}`;
+    const getHeaders = s3Sign("GET", getPath);
+    const resp = await fetch(`${S3_ENDPOINT}${getPath}`, { headers: getHeaders });
+    expect(resp.ok).toBe(true);
+
+    const data = await resp.json() as any;
+    expect(data.messages.length).toBe(10);
+    for (let i = 0; i < 10; i++) {
+      expect(data.messages[i].id).toBe(`e2e-s3-msg-${i}`);
+      expect(data.messages[i].content).toBe(`S3 roundtrip message ${i}`);
+    }
+  });
+
+  test("delta-only push to S3 would lose data (regression guard)", async () => {
+    // This test verifies that if someone accidentally sends only delta messages
+    // to S3, the read-back would be incomplete. This is the bug we're guarding against.
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: "e2e-delta-guard-s3",
+      name: "Delta Guard",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
+      createdAt: now,
+      updatedAt: now,
+      durationMs: 0,
+      isActive: false,
+      totalTokens: 45,
+      estCost: 0,
+      messageCount: 3,
+      sourcePath: "",
+      isSubAgent: false,
+      parentSessionId: "",
+      isCompacted: false,
+      metadata: {},
+    };
+
+    const makeMsg = (i: number): Message => ({
+      id: `guard-msg-${i}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `Guard message ${i}`,
+      timestamp: new Date(Date.now() + i * 1000).toISOString(),
+      model: "test-model",
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      toolUses: [],
+      thinkingBlocks: [],
+      recordType: "",
+    });
+
+    // Push 3 messages
+    const r1 = await s3Sink.push([{ session, messages: [makeMsg(0), makeMsg(1), makeMsg(2)] }]);
+    if (r1.pushed === 0) return; // skip if MinIO unavailable
+
+    // Simulate delta push: only message 3 and 4 (the bug: this overwrites the file)
+    session.messageCount = 5;
+    const deltaOnly = [makeMsg(3), makeMsg(4)];
+    await s3Sink.push([{ session, messages: deltaOnly }]);
+
+    // Read back — should have only 2 messages (the delta), NOT all 5
+    // This proves delta push to S3 = data loss
+    const key = `jin/e2e-team/e2e-dev/claude-code/e2e-delta-guard-s3.json`;
+    const getPath = `/${S3_BUCKET}/${key}`;
+    const getHeaders = s3Sign("GET", getPath);
+    const resp = await fetch(`${S3_ENDPOINT}${getPath}`, { headers: getHeaders });
+    expect(resp.ok).toBe(true);
+
+    const data = await resp.json() as any;
+    // S3 has replace semantics — only the delta messages survive
+    expect(data.messages.length).toBe(2);
+    expect(data.messages[0].id).toBe("guard-msg-3");
+    // This is WHY supportsDelta=false for S3 — the orchestrator must send ALL messages
+  });
+
+  test("S3Sink.supportsDelta is false", () => {
+    expect(s3Sink.supportsDelta).toBeFalsy();
+  });
+
+  test("PostgresSink.supportsDelta is true", () => {
+    const pgSink = new PostgresSink({
+      type: "postgres",
+      connectionString: PG_CONN,
+    });
+    expect(pgSink.supportsDelta).toBe(true);
+    pgSink.close();
+  });
+});
