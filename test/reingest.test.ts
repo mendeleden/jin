@@ -153,6 +153,64 @@ describe("jin reingest command", () => {
     expect(ccLine).toBeDefined();
   });
 
+  test("is_compacted is persisted through store", async () => {
+    // Create a compacted session fixture
+    const COMPACTED_ID = "reingest-comp-0000-0000-000000000000";
+    const lines = [
+      JSON.stringify({
+        type: "user", sessionId: COMPACTED_ID, uuid: "uuid-c1",
+        cwd: "/tmp/test", timestamp: "2026-03-01T10:00:00Z",
+        message: { role: "user", content: "some task" },
+      }),
+      JSON.stringify({
+        type: "assistant", sessionId: COMPACTED_ID, uuid: "uuid-c2",
+        timestamp: "2026-03-01T10:00:05Z",
+        message: { role: "assistant", model: "claude-sonnet-4-20250514",
+          content: [{ type: "text", text: "Done." }],
+          usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+      }),
+      JSON.stringify({
+        type: "summary", summary: "Task completed", sessionId: COMPACTED_ID,
+        uuid: "uuid-cs", timestamp: "2026-03-01T10:01:00Z",
+      }),
+      JSON.stringify({
+        type: "system", subtype: "compact_boundary", sessionId: COMPACTED_ID,
+        uuid: "uuid-cb", timestamp: "2026-03-01T10:01:01Z",
+      }),
+    ];
+    writeFileSync(join(projectDir, `${COMPACTED_ID}.jsonl`), lines.join("\n") + "\n");
+
+    const origLog = console.log;
+    console.log = () => {};
+    await reingestCommand({});
+    console.log = origLog;
+
+    const store = new Store(dbPath);
+    const session = store.getSession(COMPACTED_ID);
+    expect(session).toBeDefined();
+    expect(session!.isCompacted).toBe(true);
+    store.close();
+
+    // Clean up
+    rmSync(join(projectDir, `${COMPACTED_ID}.jsonl`), { force: true });
+  });
+
+  test("record_type is persisted through store for messages", async () => {
+    // The compacted fixture above should have created summary + system messages
+    // with recordType set. Let's verify using the main session which has user/assistant.
+    const store = new Store(dbPath);
+    const messages = store.getMessages(SESSION_ID);
+    expect(messages.length).toBeGreaterThan(0);
+    // user and assistant messages should have recordType set
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    expect(userMsg!.recordType).toBe("user");
+    const assistantMsg = messages.find((m) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg!.recordType).toBe("assistant");
+    store.close();
+  });
+
   test("skips push when no sinks configured", async () => {
     const logs: string[] = [];
     const origLog = console.log;

@@ -237,4 +237,41 @@ describe("postgres sink: sub-agent fields in SQL", () => {
     expect((sub as any).parentSessionId).not.toBe("");
     expect((sub as any).parentSessionId).not.toBe((sub as any).id);
   });
+
+  test("session INSERT parameter count matches column count", () => {
+    const sinkSource = readFileSync(
+      join(import.meta.dir, "../src/sinks/postgres.ts"),
+      "utf-8",
+    );
+
+    // Extract the session INSERT statement
+    const sessionInsertMatch = sinkSource.match(
+      /INSERT INTO \$\{this\.sessionsTable\}\s*\n\s*\(([^)]+)\)\s*\n\s*VALUES\s*\(([^)]+)\)/
+    );
+    expect(sessionInsertMatch).not.toBeNull();
+
+    const columns = sessionInsertMatch![1].split(",").map(s => s.trim()).filter(Boolean);
+    const placeholders = sessionInsertMatch![2].split(",").map(s => s.trim()).filter(Boolean);
+    expect(columns.length).toBe(placeholders.length);
+    expect(columns.length).toBe(19);
+  });
+
+  test("message INSERT COLS_PER_ROW matches column count", () => {
+    const sinkSource = readFileSync(
+      join(import.meta.dir, "../src/sinks/postgres.ts"),
+      "utf-8",
+    );
+
+    // Verify COLS_PER_ROW matches actual column count in message INSERT
+    const colsPerRow = sinkSource.match(/COLS_PER_ROW = (\d+)/);
+    expect(colsPerRow).not.toBeNull();
+
+    const msgInsertMatch = sinkSource.match(
+      /INSERT INTO \$\{this\.messagesTable\}\s*\n\s*\(([^)]+)\)\s*\n/
+    );
+    expect(msgInsertMatch).not.toBeNull();
+
+    const msgColumns = msgInsertMatch![1].split(",").map(s => s.trim()).filter(Boolean);
+    expect(msgColumns.length).toBe(Number(colsPerRow![1]));
+  });
 });
