@@ -411,6 +411,77 @@ Only log PERF lines when `--verbose` or when values exceed thresholds.
 
 ---
 
+### Phase 2b: Tail-Read Pipeline (Proportional Cost)
+
+**Goal:** Make per-change cost proportional to DELTA, not TOTAL. When 1 line is appended to a
+17 MB file, jin should read 2 KB, parse 1 line, and write 1 SQLite row — not read 51 MB,
+parse 12,000 lines, and upsert 600 rows.
+
+#### Task 2b.1: Byte-offset tail read in ClaudeCodeAdapter
+**Files:** `src/adapters/claude-code.ts`
+**Problem:** `parseSessionMeta()` and `parseMessages()` both call `Bun.file().text()` which
+reads the entire file from byte 0. For a 17 MB file, this allocates ~51 MB (native buffer +
+UTF-16 string) and parses 6,000 JSON lines.
+**Fix:** Track byte offset per file in an in-memory map. On file change, use
+`Bun.file(path).slice(offset)` to read only new bytes. Parse only new lines. Update session
+metadata incrementally (add tokens, update timestamps, update message count).
+Handle truncation: if `stat.size < offset`, reset to 0 and full re-parse.
+**Before:** 17 MB read + 6,000 JSON.parse per file change
+**After:** ~2 KB read + 1 JSON.parse per file change
+**Metric:** `bytes_read_per_change` and `lines_parsed_per_change` in micro-benchmark.
+
+#### Task 2b.2: Drop SHA-256 hash
+**File:** `src/commands/watch.ts` (ingestAdapter, lines 405-413)
+**Problem:** `Bun.file().arrayBuffer()` reads the entire file a second time to compute SHA-256
+for change detection. The stat cache (size + mtimeMs) already detects changes.
+**Fix:** Remove the hash computation. Use stat cache for change detection. Remove
+`copyFileSync` to `raw/` or make it opt-in via config.
+**Before:** 17 MB read + SHA-256 computation + 17 MB write (raw copy) per change
+**After:** 0 additional reads, 0 writes
+**Metric:** `hash_reads_eliminated` in micro-benchmark.
+
+#### Task 2b.3: Insert-only new messages in SQLite
+**File:** `src/store.ts`, `src/commands/watch.ts`
+**Problem:** `store.upsertMessages()` does `INSERT OR REPLACE` for ALL messages (e.g., 600)
+even though only 1 is new. SQLite does a B-tree lookup, delete, and re-insert for each of
+the 599 unchanged rows.
+**Fix:** Track message count per session. Only insert messages with index > existing count.
+Use `INSERT` (not upsert) for new messages since they're append-only.
+**Before:** 600 SQLite upserts per file change
+**After:** 1 SQLite insert per file change
+**Metric:** `sqlite_writes_per_change` in micro-benchmark.
+
+#### Task 2b.4: Make raw copy optional
+**File:** `src/commands/watch.ts` (ingestAdapter, line 410)
+**Problem:** `copyFileSync` copies the entire JSONL file to `raw/` on every change. The source
+file is the authoritative copy; Postgres sink is the backup.
+**Fix:** Add `config.store.rawCopy: boolean` (default: false). Skip copy when disabled.
+**Before:** 17 MB write per file change
+**After:** 0 writes
+**Metric:** `raw_copy_writes_eliminated` in micro-benchmark.
+
+**Micro-Benchmark Protocol (per-change cost):**
+```bash
+# 1. Start daemon, wait for initial ingest
+# 2. Record /proc/$PID/io baseline (rchar, wchar, syscr, syscw)
+# 3. Append 1 JSONL line to an active session file
+# 4. Wait 10s for ingest cycle
+# 5. Record /proc/$PID/io delta
+# 6. Expected targets:
+#    rchar delta: <10 KB (was ~51 MB)
+#    wchar delta: <5 KB (was ~17 MB)
+#    syscr delta: <20 (was ~6,000+)
+#    RSS delta: <1 MB (was ~91 MB)
+```
+
+**Combined Phase 2b Target:**
+- I/O per file change: 51 MB → <10 KB (5,000x reduction)
+- JSON.parse per change: 12,000 → 1
+- SQLite writes per change: 600 → 1
+- RSS growth per change: ~0 MB
+
+---
+
 ## Phase Summary & Expected Metrics
 
 | Phase | CPU After | RSS After | Push/hour After | Timeline |
@@ -418,6 +489,7 @@ Only log PERF lines when `--verbose` or when values exceed thresholds.
 | Baseline (now) | 40.2% | 569MB | 710 | — |
 | Phase 1 (stop the bleeding) | <5% | ~300MB | <30 | Week 1 |
 | Phase 2 (incremental arch) | <0.5% | <80MB | <10 | Week 2-3 |
+| Phase 2b (tail-read pipeline) | <0.5% | <80MB | <5 | Week 3 |
 | Phase 3 (process mgmt) | <0.5% + capped | <80MB + capped | <5 | Week 3-4 |
 | Phase 4 (governance) | Enforced in CI | Enforced in CI | Enforced in CI | Week 4-5 |
 

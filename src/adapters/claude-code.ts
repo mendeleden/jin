@@ -59,10 +59,30 @@ function findClaudeDir(): string {
   return join(HOME, ".claude");
 }
 
-interface FileStatCache {
+/** Accumulated metadata that can be incrementally updated from new JSONL lines */
+interface SessionMeta {
+  sessionId: string;
+  slug: string;
+  cwd: string;
+  firstMsg: string;
+  lastMsg: string;
+  msgCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  firstUserMessage: string;
+  primaryModel: string;
+  isCompacted: boolean;
+}
+
+interface FileOffsetCache {
   size: number;
   mtimeMs: number;
-  session: Session;
+  offset: number;         // byte offset of last read position
+  messageCount: number;   // total messages parsed so far
+  meta: SessionMeta;      // accumulated metadata
+  session: Session;       // built session object
 }
 
 export class ClaudeCodeAdapter implements Adapter {
@@ -71,7 +91,7 @@ export class ClaudeCodeAdapter implements Adapter {
   icon = "◆";
   private projectsDir: string;
   private claudeDir: string;
-  private statCache = new Map<string, FileStatCache>();
+  private fileCache = new Map<string, FileOffsetCache>();
 
   constructor() {
     this.projectsDir = findProjectsDir();
@@ -128,8 +148,8 @@ export class ClaudeCodeAdapter implements Adapter {
 
     // Prune cache entries for files no longer seen
     const seenPaths = new Set(sessions.map(s => s.sourcePath).filter(Boolean));
-    for (const path of this.statCache.keys()) {
-      if (!seenPaths.has(path)) this.statCache.delete(path);
+    for (const path of this.fileCache.keys()) {
+      if (!seenPaths.has(path)) this.fileCache.delete(path);
     }
 
     sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -141,30 +161,51 @@ export class ClaudeCodeAdapter implements Adapter {
   ): Promise<void> {
     try {
       const stat = statSync(filePath);
+      const cached = this.fileCache.get(filePath);
 
-      // Stat cache: skip full re-parse if file hasn't changed
-      const cached = this.statCache.get(filePath);
+      // Unchanged file — reuse cached session
       if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-        // Recompute isActive since it's time-dependent
         cached.session.isActive = Date.now() - new Date(cached.session.updatedAt).getTime() < 5 * 60 * 1000;
         sessions.push(cached.session);
         return;
       }
 
-      const meta = await this.parseSessionMeta(filePath);
-      if (!meta || meta.msgCount === 0) return;
+      // Determine read strategy: tail (append) or full (new/truncated)
+      let meta: SessionMeta;
+      let newOffset: number;
+
+      if (cached && stat.size > cached.offset) {
+        // TAIL READ: file grew — read only new bytes, update metadata incrementally
+        const blob = Bun.file(filePath).slice(cached.offset);
+        const newText = await blob.text();
+        const newLines = newText.split("\n").filter(Boolean);
+        meta = { ...cached.meta }; // clone to avoid mutating cache before success
+        for (const line of newLines) {
+          try {
+            this.updateMetaFromLine(meta, JSON.parse(line));
+          } catch { continue; }
+        }
+        newOffset = stat.size;
+      } else {
+        // FULL READ: new file or truncated — parse from byte 0
+        meta = await this.parseSessionMetaFull(filePath);
+        if (!meta || meta.msgCount === 0) return;
+        newOffset = stat.size;
+      }
+
+      if (meta.msgCount === 0) return;
 
       const session: Session = {
         id: meta.sessionId,
-        name: meta.name || meta.sessionId.slice(0, 8),
+        name: this.buildSessionName(meta),
         adapterId: this.id,
         adapterName: this.name,
         createdAt: meta.firstMsg,
         updatedAt: meta.lastMsg,
         durationMs: new Date(meta.lastMsg).getTime() - new Date(meta.firstMsg).getTime(),
         isActive: Date.now() - new Date(meta.lastMsg).getTime() < 5 * 60 * 1000,
-        totalTokens: meta.totalTokens,
-        estCost: meta.estCost,
+        totalTokens: meta.totalInputTokens + meta.totalOutputTokens,
+        estCost: estimateCost(meta.primaryModel, meta.totalInputTokens, meta.totalOutputTokens, meta.totalCacheRead, meta.totalCacheWrite),
         messageCount: meta.msgCount,
         sourcePath: filePath,
         isSubAgent,
@@ -173,10 +214,57 @@ export class ClaudeCodeAdapter implements Adapter {
         metadata: { cwd: meta.cwd, slug: meta.slug, fileSize: stat.size },
       };
 
-      // Cache the result keyed by file path + stat
-      this.statCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, session });
+      this.fileCache.set(filePath, {
+        size: stat.size, mtimeMs: stat.mtimeMs,
+        offset: newOffset, messageCount: meta.msgCount,
+        meta, session,
+      });
       sessions.push(session);
     } catch { /* skip unreadable files */ }
+  }
+
+  /** Update accumulated metadata from a single parsed JSONL line */
+  private updateMetaFromLine(meta: SessionMeta, raw: RawLine): void {
+    if (!meta.sessionId && raw.sessionId) meta.sessionId = raw.sessionId;
+    if (!meta.slug && raw.slug) meta.slug = raw.slug;
+    if (!meta.cwd && raw.cwd) meta.cwd = raw.cwd;
+
+    if (raw.type === "summary" || (raw.type === "system" && raw.subtype === "compact_boundary")) {
+      meta.isCompacted = true;
+    }
+
+    if (raw.type === "user" || raw.type === "assistant") {
+      if (!meta.firstMsg) meta.firstMsg = raw.timestamp;
+      meta.lastMsg = raw.timestamp;
+      meta.msgCount++;
+
+      if (raw.type === "user" && !meta.firstUserMessage && raw.message?.content) {
+        const content = raw.message.content;
+        if (typeof content === "string") {
+          meta.firstUserMessage = content.slice(0, 120);
+        } else if (Array.isArray(content)) {
+          const textBlock = (content as ContentBlock[]).find((b) => b.type === "text");
+          if (textBlock?.text) meta.firstUserMessage = textBlock.text.slice(0, 120);
+        }
+      }
+
+      if (raw.message?.usage) {
+        meta.totalInputTokens += raw.message.usage.input_tokens || 0;
+        meta.totalOutputTokens += raw.message.usage.output_tokens || 0;
+        meta.totalCacheRead += raw.message.usage.cache_read_input_tokens || 0;
+        meta.totalCacheWrite += raw.message.usage.cache_creation_input_tokens || 0;
+      }
+      if (raw.message?.model && !meta.primaryModel) {
+        meta.primaryModel = raw.message.model;
+      }
+    }
+  }
+
+  private buildSessionName(meta: SessionMeta): string {
+    let name = meta.firstUserMessage.replace(/<[^>]+>/g, "").trim();
+    if (name.length > 120) name = name.slice(0, 117) + "...";
+    name = name.replace(/\n/g, " ");
+    return name || meta.slug || meta.sessionId.slice(0, 8);
   }
 
   async messages(sessionId: string, sourcePath?: string): Promise<Message[]> {
@@ -187,6 +275,13 @@ export class ClaudeCodeAdapter implements Adapter {
     const filePath = await this.findSessionFile(sessionId);
     if (!filePath) return [];
     return this.parseMessages(filePath);
+  }
+
+  /** Return only messages added since the given count (for delta SQLite inserts) */
+  async newMessages(sessionId: string, sourcePath: string, afterIndex: number): Promise<Message[]> {
+    if (!sourcePath || !existsSync(sourcePath)) return [];
+    const all = await this.parseMessages(sourcePath);
+    return afterIndex > 0 && afterIndex < all.length ? all.slice(afterIndex) : all;
   }
 
   watchPaths(): string[] {
@@ -238,94 +333,32 @@ export class ClaudeCodeAdapter implements Adapter {
     return null;
   }
 
-  private async parseSessionMeta(filePath: string) {
+  /** Full parse from byte 0 — used for new files or truncated files */
+  private async parseSessionMetaFull(filePath: string): Promise<SessionMeta> {
     const text = await Bun.file(filePath).text();
     const lines = text.split("\n").filter(Boolean);
-    if (lines.length === 0) return null;
 
-    let sessionId = "";
-    let slug = "";
-    let cwd = "";
-    let firstMsg = "";
-    let lastMsg = "";
-    let msgCount = 0;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let totalCacheRead = 0;
-    let totalCacheWrite = 0;
-    let firstUserMessage = "";
-    let primaryModel = "";
-    let isCompacted = false;
+    const meta: SessionMeta = {
+      sessionId: "", slug: "", cwd: "",
+      firstMsg: "", lastMsg: "",
+      msgCount: 0,
+      totalInputTokens: 0, totalOutputTokens: 0,
+      totalCacheRead: 0, totalCacheWrite: 0,
+      firstUserMessage: "", primaryModel: "",
+      isCompacted: false,
+    };
 
     for (const line of lines) {
       try {
-        const raw: RawLine = JSON.parse(line);
-        if (!sessionId && raw.sessionId) sessionId = raw.sessionId;
-        if (!slug && raw.slug) slug = raw.slug;
-        if (!cwd && raw.cwd) cwd = raw.cwd;
-
-        // Detect compaction
-        if (raw.type === "summary" || (raw.type === "system" && raw.subtype === "compact_boundary")) {
-          isCompacted = true;
-        }
-
-        if (raw.type === "user" || raw.type === "assistant") {
-          if (!firstMsg) firstMsg = raw.timestamp;
-          lastMsg = raw.timestamp;
-          msgCount++;
-
-          if (raw.type === "user" && !firstUserMessage && raw.message?.content) {
-            const content = raw.message.content;
-            if (typeof content === "string") {
-              firstUserMessage = content.slice(0, 120);
-            } else if (Array.isArray(content)) {
-              const textBlock = (content as ContentBlock[]).find((b) => b.type === "text");
-              if (textBlock?.text) firstUserMessage = textBlock.text.slice(0, 120);
-            }
-          }
-
-          if (raw.message?.usage) {
-            totalInputTokens += raw.message.usage.input_tokens || 0;
-            totalOutputTokens += raw.message.usage.output_tokens || 0;
-            totalCacheRead += raw.message.usage.cache_read_input_tokens || 0;
-            totalCacheWrite += raw.message.usage.cache_creation_input_tokens || 0;
-          }
-          if (raw.message?.model && !primaryModel) {
-            primaryModel = raw.message.model;
-          }
-        }
-      } catch {
-        continue;
-      }
+        this.updateMetaFromLine(meta, JSON.parse(line));
+      } catch { continue; }
     }
 
-    if (!sessionId) sessionId = basename(filePath, ".jsonl");
+    if (!meta.sessionId) meta.sessionId = basename(filePath, ".jsonl");
+    if (!meta.firstMsg) meta.firstMsg = new Date().toISOString();
+    if (!meta.lastMsg) meta.lastMsg = new Date().toISOString();
 
-    // Clean XML tags from title
-    let name = firstUserMessage.replace(/<[^>]+>/g, "").trim();
-    if (name.length > 120) name = name.slice(0, 117) + "...";
-    name = name.replace(/\n/g, " ");
-
-    const estCost = estimateCost(
-      primaryModel,
-      totalInputTokens,
-      totalOutputTokens,
-      totalCacheRead,
-      totalCacheWrite
-    );
-
-    return {
-      sessionId,
-      name: name || slug || sessionId.slice(0, 8),
-      slug,
-      cwd,
-      firstMsg: firstMsg || new Date().toISOString(),
-      lastMsg: lastMsg || new Date().toISOString(),
-      msgCount,
-      totalTokens: totalInputTokens + totalOutputTokens,
-      estCost,
-      isCompacted,
-    };
+    return meta;
   }
 
   private async parseMessages(filePath: string): Promise<Message[]> {

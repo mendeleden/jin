@@ -320,6 +320,59 @@ cold ingest could be addressed with streaming JSONL parsing (Phase 3+ if needed)
 
 ---
 
+## Phase 2b Checkpoint: Tail-Read Pipeline (2026-03-08)
+
+### Changes Applied
+| Task | Description | Status |
+|---|---|---|
+| 2b.1 | Byte-offset tail read in ClaudeCodeAdapter | Done |
+| 2b.2 | Drop SHA-256 hash (stat cache sufficient) | Done |
+| 2b.3 | Insert-only new messages in SQLite (INSERT OR IGNORE) | Done |
+| 2b.4 | Raw copy removed (source file is authoritative) | Done |
+
+### Per-Change Micro-Benchmark (1 line appended to 167 KB file)
+
+| Metric | Phase 2 (before) | Phase 2b (after) | Improvement |
+|---|---|---|---|
+| Bytes read (rchar) | 31.3 MB | **3.5 KB** | 9,200x |
+| Bytes written (wchar) | 8.4 MB | **104 bytes** | 82,000x |
+| Read syscalls | 2,150 | 129 | 17x |
+| Write syscalls | 1,142 | 13 | 88x |
+| RSS delta | +26 MB | -0.9 KB (GC reclaimed) | eliminated |
+
+### What Changed in the Data Path
+
+**Before (Phase 2):** 1 appended line triggered:
+1. `Bun.file().text()` — read entire file for metadata (17 MB)
+2. `Bun.file().arrayBuffer()` — read entire file for SHA-256 hash (17 MB)
+3. `copyFileSync` — copy entire file to raw/ (17 MB write)
+4. `adapter.messages()` — read entire file again for messages (17 MB)
+5. `store.upsertMessages()` — INSERT OR REPLACE all 600 messages in SQLite
+Total: 51 MB read, 17 MB write, 600 SQLite upserts
+
+**After (Phase 2b):** 1 appended line triggers:
+1. `stat()` — detect file changed (1 syscall)
+2. `Bun.file().slice(offset)` — read only new bytes (~200 bytes)
+3. `JSON.parse` — parse 1 line
+4. `store.insertMessages()` — INSERT OR IGNORE 1 row in SQLite
+Total: 3.5 KB read, 104 bytes write, 1 SQLite insert
+
+### Full Progression: Baseline -> Phase 1 -> Phase 2 -> Phase 2b
+
+| Metric | Baseline (v0.5.1) | Phase 1 | Phase 2 | Phase 2b | Target |
+|---|---|---|---|---|---|
+| CPU % | 40.2% | 36.6% | 1.5% | ~1.5% | <0.5% |
+| RSS (steady) | 765 MB | 348 MB (leak) | 109 MB | ~95 MB | <80 MB |
+| I/O per file change | ~200 MB | ~200 MB | ~31 MB | **3.5 KB** | <10 KB |
+| SQLite writes/change | ~600 | ~600 | ~600 | **1** | 1 |
+| Postgres queries/push | ~150 | ~150 | ~3 | ~3 | <10 |
+| Tests | — | 59/69 | 69/69 | **69/69** | all pass |
+
+The per-change cost is now **proportional to the delta, not the total** — the fundamental
+design principle established by the performance council.
+
+---
+
 ## macOS Baseline & Validation (2026-03-07, added by Eden)
 
 > The following measurements were taken on a macOS machine to validate findings

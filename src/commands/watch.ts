@@ -8,9 +8,8 @@ import { autoTagSession } from "../tagger";
 import { sinksForSession } from "../routing";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
-import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
-import { createHash } from "crypto";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
@@ -385,46 +384,41 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
     for (const session of sessions) {
       store.upsertSession(session);
 
-      // Skip full re-ingest if the source file hasn't changed (stat-based)
+      // Skip if the source file hasn't changed (stat-based)
       if (session.sourcePath && existsSync(session.sourcePath)) {
         const stat = statSync(session.sourcePath);
         const cached = ingestStatCache.get(session.sourcePath);
         if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-          // File unchanged — no need to re-hash, re-copy, or re-parse messages
           continue;
         }
 
-        // File changed (or first time) — full ingest
+        // File changed (or first time)
         ingested.push(session.id);
 
+        // Insert only NEW messages (delta), not all messages
         try {
-          const dest = join(rawDir, adapter.id, `${session.id}${getExt(session.sourcePath)}`);
-          const destDir = join(rawDir, adapter.id);
-          if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
-
-          const content = await Bun.file(session.sourcePath).arrayBuffer();
-          const hash = createHash("sha256").update(Buffer.from(content)).digest("hex");
-
-          const existing = store.getSession(session.id);
-          if (!existing?.metadata || (existing.metadata as any).fileHash !== hash) {
-            copyFileSync(session.sourcePath, dest);
-            session.metadata = { ...session.metadata, fileHash: hash, rawCopyPath: dest };
-            store.upsertSession(session);
+          const existingCount = store.messageCountForSession(session.id);
+          if (existingCount > 0 && 'newMessages' in adapter) {
+            // Adapter supports delta — only parse and insert new messages
+            const newMsgs = await (adapter as any).newMessages(session.id, session.sourcePath, existingCount);
+            if (newMsgs.length > 0) {
+              store.insertMessages(session.id, newMsgs);
+              // Re-tag with all messages only if needed
+              const allMsgs = store.getMessages(session.id);
+              autoTagSession(store, session, allMsgs);
+            }
+          } else {
+            // Fallback: full message parse (first ingest or non-supporting adapter)
+            const messages = await adapter.messages(session.id, session.sourcePath);
+            if (messages.length > 0) {
+              store.upsertMessages(session.id, messages);
+              autoTagSession(store, session, messages);
+            }
           }
         } catch {}
 
-        try {
-          const messages = await adapter.messages(session.id, session.sourcePath);
-          if (messages.length > 0) {
-            store.upsertMessages(session.id, messages);
-            autoTagSession(store, session, messages);
-          }
-        } catch {}
-
-        // Update stat cache after successful ingest
         ingestStatCache.set(session.sourcePath, { size: stat.size, mtimeMs: stat.mtimeMs });
       } else {
-        // No source path — always ingest
         ingested.push(session.id);
         try {
           const messages = await adapter.messages(session.id, session.sourcePath);

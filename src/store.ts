@@ -260,6 +260,32 @@ export class Store {
     return row.cnt;
   }
 
+  /** Count messages for a specific session */
+  messageCountForSession(sessionId: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM messages WHERE session_id = ?").get(sessionId) as any;
+    return row?.cnt ?? 0;
+  }
+
+  /** Insert only new messages (no upsert — for append-only JSONL sources) */
+  insertMessages(sessionId: string, messages: Message[]): void {
+    if (messages.length === 0) return;
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO messages (id, session_id, role, content, timestamp, model,
+        input_tokens, output_tokens, cache_read, cache_write, tool_uses, thinking_blocks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const tx = this.db.transaction((msgs: Message[]) => {
+      for (const m of msgs) {
+        stmt.run(
+          m.id, sessionId, m.role, m.content, m.timestamp, m.model,
+          m.inputTokens, m.outputTokens, m.cacheRead, m.cacheWrite,
+          JSON.stringify(m.toolUses), JSON.stringify(m.thinkingBlocks)
+        );
+      }
+    });
+    tx(messages);
+  }
+
   searchMessages(opts: {
     query: string;
     adapterId?: string;
