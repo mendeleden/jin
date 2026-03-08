@@ -178,16 +178,15 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     }, PUSH_DEBOUNCE_MS);
   };
 
-  // Build a set of paths to exclude from watching to prevent feedback loops.
-  // When jin watches its own active session directory, every ingest/push cycle
-  // triggers new watch events, creating a runaway loop.
-  const excludePaths = new Set<string>();
-  // Exclude the jin project directory itself (this process is running in it)
-  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "-");
-  // Also detect via environment
-  if (process.env.CLAUDE_PROJECT_DIR) {
-    excludePaths.add(process.env.CLAUDE_PROJECT_DIR);
-  }
+  // Self-observation filter: exclude jin's own output files to prevent feedback loops.
+  // Only excludes paths jin writes to (config dir: log, store.db, raw, benchmarks).
+  // Does NOT exclude Claude Code sessions in the same project — that was a bug.
+  const { shouldExcludeEvent } = await import("../self-observation");
+  const jinOutputPaths = {
+    logFile: LOG_FILE,
+    dbPath: config.store.dbPath,
+    rawDir: config.store.rawDir,
+  };
 
   // Set up file watcher
   const watcher = new FileWatcher({
@@ -196,14 +195,9 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       const adapter = activeAdapters.find((a) => a.id === event.adapterId);
       if (!adapter) return;
 
-      // Skip events from jin's own project directory to prevent feedback loop:
+      // Skip events from jin's own output files to prevent feedback loop:
       // file change → ingest → push → log → repeat
-      if (excludePaths.size > 0) {
-        const skip = [...excludePaths].some(p => event.path.includes(p));
-        if (skip) return;
-      }
-      // Also skip if the path contains the cwd slug (jin watching its own project)
-      if (cwdSlug && event.path.includes(cwdSlug)) return;
+      if (shouldExcludeEvent(event.path, jinOutputPaths)) return;
 
       log(`${event.type} — ${adapter.name}: ${basename(event.path)}`);
 
