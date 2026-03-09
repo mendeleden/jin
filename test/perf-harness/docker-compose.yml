@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jin_perf
+      POSTGRES_PASSWORD: jin_perf
+      POSTGRES_DB: jin_perf
+    ports:
+      - "5445:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jin_perf"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data  # RAM-backed for consistent perf
+
+  jin:
+    build:
+      context: ../..
+      dockerfile: test/perf-harness/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JIN_PERF_PG: "postgresql://jin_perf:jin_perf@postgres:5432/jin_perf"
+      HOME: /home/testuser
+    volumes:
+      - ./results:/results
+    # No healthcheck — the harness script exits when done
