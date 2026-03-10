@@ -646,3 +646,80 @@ Added macOS support using `ps` and `lsof`:
 **Note:** macOS I/O byte counters and context switches require `dtrace` with root
 privileges and cannot be collected programmatically from a non-root process.
 Use `sudo fs_usage -w -f filesys <PID>` for live I/O tracing when needed.
+
+---
+
+## Backpressure Checkpoint (2026-03-09)
+
+### Problem: RSS Kill Switch Crash on Larger Datasets (Issue #8)
+
+The v0.7.0 RSS kill switch (256 MB cap) triggered during cold ingest on macOS with
+687 files / 190 MB of source data. The daemon would parse all files, push all sessions
+to Postgres, then crash during active session simulation when RSS spiked past 256 MB.
+
+Root cause analysis identified three compounding memory spikes:
+
+1. **`adapter.sessions()`** — parses all 687 files' metadata via `parseSessionMetaFull()`
+   in a tight loop. Each call loads the full file as a UTF-8 string, splits into lines,
+   and parses JSON. For a 22 MB file: ~66 MB transient allocation. GC had no yield
+   opportunity between files.
+
+2. **`ingestAdapter()` loop** — for each session, `adapter.messages()` loads the entire
+   JSONL file again for message extraction. 687 sequential calls without yielding to
+   the event loop. The GC could not collect previous files' allocations.
+
+3. **`pushToSinks()`** — re-read ALL messages from SQLite for ALL 88 sessions into a
+   single `sinkPayloads` map before any network call. Messages were double-JSON-parsed
+   (once during ingest, once during `rowToMessage()` retrieval). A redundant
+   `store.getMessages().length` call after each push re-read all messages a third time.
+
+### Changes Applied
+
+| Layer | Change | File |
+|---|---|---|
+| Adapter | `Bun.gc(false)` + `await Bun.sleep(0)` between project directories | `src/adapters/claude-code.ts` |
+| Ingest | Batch sessions in chunks of 20 with `Bun.gc(false)` + yield between batches | `src/commands/watch.ts` |
+| Push | Batch payload assembly in chunks of 20 instead of all-at-once | `src/commands/watch.ts` |
+| Push | Replace `store.getMessages(id).length` with `store.messageCountForSession(id)` | `src/commands/watch.ts` |
+| Benchmark | Same batching for `jin benchmark` cold ingest path | `src/commands/benchmark.ts` |
+| Ingest cmd | Same batching + remove dead raw copy / SHA-256 code | `src/commands/ingest.ts` |
+| Harness | Add SQLite vs Postgres push completeness assertion (95% threshold) | `test/perf-harness/harness.sh` |
+
+### E2E Harness Results (Docker, 687 files, 190 MB, 14 CPUs, 7.8 GB RAM)
+
+| Metric | Before (v0.7.0) | After (backpressure) | Change |
+|---|---|---|---|
+| Post-ingest RSS | 308 MB | 288 MB | -6% |
+| Push-phase peak RSS | 352 MB | **245 MB** | **-30%** |
+| Idle settle RSS | 208 MB | **104 MB** | **-50%** |
+| Active session peak | 272 MB (**CRASH**) | **174 MB** | **-36%, no crash** |
+| Benchmark Peak RSS | 266 MB | **243 MB** | -9% |
+| Daemon survived? | No (kill switch) | **Yes** | **Fixed** |
+| Push completeness | Unknown | **98% (29,818/30,294)** | Now measured |
+| Cold ingest time | 1,881 ms | 2,053 ms | +9% (GC cost) |
+| Postgres sessions | 88 | 88 | — |
+| Postgres messages | 29,445 | 29,818 | +1.3% |
+| All assertions | 5/5 pass | **6/6 pass** | +1 new |
+
+Push logs show batched delivery: `Pushed 20`, `Pushed 20`, `Pushed 20`, `Pushed 19`, `Pushed 8`.
+
+### Push Completeness Gap (2%)
+
+29,818 of 30,294 messages reached Postgres (98%). The 476 missing messages are from:
+
+1. **Session `03582219`** — empty timestamp string `""` fails Postgres `TIMESTAMPTZ` cast
+   (issue #11). All messages for this session are lost.
+2. **Session `36ef1cb3`** — simulated messages from harness Phase 5 have no `id` field,
+   causing `null value in column "id"` constraint violation. This is a harness test data
+   issue, not a jin bug.
+
+### Remaining Gap to Target
+
+| Metric | Current | Target | Gap | Root Cause |
+|---|---|---|---|---|
+| Benchmark Peak RSS | 243 MB | <150 MB | 93 MB | `parseSessionMetaFull()` loads each file fully |
+| Idle settle RSS | 104 MB | <80 MB | 24 MB | Bun runtime baseline (~80 MB empty process) |
+
+Getting below 150 MB peak requires streaming JSONL parsing (Phase 3.3) — parsing files
+line-by-line without loading the full text into memory. This is a larger refactor of the
+adapter interface and is deferred until source data exceeds 500 MB.
