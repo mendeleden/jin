@@ -90,16 +90,43 @@ metric "baseline" "total_lines" "$TOTAL_LINES"
 log ""
 log "═══ PHASE 1: JIN INIT --TEAM ═══"
 
-# Build team config base64 the same way a team lead would
+# Build Postgres team config base64 the same way a team lead would
 TEAM_JSON="{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
 TEAM_B64=$(echo -n "$TEAM_JSON" | base64 -w0)
-log "Team config (base64): ${TEAM_B64:0:40}..."
+log "Postgres team config (base64): ${TEAM_B64:0:40}..."
 
 INIT_START=$(date +%s%N)
 jin init --team="$TEAM_B64" 2>&1 | tee -a "$REPORT"
 INIT_END=$(date +%s%N)
 INIT_MS=$(( (INIT_END - INIT_START) / 1000000 ))
-metric "init" "duration_ms" "$INIT_MS"
+metric "init" "pg_duration_ms" "$INIT_MS"
+
+# Build S3 team config and create MinIO bucket
+S3_ENDPOINT="$JIN_PERF_S3_ENDPOINT"
+S3_BUCKET="$JIN_PERF_S3_BUCKET"
+S3_ACCESS_KEY="$JIN_PERF_S3_ACCESS_KEY"
+S3_SECRET_KEY="$JIN_PERF_S3_SECRET_KEY"
+
+SCRIPTS_DIR="/home/testuser/jin-src/test/perf-harness/scripts"
+
+if [ -n "$S3_ENDPOINT" ]; then
+  log ""
+  log "Creating MinIO bucket: $S3_BUCKET"
+  cd /home/testuser/jin-src
+  BUCKET_RESULT=$(bun run "$SCRIPTS_DIR/create-s3-bucket.ts" "$S3_ENDPOINT" "$S3_BUCKET" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" 2>/dev/null || echo '{"ok":false}')
+  log "  Bucket result: $BUCKET_RESULT"
+  cd /home/testuser
+
+  S3_JSON="{\"type\":\"s3\",\"id\":\"perf-s3\",\"bucket\":\"$S3_BUCKET\",\"endpoint\":\"$S3_ENDPOINT\",\"accessKeyId\":\"$S3_ACCESS_KEY\",\"secretAccessKey\":\"$S3_SECRET_KEY\",\"region\":\"us-east-1\",\"prefix\":\"jin/\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
+  S3_B64=$(echo -n "$S3_JSON" | base64 -w0)
+  log "S3 team config (base64): ${S3_B64:0:40}..."
+
+  S3_INIT_START=$(date +%s%N)
+  jin init --team="$S3_B64" 2>&1 | tee -a "$REPORT"
+  S3_INIT_END=$(date +%s%N)
+  S3_INIT_MS=$(( (S3_INIT_END - S3_INIT_START) / 1000000 ))
+  metric "init" "s3_duration_ms" "$S3_INIT_MS"
+fi
 
 # Verify init created the config and detected adapters
 log ""
@@ -131,8 +158,12 @@ log "═══ PHASE 2: JIN CONNECT ═══"
 CONNECT_COUNT=0
 while IFS= read -r project; do
   [ -z "$project" ] && continue
-  log "  Connecting: $project → perf-test"
+  log "  Connecting: $project → perf-test (postgres)"
   jin connect "$project" --sink=perf-test 2>&1 | tee -a "$REPORT" || true
+  if [ -n "$S3_ENDPOINT" ]; then
+    log "  Connecting: $project → perf-s3 (s3)"
+    jin connect "$project" --sink=perf-s3 2>&1 | tee -a "$REPORT" || true
+  fi
   CONNECT_COUNT=$((CONNECT_COUNT + 1))
 done < "$PROJECTS_FILE"
 
@@ -243,22 +274,15 @@ log "═══ PHASE 7: POSTGRES VERIFICATION ═══"
 
 cd /home/testuser/jin-src
 
-# Count sessions and messages
-SESSIONS=$(bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const r = await sql.unsafe('SELECT count(*) as cnt FROM public.jin_sessions');
-console.log(r[0].cnt);
-sql.close();
-" 2>/dev/null || echo "0")
+# Run verification script — returns JSON with sessions, messages, invalidRoles, teamId, developerId, topSessions
+PG_RESULT=$(bun run "$SCRIPTS_DIR/verify-postgres.ts" "$PG_CONN" 2>/dev/null || echo '{}')
+log "Postgres result: $PG_RESULT"
 
-MESSAGES=$(bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const r = await sql.unsafe('SELECT count(*) as cnt FROM public.jin_messages');
-console.log(r[0].cnt);
-sql.close();
-" 2>/dev/null || echo "0")
+SESSIONS=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sessions 2>/dev/null || echo "0")
+MESSAGES=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" messages 2>/dev/null || echo "0")
+VALID_ROLES=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" invalidRoles 2>/dev/null || echo "-1")
+TEAM_ID=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" teamId 2>/dev/null || echo "")
+DEV_ID=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" developerId 2>/dev/null || echo "")
 
 metric "postgres" "sessions" "$SESSIONS"
 metric "postgres" "messages" "$MESSAGES"
@@ -277,44 +301,55 @@ if [ "$SQLITE_MESSAGES" -gt 0 ] 2>/dev/null; then
   log "Push completeness: $MESSAGES / $SQLITE_MESSAGES messages (${PUSH_PCT}%)"
 fi
 
-# Verify team_id and developer_id are set correctly
-TEAM_ID=$(bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const r = await sql.unsafe('SELECT DISTINCT team_id FROM public.jin_sessions LIMIT 1');
-console.log(r.length > 0 ? r[0].team_id : '');
-sql.close();
-" 2>/dev/null || echo "")
-
-DEV_ID=$(bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const r = await sql.unsafe('SELECT DISTINCT developer_id FROM public.jin_sessions LIMIT 1');
-console.log(r.length > 0 ? r[0].developer_id : '');
-sql.close();
-" 2>/dev/null || echo "")
-
-# Verify messages have valid roles
-VALID_ROLES=$(bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const r = await sql.unsafe(\"SELECT count(*) as cnt FROM public.jin_messages WHERE role NOT IN ('user','assistant','system')\");
-console.log(r[0].cnt);
-sql.close();
-" 2>/dev/null || echo "-1")
-
 # Session details for report
 log ""
 log "Postgres session details:"
-bun -e "
-const { SQL } = await import('bun');
-const sql = new SQL('$PG_CONN');
-const rows = await sql.unsafe('SELECT id, adapter_id, name, message_count, team_id, developer_id FROM public.jin_sessions ORDER BY created_at DESC LIMIT 10');
-for (const r of rows) {
-  console.log('  ' + r.adapter_id + ' | ' + (r.name || '').slice(0,40) + ' | msgs=' + r.message_count + ' | team=' + r.team_id + ' | dev=' + r.developer_id);
-}
-sql.close();
-" 2>&1 | tee -a "$REPORT" || true
+PG_TOP=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" topSessions 2>/dev/null || echo "[]")
+log "  $PG_TOP"
+
+# ─── S3 Verification ─────────────────────────────────────────────────────
+
+S3_SESSIONS=0
+S3_MESSAGES=0
+S3_VALID=0
+S3_SAMPLE_TEAM=""
+
+if [ -n "$S3_ENDPOINT" ]; then
+  log ""
+  log "═══ PHASE 7b: S3 VERIFICATION ═══"
+
+  cd /home/testuser/jin-src
+
+  # Run verification script — returns JSON with sessions, totalMessages, sample
+  S3_RESULT=$(bun run "$SCRIPTS_DIR/verify-s3.ts" "$S3_ENDPOINT" "$S3_BUCKET" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" 2>/dev/null || echo '{}')
+  log "S3 result: $S3_RESULT"
+
+  S3_SESSIONS=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sessions 2>/dev/null || echo "0")
+  S3_MESSAGES=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" totalMessages 2>/dev/null || echo "0")
+
+  metric "s3" "sessions" "$S3_SESSIONS"
+  metric "s3" "total_messages" "$S3_MESSAGES"
+  log "S3 objects: $S3_SESSIONS session files, $S3_MESSAGES total messages"
+
+  # Check sample validity
+  S3_SAMPLE_MSGS=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.messageCount 2>/dev/null || echo "0")
+  S3_SAMPLE_TEAM=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.teamId 2>/dev/null || echo "")
+  S3_SAMPLE_HAS_SESSION=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.hasSession 2>/dev/null || echo "false")
+  S3_SAMPLE_KEY=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.key 2>/dev/null || echo "")
+
+  if [ -n "$S3_SAMPLE_KEY" ]; then
+    metric "s3" "sample_key" "$S3_SAMPLE_KEY"
+    metric "s3" "sample_messages" "$S3_SAMPLE_MSGS"
+    metric "s3" "sample_team_id" "$S3_SAMPLE_TEAM"
+    log "S3 sample: $S3_SAMPLE_KEY — $S3_SAMPLE_MSGS messages, team=$S3_SAMPLE_TEAM"
+
+    if [ "$S3_SAMPLE_HAS_SESSION" = "true" ] && [ "$S3_SAMPLE_MSGS" -gt 0 ] 2>/dev/null; then
+      S3_VALID=1
+    fi
+  fi
+
+  cd /home/testuser
+fi
 
 # ─── Assertions ──────────────────────────────────────────────────────────
 
@@ -331,6 +366,14 @@ assert_eq "invalid_roles" "$VALID_ROLES" "0"
 if [ "$SQLITE_MESSAGES" -gt 0 ] 2>/dev/null; then
   MIN_MESSAGES=$(( SQLITE_MESSAGES * 95 / 100 ))
   assert_gt "push_completeness_95pct" "$MESSAGES" "$MIN_MESSAGES"
+fi
+
+# S3 assertions
+if [ -n "$S3_ENDPOINT" ]; then
+  assert_gt "s3_sessions" "$S3_SESSIONS" "0"
+  assert_gt "s3_messages" "$S3_MESSAGES" "0"
+  assert_eq "s3_sample_valid" "$S3_VALID" "1"
+  assert_eq "s3_team_id" "$S3_SAMPLE_TEAM" "perf-team"
 fi
 
 # ─── Phase 8: Benchmark ─────────────────────────────────────────────────

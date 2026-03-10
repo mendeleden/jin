@@ -101,18 +101,18 @@ function setRoute(
 ): { existed: boolean } {
   if (!config.routes) config.routes = [];
 
-  // Check for existing route with same match
+  // Check for existing route with same match — merge sinks instead of replacing
   for (const route of config.routes) {
     if (match.project && route.match.project?.toLowerCase() === match.project.toLowerCase()) {
-      route.sinks = sinkIds;
+      route.sinks = [...new Set([...route.sinks, ...sinkIds])];
       return { existed: true };
     }
     if (match.remote && route.match.remote === match.remote) {
-      route.sinks = sinkIds;
+      route.sinks = [...new Set([...route.sinks, ...sinkIds])];
       return { existed: true };
     }
     if (match.directory && route.match.directory === match.directory) {
-      route.sinks = sinkIds;
+      route.sinks = [...new Set([...route.sinks, ...sinkIds])];
       return { existed: true };
     }
   }
