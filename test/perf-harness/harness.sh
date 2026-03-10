@@ -2,15 +2,20 @@
 set -e
 
 # ─── jin performance harness ────────────────────────────────────────────
-# Runs inside Docker. Measures the full lifecycle:
-#   install → init → configure sink → start → ingest → monitor
+# Runs inside Docker. Measures the full lifecycle using REAL jin commands:
+#   jin init --team → jin connect → jin start → ingest → verify postgres
+#
+# Dogfoods jin's own CLI — no manual config writing.
 #
 # Results written to /results/report.json and /results/report.txt
+# Exit code: 0 = pass, 1 = fail
 
 RESULTS_DIR="/results"
 REPORT="$RESULTS_DIR/report.txt"
 REPORT_JSON="$RESULTS_DIR/report.json"
 PG_CONN="$JIN_PERF_PG"
+JIN_CFG_DIR="/home/testuser/.config/jin"
+FAIL=0
 
 mkdir -p "$RESULTS_DIR"
 > "$REPORT"
@@ -24,7 +29,6 @@ log() {
 metric() {
   local phase="$1" key="$2" value="$3"
   echo "  $key: $value" | tee -a "$REPORT"
-  # Append to JSON array
   echo "{\"phase\":\"$phase\",\"key\":\"$key\",\"value\":\"$value\",\"ts\":\"$(date -Iseconds)\"}" >> "$RESULTS_DIR/metrics.jsonl"
 }
 
@@ -44,9 +48,28 @@ capture_proc() {
     metric "$phase" "wchar_bytes" "$wchar"
     metric "$phase" "syscr" "$syscr"
   fi
-  # CPU from ps
   local cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ')
   metric "$phase" "cpu_pct" "$cpu"
+}
+
+assert_gt() {
+  local label="$1" actual="$2" min="$3"
+  if [ "$actual" -gt "$min" ] 2>/dev/null; then
+    log "  ✓ $label: $actual > $min"
+  else
+    log "  ✗ FAIL: $label: expected > $min, got $actual"
+    FAIL=1
+  fi
+}
+
+assert_eq() {
+  local label="$1" actual="$2" expected="$3"
+  if [ "$actual" = "$expected" ]; then
+    log "  ✓ $label: $actual"
+  else
+    log "  ✗ FAIL: $label: expected '$expected', got '$actual'"
+    FAIL=1
+  fi
 }
 
 # ─── Phase 0: Baseline ──────────────────────────────────────────────────
@@ -55,7 +78,6 @@ log "═══ PHASE 0: BASELINE ═══"
 log "System: $(nproc) CPUs, $(free -m | awk '/Mem:/{print $2}') MB RAM"
 log "jin version: $(jin version)"
 
-# Count source data
 FILE_COUNT=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | wc -l)
 TOTAL_SIZE=$(find ~/.claude/projects -name "*.jsonl" -type f -exec du -cb {} + 2>/dev/null | tail -1 | awk '{print $1}')
 TOTAL_LINES=$(find ~/.claude/projects -name "*.jsonl" -type f -exec wc -l {} + 2>/dev/null | tail -1 | awk '{print $1}')
@@ -63,36 +85,73 @@ metric "baseline" "jsonl_files" "$FILE_COUNT"
 metric "baseline" "total_bytes" "$TOTAL_SIZE"
 metric "baseline" "total_lines" "$TOTAL_LINES"
 
-# ─── Phase 1: Init ──────────────────────────────────────────────────────
+# ─── Phase 1: jin init --team (dogfooding real commands) ─────────────────
 
 log ""
-log "═══ PHASE 1: JIN INIT ═══"
+log "═══ PHASE 1: JIN INIT --TEAM ═══"
+
+# Build team config base64 the same way a team lead would
+TEAM_JSON="{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
+TEAM_B64=$(echo -n "$TEAM_JSON" | base64 -w0)
+log "Team config (base64): ${TEAM_B64:0:40}..."
+
 INIT_START=$(date +%s%N)
-jin init 2>&1 | tee -a "$REPORT"
+jin init --team="$TEAM_B64" 2>&1 | tee -a "$REPORT"
 INIT_END=$(date +%s%N)
 INIT_MS=$(( (INIT_END - INIT_START) / 1000000 ))
 metric "init" "duration_ms" "$INIT_MS"
 
-# ─── Phase 2: Configure Sink ────────────────────────────────────────────
+# Verify init created the config and detected adapters
+log ""
+log "Verifying init results (via jin init --json)..."
+INIT_JSON=$(jin init --json 2>&1 || echo "{}")
+log "init --json output length: ${#INIT_JSON} chars"
+echo "$INIT_JSON" >> "$REPORT"
+
+# Extract project names using bun (reliable JSON parsing, no fragile grep)
+PROJECTS_FILE="$RESULTS_DIR/projects.txt"
+cd /home/testuser/jin-src
+bun -e "
+const data = JSON.parse(process.argv[1]);
+const projects = data.projects || [];
+for (const p of projects) console.log(p);
+" "$INIT_JSON" > "$PROJECTS_FILE" 2>/dev/null || true
+cd /home/testuser
+
+PROJECT_COUNT=$(wc -l < "$PROJECTS_FILE" | tr -d ' ')
+metric "init" "projects_discovered" "$PROJECT_COUNT"
+log "Discovered $PROJECT_COUNT projects:"
+cat "$PROJECTS_FILE" | while read p; do log "  - $p"; done
+
+# ─── Phase 2: jin connect (dogfooding real commands) ─────────────────────
 
 log ""
-log "═══ PHASE 2: CONFIGURE SINK ═══"
+log "═══ PHASE 2: JIN CONNECT ═══"
 
-# Generate team config base64
-TEAM_CONFIG=$(echo -n "{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\"}" | base64 -w0)
-log "Team config: $TEAM_CONFIG"
-
-SINK_START=$(date +%s%N)
-jin init --team="$TEAM_CONFIG" --skills 2>&1 | tee -a "$REPORT"
-SINK_END=$(date +%s%N)
-SINK_MS=$(( (SINK_END - SINK_START) / 1000000 ))
-metric "sink_config" "duration_ms" "$SINK_MS"
-
-# Connect all projects
-log "Connecting projects..."
-for project in $(jin connections 2>&1 | grep '~/' | awk '{print $1}'); do
+CONNECT_COUNT=0
+while IFS= read -r project; do
+  [ -z "$project" ] && continue
+  log "  Connecting: $project → perf-test"
   jin connect "$project" --sink=perf-test 2>&1 | tee -a "$REPORT" || true
-done
+  CONNECT_COUNT=$((CONNECT_COUNT + 1))
+done < "$PROJECTS_FILE"
+
+if [ "$CONNECT_COUNT" -eq 0 ]; then
+  log "  WARNING: No projects connected. No routes will match."
+  log "  This likely means jin init found no projects in the store."
+fi
+
+metric "connect" "projects_connected" "$CONNECT_COUNT"
+
+# Show connections (dogfooding jin connections)
+log ""
+log "jin connections output:"
+jin connections 2>&1 | tee -a "$REPORT" || true
+
+# Show status (dogfooding jin status)
+log ""
+log "jin status output:"
+jin status 2>&1 | tee -a "$REPORT" || true
 
 # ─── Phase 3: Cold Start + Ingest ───────────────────────────────────────
 
@@ -102,12 +161,12 @@ log "═══ PHASE 3: START DAEMON (COLD INGEST) ═══"
 START_TS=$(date +%s%N)
 jin start --foreground &
 JIN_PID=$!
-sleep 2  # let it start
+sleep 2
 
 # Wait for initial ingest to complete (watch log)
 INGEST_DONE=0
 for i in $(seq 1 60); do
-  if grep -q "Initial ingest" ~/.config/jin/jin.log 2>/dev/null; then
+  if grep -q "Initial ingest" "$JIN_CFG_DIR/jin.log" 2>/dev/null; then
     INGEST_DONE=1
     break
   fi
@@ -120,6 +179,15 @@ metric "cold_start" "ingest_done" "$INGEST_DONE"
 
 log "Cold start + ingest: ${INGEST_MS}ms"
 capture_proc "$JIN_PID" "post_cold_ingest"
+
+# Wait for initial push to complete
+for i in $(seq 1 30); do
+  if grep -q "Pushed" "$JIN_CFG_DIR/jin.log" 2>/dev/null; then
+    log "Initial push detected in logs"
+    break
+  fi
+  sleep 1
+done
 
 # ─── Phase 4: Idle Monitoring (30 seconds) ──────────────────────────────
 
@@ -155,8 +223,6 @@ done
 
 sleep 5  # let final events process
 capture_proc "$JIN_PID" "post_active"
-
-# Calculate I/O during active phase
 log "Active session I/O cost captured."
 
 # ─── Phase 6: Post-Active Settle ────────────────────────────────────────
@@ -175,8 +241,9 @@ capture_proc "$JIN_PID" "settle_t30"
 log ""
 log "═══ PHASE 7: POSTGRES VERIFICATION ═══"
 
-# Use bun to query Postgres
 cd /home/testuser/jin-src
+
+# Count sessions and messages
 SESSIONS=$(bun -e "
 const { SQL } = await import('bun');
 const sql = new SQL('$PG_CONN');
@@ -195,7 +262,56 @@ sql.close();
 
 metric "postgres" "sessions" "$SESSIONS"
 metric "postgres" "messages" "$MESSAGES"
-log "Postgres: $SESSIONS sessions, $MESSAGES messages"
+
+# Verify team_id and developer_id are set correctly
+TEAM_ID=$(bun -e "
+const { SQL } = await import('bun');
+const sql = new SQL('$PG_CONN');
+const r = await sql.unsafe('SELECT DISTINCT team_id FROM public.jin_sessions LIMIT 1');
+console.log(r.length > 0 ? r[0].team_id : '');
+sql.close();
+" 2>/dev/null || echo "")
+
+DEV_ID=$(bun -e "
+const { SQL } = await import('bun');
+const sql = new SQL('$PG_CONN');
+const r = await sql.unsafe('SELECT DISTINCT developer_id FROM public.jin_sessions LIMIT 1');
+console.log(r.length > 0 ? r[0].developer_id : '');
+sql.close();
+" 2>/dev/null || echo "")
+
+# Verify messages have valid roles
+VALID_ROLES=$(bun -e "
+const { SQL } = await import('bun');
+const sql = new SQL('$PG_CONN');
+const r = await sql.unsafe(\"SELECT count(*) as cnt FROM public.jin_messages WHERE role NOT IN ('user','assistant','system')\");
+console.log(r[0].cnt);
+sql.close();
+" 2>/dev/null || echo "-1")
+
+# Session details for report
+log ""
+log "Postgres session details:"
+bun -e "
+const { SQL } = await import('bun');
+const sql = new SQL('$PG_CONN');
+const rows = await sql.unsafe('SELECT id, adapter_id, name, message_count, team_id, developer_id FROM public.jin_sessions ORDER BY created_at DESC LIMIT 10');
+for (const r of rows) {
+  console.log('  ' + r.adapter_id + ' | ' + (r.name || '').slice(0,40) + ' | msgs=' + r.message_count + ' | team=' + r.team_id + ' | dev=' + r.developer_id);
+}
+sql.close();
+" 2>&1 | tee -a "$REPORT" || true
+
+# ─── Assertions ──────────────────────────────────────────────────────────
+
+log ""
+log "═══ ASSERTIONS ═══"
+
+assert_gt "postgres_sessions" "$SESSIONS" "0"
+assert_gt "postgres_messages" "$MESSAGES" "0"
+assert_eq "team_id" "$TEAM_ID" "perf-team"
+assert_eq "developer_id" "$DEV_ID" "perf-dev"
+assert_eq "invalid_roles" "$VALID_ROLES" "0"
 
 # ─── Phase 8: Benchmark ─────────────────────────────────────────────────
 
@@ -203,6 +319,12 @@ log ""
 log "═══ PHASE 8: JIN BENCHMARK ═══"
 jin benchmark 2>&1 | tee -a "$REPORT"
 jin benchmark --json > "$RESULTS_DIR/benchmark.json" 2>/dev/null || true
+
+# ─── Jin log tail ────────────────────────────────────────────────────────
+
+log ""
+log "═══ JIN LOG (last 30 lines) ═══"
+tail -30 "$JIN_CFG_DIR/jin.log" 2>/dev/null | tee -a "$REPORT" || true
 
 # ─── Cleanup ─────────────────────────────────────────────────────────────
 
@@ -229,3 +351,19 @@ console.log('Report written to $REPORT_JSON');
 log "Full report: $REPORT"
 log "JSON report: $REPORT_JSON"
 log "Metrics: $RESULTS_DIR/metrics.jsonl"
+
+# ─── Final verdict ──────────────────────────────────────────────────────
+
+log ""
+if [ "$FAIL" -eq 0 ]; then
+  log "═══ ALL CHECKS PASSED ═══"
+  exit 0
+else
+  log "═══ SOME CHECKS FAILED ═══"
+  log "Review assertions above. Common causes:"
+  log "  - jin init --team did not register the sink"
+  log "  - jin connect did not route projects to the sink"
+  log "  - Postgres unreachable from container"
+  log "  - Adapter detected 0 sessions (conversation fixtures missing?)"
+  exit 1
+fi

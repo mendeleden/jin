@@ -14,6 +14,11 @@ import { join, basename } from "path";
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
+// Per-file cooldown to prevent re-ingesting the same file too frequently
+// during streaming writes (e.g. Claude Code appends every ~200ms during responses)
+const FILE_COOLDOWN_MS = 5_000;
+const fileLastIngestedAt = new Map<string, number>();
+
 export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const { isServiceActive, isDaemonRunning, isServiceInstalled } = await import("../runguard");
 
@@ -199,11 +204,19 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       // file change → ingest → push → log → repeat
       if (shouldExcludeEvent(event.path, jinOutputPaths)) return;
 
+      // Per-file cooldown: skip if this file was ingested within the last 5 seconds
+      const now = Date.now();
+      const lastIngested = fileLastIngestedAt.get(event.path) || 0;
+      if (now - lastIngested < FILE_COOLDOWN_MS) return;
+
       log(`${event.type} — ${adapter.name}: ${basename(event.path)}`);
 
-      // Re-ingest
-      const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
-      for (const id of ingested) pendingPush.add(id);
+      // Targeted single-file ingest: only process the changed file, not all files
+      const ingested = await ingestSingleFile(adapter, store, event.path);
+      if (ingested) {
+        pendingPush.add(ingested);
+        fileLastIngestedAt.set(event.path, Date.now());
+      }
 
       // Schedule batched push to sinks
       schedulePush();
@@ -429,6 +442,59 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
     }
   } catch {}
   return ingested;
+}
+
+/**
+ * Ingest a single changed file instead of scanning all adapter files.
+ * Used by the watcher onChange handler for targeted, low-cost ingest.
+ * Returns the session ID if ingested, null if skipped.
+ */
+async function ingestSingleFile(adapter: Adapter, store: Store, filePath: string): Promise<string | null> {
+  try {
+    if (!existsSync(filePath)) return null;
+    const stat = statSync(filePath);
+
+    // Check ingest stat cache — skip if unchanged
+    const cached = ingestStatCache.get(filePath);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+      return null;
+    }
+
+    // Targeted single-file parse: skip the full directory scan
+    let session;
+    if ('sessionForFile' in adapter) {
+      session = await (adapter as any).sessionForFile(filePath);
+    } else {
+      // Fallback for adapters without single-file support
+      const sessions = await adapter.sessions();
+      session = sessions.find(s => s.sourcePath === filePath);
+    }
+    if (!session) return null;
+
+    store.upsertSession(session);
+
+    // Delta message insert
+    const existingCount = store.messageCountForSession(session.id);
+    if (existingCount > 0 && 'newMessages' in adapter) {
+      const newMsgs = await (adapter as any).newMessages(session.id, session.sourcePath, existingCount);
+      if (newMsgs.length > 0) {
+        store.insertMessages(session.id, newMsgs);
+        const allMsgs = store.getMessages(session.id);
+        autoTagSession(store, session, allMsgs);
+      }
+    } else {
+      const messages = await adapter.messages(session.id, session.sourcePath);
+      if (messages.length > 0) {
+        store.upsertMessages(session.id, messages);
+        autoTagSession(store, session, messages);
+      }
+    }
+
+    ingestStatCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs });
+    return session.id;
+  } catch {
+    return null;
+  }
 }
 
 function getExt(path: string): string {

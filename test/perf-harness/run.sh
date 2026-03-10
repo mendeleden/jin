@@ -60,8 +60,11 @@ echo "[3/4] Building and starting containers..."
 
 cd "$SCRIPT_DIR"
 
-# Update docker-compose to mount the run-specific results dir
-docker compose down -v 2>/dev/null || true
+# Clean slate: remove ALL containers, volumes, and networks from previous runs.
+# Postgres uses tmpfs so data dies with the container, but named/anonymous
+# volumes could carry stale state if a previous run crashed.
+docker compose down -v --remove-orphans 2>/dev/null || true
+docker volume prune -f 2>/dev/null || true
 
 if [ "$1" = "--rebuild" ]; then
   echo "  (forcing rebuild)"
@@ -76,16 +79,17 @@ echo "────────────────────────�
 
 # Run with the results dir mounted (chmod for container user)
 chmod 777 "$RUN_DIR"
+HARNESS_EXIT=0
 docker compose run --rm \
   -v "$RUN_DIR:/results" \
-  jin
+  jin || HARNESS_EXIT=$?
 
 echo "─────────────────────────────────────────────"
 echo ""
 
-# ─── Results ─────────────────────────────────────────────────────────────
+# ─── Cleanup containers ──────────────────────────────────────────────────
 
-docker compose down -v 2>/dev/null || true
+docker compose down -v --remove-orphans 2>/dev/null || true
 
 echo ""
 echo "═══ RESULTS ═══"
@@ -109,4 +113,12 @@ echo ""
 # ─── Cleanup fixtures (large, don't commit) ─────────────────────────────
 echo "Cleaning up fixtures..."
 rm -rf "$FIXTURES_DIR"
-echo "Done."
+
+if [ "$HARNESS_EXIT" -ne 0 ]; then
+  echo ""
+  echo "HARNESS FAILED (exit code $HARNESS_EXIT)"
+  echo "Check $RUN_DIR/report.txt for details."
+  exit "$HARNESS_EXIT"
+fi
+
+echo "Done. All checks passed."

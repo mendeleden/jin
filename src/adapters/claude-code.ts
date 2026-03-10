@@ -156,6 +156,23 @@ export class ClaudeCodeAdapter implements Adapter {
     return sessions;
   }
 
+  /** Parse a single file into a Session without scanning all directories.
+   *  Used by the watcher for targeted ingest of a known changed file. */
+  async sessionForFile(filePath: string): Promise<Session | null> {
+    const sessions: Session[] = [];
+    const fileName = basename(filePath);
+    const isSubAgent = fileName.startsWith("agent-");
+    // Detect parent session ID from path: .../parent-uuid/subagents/agent-*.jsonl
+    let parentSessionId = "";
+    if (filePath.includes("/subagents/")) {
+      const parts = filePath.split("/");
+      const subIdx = parts.indexOf("subagents");
+      if (subIdx > 0) parentSessionId = parts[subIdx - 1];
+    }
+    await this.addSessionFromFile(filePath, isSubAgent, parentSessionId, sessions);
+    return sessions[0] || null;
+  }
+
   private async addSessionFromFile(
     filePath: string, isSubAgent: boolean, parentSessionId: string, sessions: Session[]
   ): Promise<void> {

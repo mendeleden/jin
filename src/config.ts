@@ -76,7 +76,7 @@ export function defaultConfig(): JinConfig {
       rawDir: join(configDir(), "raw"),
     },
     watch: {
-      debounceMs: 200,
+      debounceMs: 5_000,
       pollIntervalMs: 30_000,
     },
   };

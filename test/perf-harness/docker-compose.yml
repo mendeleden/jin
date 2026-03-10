@@ -25,6 +25,6 @@ services:
     environment:
       JIN_PERF_PG: "postgresql://jin_perf:jin_perf@postgres:5432/jin_perf"
       HOME: /home/testuser
-    volumes:
-      - ./results:/results
+    # Results dir mounted at runtime via `docker compose run -v`
+    # No persistent volumes — each run starts clean (Postgres uses tmpfs)
     # No healthcheck — the harness script exits when done
