@@ -263,6 +263,20 @@ sql.close();
 metric "postgres" "sessions" "$SESSIONS"
 metric "postgres" "messages" "$MESSAGES"
 
+# Get SQLite counts for completeness check
+JIN_STATUS=$(jin status 2>/dev/null || echo "")
+SQLITE_SESSIONS=$(echo "$JIN_STATUS" | sed -n 's/.*sessions[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ',' | head -1)
+SQLITE_MESSAGES=$(echo "$JIN_STATUS" | sed -n 's/.*messages[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ',' | head -1)
+SQLITE_SESSIONS=${SQLITE_SESSIONS:-0}
+SQLITE_MESSAGES=${SQLITE_MESSAGES:-0}
+metric "completeness" "sqlite_sessions" "$SQLITE_SESSIONS"
+metric "completeness" "sqlite_messages" "$SQLITE_MESSAGES"
+if [ "$SQLITE_MESSAGES" -gt 0 ] 2>/dev/null; then
+  PUSH_PCT=$(( MESSAGES * 100 / SQLITE_MESSAGES ))
+  metric "completeness" "push_pct" "${PUSH_PCT}%"
+  log "Push completeness: $MESSAGES / $SQLITE_MESSAGES messages (${PUSH_PCT}%)"
+fi
+
 # Verify team_id and developer_id are set correctly
 TEAM_ID=$(bun -e "
 const { SQL } = await import('bun');
@@ -312,6 +326,12 @@ assert_gt "postgres_messages" "$MESSAGES" "0"
 assert_eq "team_id" "$TEAM_ID" "perf-team"
 assert_eq "developer_id" "$DEV_ID" "perf-dev"
 assert_eq "invalid_roles" "$VALID_ROLES" "0"
+
+# Push completeness: at least 95% of SQLite messages should be in Postgres
+if [ "$SQLITE_MESSAGES" -gt 0 ] 2>/dev/null; then
+  MIN_MESSAGES=$(( SQLITE_MESSAGES * 95 / 100 ))
+  assert_gt "push_completeness_95pct" "$MESSAGES" "$MIN_MESSAGES"
+fi
 
 # ─── Phase 8: Benchmark ─────────────────────────────────────────────────
 

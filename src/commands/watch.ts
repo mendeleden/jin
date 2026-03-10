@@ -318,6 +318,9 @@ async function daemonize(): Promise<void> {
   proc.unref();
 }
 
+// Backpressure: push sessions in batches to avoid loading all messages into memory at once.
+const PUSH_BATCH_SIZE = 20;
+
 /** Push changed sessions to sinks, respecting per-project routing.
  *  Uses push_log to skip sessions that haven't changed since last successful push. */
 async function pushToSinks(
@@ -327,58 +330,75 @@ async function pushToSinks(
   config: JinConfig,
   log: (msg: string) => void
 ): Promise<void> {
-  // Group payloads by which sinks they should go to
-  const sinkPayloads = new Map<Sink, PushPayload[]>();
-
   // Pre-compute which sessions actually need pushing per sink
   const needsPush = new Map<string, Set<string>>();
   for (const sink of sinks) {
     needsPush.set(sink.id, store.sessionsNeedingPush(sink.id));
   }
 
+  // Build a lightweight routing plan (session + target sinks) without loading messages yet
+  const pushPlan: Array<{ id: string; sinks: Sink[] }> = [];
   for (const id of sessionIds) {
     const session = store.getSession(id);
     if (!session) continue;
-
-    // Determine which sinks this session routes to
     const targetSinks = sinksForSession(session, store, config, sinks);
-    for (const sink of targetSinks) {
-      // Skip if this session hasn't changed since last successful push to this sink
+    const filteredSinks = targetSinks.filter(sink => {
       const sinkNeeds = needsPush.get(sink.id);
-      if (sinkNeeds && !sinkNeeds.has(id)) continue;
-
-      if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
-      const allMessages = store.getMessages(id);
-      // Delta push: only for sinks that support merge semantics (e.g. Postgres ON CONFLICT).
-      // Sinks like S3 (last-write-wins) must always receive ALL messages.
-      let messages = allMessages;
-      if (sink.supportsDelta) {
-        const lastCount = store.lastPushedMessageCount(id, sink.id);
-        if (lastCount > 0 && lastCount < allMessages.length) {
-          messages = allMessages.slice(lastCount);
-        }
-      }
-      sinkPayloads.get(sink)!.push({ session, messages });
+      return !sinkNeeds || sinkNeeds.has(id);
+    });
+    if (filteredSinks.length > 0) {
+      pushPlan.push({ id, sinks: filteredSinks });
     }
   }
 
-  for (const [sink, payloads] of sinkPayloads) {
-    if (payloads.length === 0) continue;
-    try {
-      const result = await sink.push(payloads);
-      log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
+  // Process in batches — load messages only for the current batch
+  for (let batchStart = 0; batchStart < pushPlan.length; batchStart += PUSH_BATCH_SIZE) {
+    const batch = pushPlan.slice(batchStart, batchStart + PUSH_BATCH_SIZE);
+    const sinkPayloads = new Map<Sink, PushPayload[]>();
 
-      // Log successful pushes with total message count so we can delta-push next time
-      for (const { session } of payloads) {
-        const totalMsgCount = store.getMessages(session.id).length;
-        store.logPush(session.id, sink.id, 200, "ok", totalMsgCount);
-      }
+    for (const entry of batch) {
+      const session = store.getSession(entry.id);
+      if (!session) continue;
+      const allMessages = store.getMessages(entry.id);
 
-      if (result.errors.length > 0) {
-        for (const e of result.errors.slice(0, 3)) log(`  Error: ${e}`);
+      for (const sink of entry.sinks) {
+        if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
+        // Delta push: only for sinks that support merge semantics (e.g. Postgres ON CONFLICT).
+        // Sinks like S3 (last-write-wins) must always receive ALL messages.
+        let messages = allMessages;
+        if (sink.supportsDelta) {
+          const lastCount = store.lastPushedMessageCount(entry.id, sink.id);
+          if (lastCount > 0 && lastCount < allMessages.length) {
+            messages = allMessages.slice(lastCount);
+          }
+        }
+        sinkPayloads.get(sink)!.push({ session, messages });
       }
-    } catch (err) {
-      log(`Push error (${sink.name}): ${err}`);
+    }
+
+    for (const [sink, payloads] of sinkPayloads) {
+      if (payloads.length === 0) continue;
+      try {
+        const result = await sink.push(payloads);
+        log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
+
+        // Log successful pushes — use message count already known from payload
+        for (const { session, messages } of payloads) {
+          const totalMsgCount = store.messageCountForSession(session.id);
+          store.logPush(session.id, sink.id, 200, "ok", totalMsgCount);
+        }
+
+        if (result.errors.length > 0) {
+          for (const e of result.errors.slice(0, 3)) log(`  Error: ${e}`);
+        }
+      } catch (err) {
+        log(`Push error (${sink.name}): ${err}`);
+      }
+    }
+
+    // Yield between push batches so GC can reclaim message arrays
+    if (batchStart + PUSH_BATCH_SIZE < pushPlan.length) {
+      await Bun.sleep(0);
     }
   }
 }
@@ -387,12 +407,17 @@ async function pushToSinks(
 // Key: filePath, Value: { size, mtimeMs } from last successful ingest.
 const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
 
+// Backpressure: process sessions in batches to cap peak RSS during cold ingest.
+// Between batches, yield to the event loop so the GC can reclaim parsed file buffers.
+const INGEST_BATCH_SIZE = 20;
+
 /** Ingest adapter, return list of session IDs that were ingested */
 async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
   const ingested: string[] = [];
   try {
     const sessions = await adapter.sessions();
-    for (const session of sessions) {
+    for (let i = 0; i < sessions.length; i++) {
+      const session = sessions[i];
       store.upsertSession(session);
 
       // Skip if the source file hasn't changed (stat-based)
@@ -438,6 +463,12 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
             autoTagSession(store, session, messages);
           }
         } catch {}
+      }
+
+      // Backpressure: yield between batches so GC can reclaim file buffers
+      if ((i + 1) % INGEST_BATCH_SIZE === 0) {
+        Bun.gc(false);
+        await Bun.sleep(0);
       }
     }
   } catch {}

@@ -144,6 +144,11 @@ export class ClaudeCodeAdapter implements Adapter {
           }
         } catch { /* not a directory or no subagents */ }
       }
+
+      // Backpressure: yield between project directories so GC can reclaim
+      // the file text buffers from parseSessionMetaFull() calls above.
+      Bun.gc(false);
+      await Bun.sleep(0);
     }
 
     // Prune cache entries for files no longer seen
