@@ -2,9 +2,7 @@ import { loadConfig } from "../config";
 import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { autoTagSession } from "../tagger";
-import { mkdirSync, existsSync, copyFileSync } from "fs";
-import { join, basename } from "path";
-import { createHash } from "crypto";
+import { existsSync, mkdirSync } from "fs";
 
 export async function ingestCommand(): Promise<void> {
   const config = await loadConfig();
@@ -29,24 +27,10 @@ export async function ingestCommand(): Promise<void> {
 
     try {
       const sessions = await adapter.sessions();
-      for (const session of sessions) {
+      for (let i = 0; i < sessions.length; i++) {
+        const session = sessions[i];
         store.upsertSession(session);
         totalSessions++;
-
-        // Copy raw file
-        if (session.sourcePath && existsSync(session.sourcePath)) {
-          try {
-            const destDir = join(config.store.rawDir, adapter.id);
-            if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
-            const ext = getExt(session.sourcePath);
-            const dest = join(destDir, `${session.id}${ext}`);
-            const content = await Bun.file(session.sourcePath).arrayBuffer();
-            const hash = createHash("sha256").update(Buffer.from(content)).digest("hex");
-            copyFileSync(session.sourcePath, dest);
-            session.metadata = { ...session.metadata, fileHash: hash, rawCopyPath: dest };
-            store.upsertSession(session);
-          } catch { /* skip copy errors */ }
-        }
 
         try {
           const messages = await adapter.messages(session.id, session.sourcePath);
@@ -58,6 +42,12 @@ export async function ingestCommand(): Promise<void> {
             autoTagSession(store, session, messages);
           }
         } catch { /* skip message errors */ }
+
+        // Backpressure: yield between batches so GC can reclaim file buffers
+        if ((i + 1) % 20 === 0) {
+          Bun.gc(false);
+          await Bun.sleep(0);
+        }
       }
 
       // Collect context artifacts (memory, configs, rules, etc.)
@@ -80,10 +70,4 @@ export async function ingestCommand(): Promise<void> {
 
   console.log(`\n  Done. ${totalSessions} sessions, ${totalMessages} messages, ${totalArtifacts} artifacts ingested.`);
   store.close();
-}
-
-function getExt(path: string): string {
-  const name = basename(path);
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 ? name.slice(dot) : "";
 }

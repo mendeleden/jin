@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jin_perf
+      POSTGRES_PASSWORD: jin_perf
+      POSTGRES_DB: jin_perf
+    ports:
+      - "5445:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jin_perf"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data  # RAM-backed for consistent perf
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9445:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /data  # RAM-backed for consistent perf
+
+  jin:
+    build:
+      context: ../..
+      dockerfile: test/perf-harness/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      JIN_PERF_PG: "postgresql://jin_perf:jin_perf@postgres:5432/jin_perf"
+      JIN_PERF_S3_ENDPOINT: "http://minio:9000"
+      JIN_PERF_S3_BUCKET: "jin-perf"
+      JIN_PERF_S3_ACCESS_KEY: "minioadmin"
+      JIN_PERF_S3_SECRET_KEY: "minioadmin"
+      HOME: /home/testuser
+    # Results dir mounted at runtime via `docker compose run -v`
+    # No persistent volumes — each run starts clean (Postgres uses tmpfs, MinIO uses tmpfs)
+    # No healthcheck — the harness script exits when done

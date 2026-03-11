@@ -161,6 +161,11 @@ export class ClaudeCodeAdapter implements Adapter {
           }
         } catch { /* not a directory or no subagents */ }
       }
+
+      // Backpressure: yield between project directories so GC can reclaim
+      // the file text buffers from parseSessionMetaFull() calls above.
+      Bun.gc(false);
+      await Bun.sleep(0);
     }
 
     // Prune cache entries for files no longer seen
@@ -171,6 +176,23 @@ export class ClaudeCodeAdapter implements Adapter {
 
     sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return sessions;
+  }
+
+  /** Parse a single file into a Session without scanning all directories.
+   *  Used by the watcher for targeted ingest of a known changed file. */
+  async sessionForFile(filePath: string): Promise<Session | null> {
+    const sessions: Session[] = [];
+    const fileName = basename(filePath);
+    const isSubAgent = fileName.startsWith("agent-");
+    // Detect parent session ID from path: .../parent-uuid/subagents/agent-*.jsonl
+    let parentSessionId = "";
+    if (filePath.includes("/subagents/")) {
+      const parts = filePath.split("/");
+      const subIdx = parts.indexOf("subagents");
+      if (subIdx > 0) parentSessionId = parts[subIdx - 1];
+    }
+    await this.addSessionFromFile(filePath, isSubAgent, parentSessionId, sessions);
+    return sessions[0] || null;
   }
 
   private async addSessionFromFile(

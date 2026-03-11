@@ -38,7 +38,7 @@ export class S3Sink implements Sink {
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
     try {
       // HEAD bucket to verify access
-      const url = `${this.endpoint}/${this.bucket}`;
+      const url = `${this.endpoint}/${this.bucket}/`;
       const headers = this.sign("HEAD", `/${this.bucket}/`, {});
       const resp = await fetch(url, { method: "HEAD", headers });
       if (resp.ok || resp.status === 200 || resp.status === 301) return { ok: true };

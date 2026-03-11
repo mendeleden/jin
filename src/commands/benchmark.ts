@@ -272,7 +272,8 @@ async function measureIngest(config: any): Promise<IngestMetrics | null> {
 
     for (const adapter of activeAdapters) {
       const sessions = await adapter.sessions();
-      for (const session of sessions) {
+      for (let i = 0; i < sessions.length; i++) {
+        const session = sessions[i];
         store.upsertSession(session);
         totalSessions++;
         try {
@@ -282,6 +283,12 @@ async function measureIngest(config: any): Promise<IngestMetrics | null> {
             totalMessages += messages.length;
           }
         } catch {}
+
+        // Backpressure: yield between batches so GC can reclaim file buffers
+        if ((i + 1) % 20 === 0) {
+          Bun.gc(false);
+          await Bun.sleep(0);
+        }
       }
     }
 
