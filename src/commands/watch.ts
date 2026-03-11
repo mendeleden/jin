@@ -8,9 +8,8 @@ import { autoTagSession } from "../tagger";
 import { sinksForSession } from "../routing";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
-import { mkdirSync, existsSync, copyFileSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
-import { createHash } from "crypto";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
@@ -179,16 +178,15 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     }, PUSH_DEBOUNCE_MS);
   };
 
-  // Build a set of paths to exclude from watching to prevent feedback loops.
-  // When jin watches its own active session directory, every ingest/push cycle
-  // triggers new watch events, creating a runaway loop.
-  const excludePaths = new Set<string>();
-  // Exclude the jin project directory itself (this process is running in it)
-  const cwdSlug = process.cwd().replace(/\//g, "-").replace(/^-/, "-");
-  // Also detect via environment
-  if (process.env.CLAUDE_PROJECT_DIR) {
-    excludePaths.add(process.env.CLAUDE_PROJECT_DIR);
-  }
+  // Self-observation filter: exclude jin's own output files to prevent feedback loops.
+  // Only excludes paths jin writes to (config dir: log, store.db, raw, benchmarks).
+  // Does NOT exclude Claude Code sessions in the same project — that was a bug.
+  const { shouldExcludeEvent } = await import("../self-observation");
+  const jinOutputPaths = {
+    logFile: LOG_FILE,
+    dbPath: config.store.dbPath,
+    rawDir: config.store.rawDir,
+  };
 
   // Set up file watcher
   const watcher = new FileWatcher({
@@ -197,14 +195,9 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       const adapter = activeAdapters.find((a) => a.id === event.adapterId);
       if (!adapter) return;
 
-      // Skip events from jin's own project directory to prevent feedback loop:
+      // Skip events from jin's own output files to prevent feedback loop:
       // file change → ingest → push → log → repeat
-      if (excludePaths.size > 0) {
-        const skip = [...excludePaths].some(p => event.path.includes(p));
-        if (skip) return;
-      }
-      // Also skip if the path contains the cwd slug (jin watching its own project)
-      if (cwdSlug && event.path.includes(cwdSlug)) return;
+      if (shouldExcludeEvent(event.path, jinOutputPaths)) return;
 
       log(`${event.type} — ${adapter.name}: ${basename(event.path)}`);
 
@@ -343,11 +336,15 @@ async function pushToSinks(
 
       if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
       const allMessages = store.getMessages(id);
-      // Delta push: only send messages beyond what was last pushed
-      const lastCount = store.lastPushedMessageCount(id, sink.id);
-      const messages = lastCount > 0 && lastCount < allMessages.length
-        ? allMessages.slice(lastCount)
-        : allMessages;
+      // Delta push: only for sinks that support merge semantics (e.g. Postgres ON CONFLICT).
+      // Sinks like S3 (last-write-wins) must always receive ALL messages.
+      let messages = allMessages;
+      if (sink.supportsDelta) {
+        const lastCount = store.lastPushedMessageCount(id, sink.id);
+        if (lastCount > 0 && lastCount < allMessages.length) {
+          messages = allMessages.slice(lastCount);
+        }
+      }
       sinkPayloads.get(sink)!.push({ session, messages });
     }
   }
@@ -385,46 +382,41 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
     for (const session of sessions) {
       store.upsertSession(session);
 
-      // Skip full re-ingest if the source file hasn't changed (stat-based)
+      // Skip if the source file hasn't changed (stat-based)
       if (session.sourcePath && existsSync(session.sourcePath)) {
         const stat = statSync(session.sourcePath);
         const cached = ingestStatCache.get(session.sourcePath);
         if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-          // File unchanged — no need to re-hash, re-copy, or re-parse messages
           continue;
         }
 
-        // File changed (or first time) — full ingest
+        // File changed (or first time)
         ingested.push(session.id);
 
+        // Insert only NEW messages (delta), not all messages
         try {
-          const dest = join(rawDir, adapter.id, `${session.id}${getExt(session.sourcePath)}`);
-          const destDir = join(rawDir, adapter.id);
-          if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
-
-          const content = await Bun.file(session.sourcePath).arrayBuffer();
-          const hash = createHash("sha256").update(Buffer.from(content)).digest("hex");
-
-          const existing = store.getSession(session.id);
-          if (!existing?.metadata || (existing.metadata as any).fileHash !== hash) {
-            copyFileSync(session.sourcePath, dest);
-            session.metadata = { ...session.metadata, fileHash: hash, rawCopyPath: dest };
-            store.upsertSession(session);
+          const existingCount = store.messageCountForSession(session.id);
+          if (existingCount > 0 && 'newMessages' in adapter) {
+            // Adapter supports delta — only parse and insert new messages
+            const newMsgs = await (adapter as any).newMessages(session.id, session.sourcePath, existingCount);
+            if (newMsgs.length > 0) {
+              store.insertMessages(session.id, newMsgs);
+              // Re-tag with all messages only if needed
+              const allMsgs = store.getMessages(session.id);
+              autoTagSession(store, session, allMsgs);
+            }
+          } else {
+            // Fallback: full message parse (first ingest or non-supporting adapter)
+            const messages = await adapter.messages(session.id, session.sourcePath);
+            if (messages.length > 0) {
+              store.upsertMessages(session.id, messages);
+              autoTagSession(store, session, messages);
+            }
           }
         } catch {}
 
-        try {
-          const messages = await adapter.messages(session.id, session.sourcePath);
-          if (messages.length > 0) {
-            store.upsertMessages(session.id, messages);
-            autoTagSession(store, session, messages);
-          }
-        } catch {}
-
-        // Update stat cache after successful ingest
         ingestStatCache.set(session.sourcePath, { size: stat.size, mtimeMs: stat.mtimeMs });
       } else {
-        // No source path — always ingest
         ingested.push(session.id);
         try {
           const messages = await adapter.messages(session.id, session.sourcePath);

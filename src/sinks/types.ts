@@ -4,6 +4,10 @@ export interface Sink {
   id: string;
   name: string;
 
+  /** Whether the sink supports delta/partial pushes (e.g. Postgres ON CONFLICT merges).
+   *  If false, the orchestrator must always send ALL messages. Default: false. */
+  supportsDelta?: boolean;
+
   /** Verify the connection / credentials are valid. */
   healthCheck(): Promise<{ ok: boolean; error?: string }>;
 

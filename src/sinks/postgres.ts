@@ -11,6 +11,7 @@ import type { Sink, SinkConfig, PushPayload, PushResult } from "./types";
 export class PostgresSink implements Sink {
   id = "postgres";
   name = "PostgreSQL";
+  supportsDelta = true;
   private connectionString: string;
   private schema: string;
   private sessionsTable: string;
