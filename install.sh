@@ -20,6 +20,10 @@ esac
 
 case "$OS" in
   linux|darwin) ;;
+  mingw*|msys*|cygwin*)
+    echo "  On Windows, use PowerShell instead:"
+    echo "    irm https://raw.githubusercontent.com/mendeleden/jin/main/install.ps1 | iex"
+    exit 1 ;;
   *) echo "Unsupported OS: $OS"; exit 1 ;;
 esac
 

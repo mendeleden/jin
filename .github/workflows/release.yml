@@ -25,6 +25,9 @@ jobs:
           - os: macos-latest
             target: bun-darwin-x64
             artifact: jin-darwin-x64
+          - os: ubuntu-latest
+            target: bun-windows-x64
+            artifact: jin-windows-x64.exe
 
     runs-on: ${{ matrix.os }}
 
