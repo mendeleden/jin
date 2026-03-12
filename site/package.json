@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "copy:install": "cp ../install.sh ../install.ps1 docs/public/",
+    "copy:install": "mkdir -p docs/public && cp ../install.sh ../install.ps1 docs/public/",
     "docs:dev": "bun run copy:install && vitepress dev docs",
     "docs:build": "bun run copy:install && vitepress build docs",
     "docs:preview": "vitepress preview docs"
