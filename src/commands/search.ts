@@ -130,7 +130,7 @@ function formatResults(results: Array<{
 
   let i = 1;
   for (const [, r] of bySession) {
-    const dateStr = r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt || "");
+    const dateStr = r.createdAt && typeof r.createdAt === "object" && "toISOString" in r.createdAt ? (r.createdAt as Date).toISOString() : String(r.createdAt || "");
     const date = dateStr ? dateStr.slice(0, 10) : "";
     const dev = r.developerId ? `, ${r.developerId}` : "";
     const header = `${r.adapterId}${dev}${date ? `, ${date}` : ""}`;

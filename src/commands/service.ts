@@ -18,11 +18,19 @@ function getJinBinaryPath(): string {
   }
 
   // Fallback: check common install locations
-  const candidates = [
-    join(HOME, ".local", "bin", "jin"),
-    join(HOME, ".bun", "bin", "jin"),
-    "/usr/local/bin/jin",
-  ];
+  const isWin = process.platform === "win32";
+  const bin = isWin ? "jin.exe" : "jin";
+  const candidates = isWin
+    ? [
+        join(HOME, ".local", "bin", bin),
+        join(process.env.LOCALAPPDATA || "", "jin", bin),
+        join(process.env.PROGRAMFILES || "", "jin", bin),
+      ]
+    : [
+        join(HOME, ".local", "bin", bin),
+        join(HOME, ".bun", "bin", bin),
+        "/usr/local/bin/jin",
+      ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }

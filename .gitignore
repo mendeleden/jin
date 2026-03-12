@@ -9,3 +9,7 @@ dashboard/tsconfig.tsbuildinfo
 *.db-shm
 .env
 test-harness/.env
+site/docs/public/install.sh
+site/docs/public/install.ps1
+site/docs/.vitepress/dist/
+site/package-lock.json

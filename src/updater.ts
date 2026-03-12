@@ -11,7 +11,7 @@ const PID_FILE = join(configDir(), "jin.pid");
 const BACKUP_PATH_FILE = join(configDir(), "jin.bak.path");
 
 // Embedded at build time — bump in package.json
-export const VERSION = "0.8.0";
+export const VERSION = "0.8.2";
 
 interface GithubRelease {
   tag_name: string;
@@ -20,9 +20,10 @@ interface GithubRelease {
 }
 
 function getPlatformArtifact(): string {
-  const os = platform();
+  const os = platform() === "win32" ? "windows" : platform();
   const cpu = arch() === "arm64" ? "arm64" : "x64";
-  return `jin-${os}-${cpu}`;
+  const ext = platform() === "win32" ? ".exe" : "";
+  return `jin-${os}-${cpu}${ext}`;
 }
 
 function parseVersion(tag: string): number[] {
@@ -102,6 +103,13 @@ function detectRunState(): "service" | "daemon" | "none" {
       const line = out.split("\n").find(l => l.includes("com.jin.agent"));
       if (line && line.trim().split(/\s+/)[0] !== "-") return "service";
     }
+    if (platform() === "win32") {
+      const r = Bun.spawnSync(
+        ["powershell", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      if (new TextDecoder().decode(r.stdout).trim() === "Running") return "service";
+    }
   } catch {}
 
   // Check daemon PID
@@ -120,7 +128,12 @@ function detectRunState(): "service" | "daemon" | "none" {
 async function restartRunning(mode: "service" | "daemon", log: (msg: string) => void): Promise<void> {
   if (mode === "service") {
     log("Restarting service...");
-    if (platform() === "linux") {
+    if (platform() === "win32") {
+      Bun.spawnSync(
+        ["powershell", "-Command", "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'jin'"],
+        { stdout: "inherit", stderr: "inherit" }
+      );
+    } else if (platform() === "linux") {
       Bun.spawnSync(["systemctl", "--user", "restart", "jin.service"], { stdout: "inherit", stderr: "inherit" });
     } else if (platform() === "darwin") {
       const plist = join(homedir(), "Library", "LaunchAgents", "com.jin.agent.plist");

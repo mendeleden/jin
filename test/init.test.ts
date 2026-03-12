@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { createFakeSink, makeSession } from "./helpers";
-import type { Adapter, Session } from "../src/adapters/types";
+import type { Adapter, Session, Message } from "../src/adapters/types";
 
 // ── Module Mocks (hoisted by bun) ────────────────────────────────────────
 
@@ -31,6 +31,8 @@ import {
 } from "./helpers";
 import { defaultConfig } from "../src/config";
 import { Store } from "../src/store";
+import { readProgress, clearProgress } from "../src/progress";
+import { statusCommand } from "../src/commands/status";
 
 // ── Test Suite ───────────────────────────────────────────────────────────
 
@@ -165,5 +167,104 @@ describe("jin init auto-ingest", () => {
     expect(parsed).toHaveProperty("detected");
     expect(parsed.detected).toHaveLength(1);
     expect(parsed.detected[0].id).toBe("mock-adapter");
+  });
+
+  test("progress is cleared after ingest completes", async () => {
+    const sessions = Array.from({ length: 5 }, (_, i) =>
+      makeSession(`progress-session-${i}`, {
+        adapterId: "mock-adapter",
+        adapterName: "Mock Adapter",
+      })
+    );
+    mockAdapters = [createMockAdapter(sessions)];
+
+    await initCommand();
+
+    // Progress file should be cleaned up after ingest finishes
+    expect(readProgress()).toBeNull();
+  });
+});
+
+describe("jin status — ingestion progress", () => {
+  test("status shows progress when ingestion is active", async () => {
+    // Simulate an active ingestion by writing a progress file directly
+    const { writeProgress } = await import("../src/progress");
+    writeProgress({
+      adapter: "Claude Code",
+      current: 7,
+      total: 20,
+      startedAt: Date.now(),
+    });
+
+    console_.restore();
+    console_ = captureConsole();
+
+    await statusCommand();
+
+    const output = console_.logs.join("\n");
+    expect(output).toContain("ingesting");
+    expect(output).toContain("Claude Code");
+    expect(output).toContain("7/20");
+    expect(output).toContain("35%");
+
+    clearProgress();
+  });
+
+  test("status --json includes ingest field when active", async () => {
+    const { writeProgress } = await import("../src/progress");
+    writeProgress({
+      adapter: "Codex",
+      current: 3,
+      total: 10,
+      startedAt: Date.now(),
+    });
+
+    console_.restore();
+    console_ = captureConsole();
+
+    await statusCommand({ json: true });
+
+    const output = console_.logs.join("\n");
+    const parsed = JSON.parse(output);
+    expect(parsed.ingest).toBeDefined();
+    expect(parsed.ingest.adapter).toBe("Codex");
+    expect(parsed.ingest.current).toBe(3);
+    expect(parsed.ingest.total).toBe(10);
+    expect(parsed.ingest.pct).toBe(30);
+
+    clearProgress();
+  });
+
+  test("status --json omits ingest field when no ingestion active", async () => {
+    clearProgress();
+
+    console_.restore();
+    console_ = captureConsole();
+
+    await statusCommand({ json: true });
+
+    const output = console_.logs.join("\n");
+    const parsed = JSON.parse(output);
+    expect(parsed.ingest).toBeUndefined();
+  });
+
+  test("status does not show progress when file is stale", async () => {
+    const { writeProgress } = await import("../src/progress");
+    writeProgress({
+      adapter: "Claude Code",
+      current: 3,
+      total: 10,
+      startedAt: Date.now() - 6 * 60 * 1000, // 6 minutes ago
+    });
+
+    console_.restore();
+    console_ = captureConsole();
+
+    await statusCommand();
+
+    const output = console_.logs.join("\n");
+    expect(output).not.toContain("ingesting");
+
+    clearProgress();
   });
 });

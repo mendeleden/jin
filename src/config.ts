@@ -48,7 +48,11 @@ export interface WatchConfig {
 }
 
 export function configDir(): string {
-  return process.env.JIN_CONFIG_DIR || join(homedir(), ".config", "jin");
+  if (process.env.JIN_CONFIG_DIR) return process.env.JIN_CONFIG_DIR;
+  if (process.platform === "win32") {
+    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "jin");
+  }
+  return join(homedir(), ".config", "jin");
 }
 
 export function configPath(): string {

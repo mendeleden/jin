@@ -2,11 +2,9 @@
 
 ## One-liner
 
-```sh
-curl -fsSL https://jin.builtbyeden.app/install.sh | sh
-```
+<InstallCommand />
 
-This downloads a pre-built binary for your platform (macOS/Linux, x64/ARM64) or builds from source if no binary is available.
+This downloads a pre-built binary for your platform or builds from source if no binary is available.
 
 ## Build from source
 

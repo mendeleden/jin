@@ -5,6 +5,7 @@ import type { JinConfig } from "../config";
 import { Store } from "../store";
 import { getAllState } from "../lifecycle";
 import type { ComponentState } from "../lifecycle";
+import { readProgress } from "../progress";
 
 const LOG_FILE = join(configDir(), "jin.log");
 
@@ -62,6 +63,16 @@ async function printJson(config: JinConfig, states: ComponentState[]): Promise<v
     output.defaultSinks = config.defaultSinks || [];
   }
 
+  const progress = readProgress();
+  if (progress) {
+    output.ingest = {
+      adapter: progress.adapter,
+      current: progress.current,
+      total: progress.total,
+      pct: Math.round((progress.current / progress.total) * 100),
+    };
+  }
+
   output.log = LOG_FILE;
 
   console.log(JSON.stringify(output, null, 2));
@@ -103,6 +114,13 @@ async function printFull(config: JinConfig, states: ComponentState[]): Promise<v
   const allStopped = states.every((s) => s.status === "stopped");
   if (allStopped) {
     console.log(`\n  ${dim("run 'jin start' to begin watching")}`);
+  }
+
+  // Ingestion progress
+  const progress = readProgress();
+  if (progress) {
+    const pct = Math.round((progress.current / progress.total) * 100);
+    console.log(`\n  ${cyan("ingesting")}  ${progress.adapter}  ${progress.current}/${progress.total} sessions (${pct}%)`);
   }
 
   console.log("");

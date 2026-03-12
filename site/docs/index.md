@@ -21,3 +21,24 @@ features:
   - title: Always Running
     details: Background daemon or OS service. Survives reboots. Self-updates.
 ---
+
+<div class="home-install">
+  <h2>Install</h2>
+  <InstallCommand />
+</div>
+
+<style>
+.home-install {
+  max-width: 580px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 4rem;
+  text-align: center;
+}
+
+.home-install h2 {
+  margin-bottom: 0.25rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+}
+</style>

@@ -10,6 +10,7 @@ import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
+import { writeProgress, clearProgress } from "../progress";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
@@ -156,6 +157,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
     for (const id of ingested) changedSessions.add(id);
   }
+  clearProgress();
   log(`Ingested ${store.sessionCount()} sessions, ${store.messageCount()} messages.`);
 
   // Initial push
@@ -253,6 +255,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
       for (const id of ingested) pendingPush.add(id);
     }
+    clearProgress();
     if (pendingPush.size > 0) schedulePush();
   }, periodicInterval);
 
@@ -412,12 +415,14 @@ const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
 const INGEST_BATCH_SIZE = 20;
 
 /** Ingest adapter, return list of session IDs that were ingested */
-async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
+export async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
   const ingested: string[] = [];
   try {
     const sessions = await adapter.sessions();
+    const startedAt = Date.now();
     for (let i = 0; i < sessions.length; i++) {
       const session = sessions[i];
+      writeProgress({ adapter: adapter.name, current: i + 1, total: sessions.length, startedAt });
       store.upsertSession(session);
 
       // Skip if the source file hasn't changed (stat-based)
@@ -472,6 +477,7 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
       }
     }
   } catch {}
+  clearProgress();
   return ingested;
 }
 
