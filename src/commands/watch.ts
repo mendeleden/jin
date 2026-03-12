@@ -10,6 +10,7 @@ import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
+import { writeProgress, clearProgress } from "../progress";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
@@ -156,6 +157,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
     for (const id of ingested) changedSessions.add(id);
   }
+  clearProgress();
   log(`Ingested ${store.sessionCount()} sessions, ${store.messageCount()} messages.`);
 
   // Initial push
@@ -416,8 +418,10 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
   const ingested: string[] = [];
   try {
     const sessions = await adapter.sessions();
+    const startedAt = Date.now();
     for (let i = 0; i < sessions.length; i++) {
       const session = sessions[i];
+      writeProgress({ adapter: adapter.name, current: i + 1, total: sessions.length, startedAt });
       store.upsertSession(session);
 
       // Skip if the source file hasn't changed (stat-based)

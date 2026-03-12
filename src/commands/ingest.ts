@@ -3,6 +3,7 @@ import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { autoTagSession } from "../tagger";
 import { existsSync, mkdirSync } from "fs";
+import { writeProgress, clearProgress } from "../progress";
 
 export async function ingestCommand(): Promise<void> {
   const config = await loadConfig();
@@ -27,8 +28,10 @@ export async function ingestCommand(): Promise<void> {
 
     try {
       const sessions = await adapter.sessions();
+      const startedAt = Date.now();
       for (let i = 0; i < sessions.length; i++) {
         const session = sessions[i];
+        writeProgress({ adapter: adapter.name, current: i + 1, total: sessions.length, startedAt });
         store.upsertSession(session);
         totalSessions++;
 
@@ -68,6 +71,7 @@ export async function ingestCommand(): Promise<void> {
   // Refresh project aggregate stats
   store.refreshProjectStats();
 
+  clearProgress();
   console.log(`\n  Done. ${totalSessions} sessions, ${totalMessages} messages, ${totalArtifacts} artifacts ingested.`);
   store.close();
 }
