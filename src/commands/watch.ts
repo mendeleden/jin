@@ -150,6 +150,9 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
   console.log("");
 
+  // Seed in-memory stat cache from SQLite so restarts skip unchanged files
+  seedStatCache(store);
+
   // Initial ingest + push
   log("Initial ingest...");
   const changedSessions = new Set<string>();
@@ -408,7 +411,12 @@ async function pushToSinks(
 
 // Track file stat to skip re-reading unchanged files during periodic ingest.
 // Key: filePath, Value: { size, mtimeMs } from last successful ingest.
-const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
+// Seeded from SQLite on startup so restarts don't re-push unchanged sessions.
+let ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
+
+export function seedStatCache(store: Store): void {
+  ingestStatCache = store.loadStatCache();
+}
 
 // Backpressure: process sessions in batches to cap peak RSS during cold ingest.
 // Between batches, yield to the event loop so the GC can reclaim parsed file buffers.
@@ -459,6 +467,7 @@ export async function ingestAdapter(adapter: Adapter, store: Store, rawDir: stri
         } catch {}
 
         ingestStatCache.set(session.sourcePath, { size: stat.size, mtimeMs: stat.mtimeMs });
+        store.saveStatEntry(session.sourcePath, stat.size, stat.mtimeMs);
       } else {
         ingested.push(session.id);
         try {
@@ -528,6 +537,7 @@ async function ingestSingleFile(adapter: Adapter, store: Store, filePath: string
     }
 
     ingestStatCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs });
+    store.saveStatEntry(filePath, stat.size, stat.mtimeMs);
     return session.id;
   } catch {
     return null;

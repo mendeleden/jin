@@ -91,6 +91,7 @@ interface SessionMeta {
   isCompacted: boolean;
   customTitle: string;
   summary: string;
+  seenRequestIds: Set<string>;
 }
 
 interface FileOffsetCache {
@@ -218,7 +219,7 @@ export class ClaudeCodeAdapter implements Adapter {
         const blob = Bun.file(filePath).slice(cached.offset);
         const newText = await blob.text();
         const newLines = newText.split("\n").filter(Boolean);
-        meta = { ...cached.meta }; // clone to avoid mutating cache before success
+        meta = { ...cached.meta, seenRequestIds: new Set(cached.meta.seenRequestIds) }; // clone to avoid mutating cache before success
         for (const line of newLines) {
           try {
             this.updateMetaFromLine(meta, JSON.parse(line));
@@ -305,7 +306,8 @@ export class ClaudeCodeAdapter implements Adapter {
         }
       }
 
-      if (raw.message?.usage) {
+      if (raw.message?.usage && raw.requestId && !meta.seenRequestIds.has(raw.requestId)) {
+        meta.seenRequestIds.add(raw.requestId);
         meta.totalInputTokens += raw.message.usage.input_tokens || 0;
         meta.totalOutputTokens += raw.message.usage.output_tokens || 0;
         meta.totalCacheRead += raw.message.usage.cache_read_input_tokens || 0;
@@ -415,6 +417,7 @@ export class ClaudeCodeAdapter implements Adapter {
       firstUserMessage: "", primaryModel: "",
       isCompacted: false,
       customTitle: "", summary: "",
+      seenRequestIds: new Set(),
     };
 
     for (const line of lines) {

@@ -129,6 +129,12 @@ CREATE INDEX IF NOT EXISTS idx_session_projects_project ON session_projects(proj
 CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_projects_last_seen ON projects(last_seen);
 CREATE INDEX IF NOT EXISTS idx_tool_usage_tool ON tool_usage(tool_name);
+
+CREATE TABLE IF NOT EXISTS file_stat_cache (
+  file_path TEXT PRIMARY KEY,
+  size INTEGER NOT NULL,
+  mtime_ms REAL NOT NULL
+);
 `;
 
 export class Store {
@@ -699,6 +705,25 @@ export class Store {
   artifactCount(): number {
     const row = this.db.prepare("SELECT COUNT(*) as cnt FROM artifacts").get() as any;
     return row.cnt;
+  }
+
+  // ─── File stat cache (persistent across restarts) ────────────────────────
+
+  loadStatCache(): Map<string, { size: number; mtimeMs: number }> {
+    const rows = this.db.prepare("SELECT file_path, size, mtime_ms FROM file_stat_cache").all() as any[];
+    const map = new Map<string, { size: number; mtimeMs: number }>();
+    for (const r of rows) {
+      map.set(r.file_path, { size: r.size, mtimeMs: r.mtime_ms });
+    }
+    return map;
+  }
+
+  saveStatEntry(filePath: string, size: number, mtimeMs: number): void {
+    this.db.run(
+      `INSERT INTO file_stat_cache (file_path, size, mtime_ms) VALUES (?, ?, ?)
+       ON CONFLICT(file_path) DO UPDATE SET size=excluded.size, mtime_ms=excluded.mtime_ms`,
+      [filePath, size, mtimeMs]
+    );
   }
 
   /** Migrate schema for existing databases */
