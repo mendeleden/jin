@@ -255,6 +255,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
       for (const id of ingested) pendingPush.add(id);
     }
+    clearProgress();
     if (pendingPush.size > 0) schedulePush();
   }, periodicInterval);
 
@@ -414,7 +415,7 @@ const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
 const INGEST_BATCH_SIZE = 20;
 
 /** Ingest adapter, return list of session IDs that were ingested */
-async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
+export async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
   const ingested: string[] = [];
   try {
     const sessions = await adapter.sessions();
@@ -476,6 +477,7 @@ async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Pr
       }
     }
   } catch {}
+  clearProgress();
   return ingested;
 }
 

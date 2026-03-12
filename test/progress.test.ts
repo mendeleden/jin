@@ -1,8 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync } from "fs";
 import { join } from "path";
-import { createTestEnv, type TestEnv } from "./helpers";
+import { createTestEnv, makeSession, type TestEnv } from "./helpers";
 import { writeProgress, readProgress, clearProgress, type IngestProgress } from "../src/progress";
+import { ingestAdapter } from "../src/commands/watch";
+import { Store } from "../src/store";
+import type { Adapter } from "../src/adapters/types";
 
 let env: TestEnv;
 
@@ -90,5 +93,73 @@ describe("progress file location", () => {
 
     const content = JSON.parse(readFileSync(progressPath, "utf-8"));
     expect(content.adapter).toBe("Test");
+  });
+});
+
+describe("ingestAdapter clears progress", () => {
+  test("progress is null after ingestAdapter completes", async () => {
+    const sessions = Array.from({ length: 3 }, (_, i) =>
+      makeSession(`ingest-progress-${i}`, {
+        adapterId: "mock-adapter",
+        adapterName: "Mock Adapter",
+      })
+    );
+
+    const adapter: Adapter = {
+      id: "mock-adapter",
+      name: "Mock Adapter",
+      icon: "M",
+      detect: async () => true,
+      sessions: async () => sessions,
+      messages: async () => [],
+      watchPaths: () => [],
+    };
+
+    const rawDir = join(env.dir, "raw");
+    mkdirSync(rawDir, { recursive: true });
+
+    await ingestAdapter(adapter, env.store, rawDir);
+
+    // ingestAdapter must clear progress so callers don't have to remember
+    expect(readProgress()).toBeNull();
+  });
+
+  test("progress is written during ingestAdapter execution", async () => {
+    const progressSnapshots: IngestProgress[] = [];
+
+    const sessions = Array.from({ length: 3 }, (_, i) =>
+      makeSession(`snap-progress-${i}`, {
+        adapterId: "mock-adapter",
+        adapterName: "Mock Adapter",
+      })
+    );
+
+    const adapter: Adapter = {
+      id: "mock-adapter",
+      name: "Mock Adapter",
+      icon: "M",
+      detect: async () => true,
+      sessions: async () => sessions,
+      messages: async () => {
+        // Capture progress mid-ingest
+        const p = readProgress();
+        if (p) progressSnapshots.push({ ...p });
+        return [];
+      },
+      watchPaths: () => [],
+    };
+
+    const rawDir = join(env.dir, "raw");
+    mkdirSync(rawDir, { recursive: true });
+
+    await ingestAdapter(adapter, env.store, rawDir);
+
+    // Progress was visible during execution
+    expect(progressSnapshots.length).toBeGreaterThan(0);
+    expect(progressSnapshots[0].adapter).toBe("Mock Adapter");
+    expect(progressSnapshots[0].total).toBe(3);
+
+    // But cleared after completion
+    expect(readProgress()).toBeNull();
   });
 });
