@@ -92,7 +92,11 @@ afterAll(() => {
   process.env.HOME = origHome;
   delete process.env.CODEX_HOME;
   delete process.env.JIN_CONFIG_DIR;
-  rmSync(tmpHome, { recursive: true, force: true });
+  for (let i = 0; i < 3; i++) {
+    try { rmSync(tmpHome, { recursive: true, force: true }); break; } catch {
+      if (i < 2) Bun.sleepSync(50);
+    }
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

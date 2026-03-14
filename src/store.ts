@@ -750,6 +750,8 @@ export class Store {
   }
 
   close(): void {
+    // Checkpoint WAL before closing so Windows releases the memory-mapped .db-shm file
+    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
     this.db.close();
   }
 }

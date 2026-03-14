@@ -47,7 +47,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
 
   // Foreground mode: error if daemon is already running
-  if (isRunning()) {
+  // Skip check if we ARE the daemon (spawned by daemonize() which already wrote our PID)
+  if (!process.env.JIN_DAEMON && isRunning()) {
     const pid = readFileSync(PID_FILE, "utf-8").trim();
     console.log(`  jin is already running (PID ${pid}). Stop it first with \`jin stop\`.`);
     process.exit(1);
@@ -297,6 +298,7 @@ async function daemonize(): Promise<void> {
     stdout: logFd,
     stderr: logFd,
     stdin: "ignore",
+    detached: true,
     env: { ...process.env, JIN_DAEMON: "1" },
   });
 

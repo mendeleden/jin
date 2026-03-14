@@ -126,7 +126,12 @@ export function createTestEnv(): TestEnv {
     cleanup: () => {
       store.close();
       delete process.env.JIN_CONFIG_DIR;
-      rmSync(dir, { recursive: true, force: true });
+      // Windows holds SQLite mmap handles briefly after close; retry rmSync
+      for (let i = 0; i < 3; i++) {
+        try { rmSync(dir, { recursive: true, force: true }); return; } catch {
+          if (i < 2) Bun.sleepSync(50);
+        }
+      }
     },
   };
 }
