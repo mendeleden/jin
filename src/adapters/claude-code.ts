@@ -19,6 +19,7 @@ interface RawLine {
   customTitle?: string;
   leafUuid?: string;
   compactMetadata?: { trigger?: string; preTokens?: number };
+  requestId?: string;
   message?: {
     role: string;
     content: unknown; // string | ContentBlock[]
@@ -347,7 +348,7 @@ export class ClaudeCodeAdapter implements Adapter {
   }
 
   /** Return only messages added since the given count (for delta SQLite inserts) */
-  async newMessages(sessionId: string, sourcePath: string, afterIndex: number): Promise<Message[]> {
+  async newMessages(_sessionId: string, sourcePath: string, afterIndex: number): Promise<Message[]> {
     if (!sourcePath || !existsSync(sourcePath)) return [];
     const all = await this.parseMessages(sourcePath);
     return afterIndex > 0 && afterIndex < all.length ? all.slice(afterIndex) : all;
