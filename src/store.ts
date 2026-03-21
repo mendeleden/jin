@@ -151,14 +151,15 @@ export class Store {
     this.db.run(
       `INSERT INTO sessions (id, adapter_id, adapter_name, name, created_at, updated_at,
         duration_ms, is_active, total_tokens, est_cost, message_count, source_path,
-        is_sub_agent, parent_session_id, metadata, ingested_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_sub_agent, parent_session_id, is_compacted, metadata, ingested_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
         name=excluded.name, updated_at=excluded.updated_at,
         duration_ms=excluded.duration_ms, is_active=excluded.is_active,
         total_tokens=excluded.total_tokens, est_cost=excluded.est_cost,
         message_count=excluded.message_count, source_path=excluded.source_path,
         is_sub_agent=excluded.is_sub_agent, parent_session_id=excluded.parent_session_id,
+        is_compacted=excluded.is_compacted,
         metadata=excluded.metadata, ingested_at=excluded.ingested_at`,
       [
         session.id,
@@ -175,6 +176,7 @@ export class Store {
         session.sourcePath,
         session.isSubAgent ? 1 : 0,
         session.parentSessionId || "",
+        session.isCompacted ? 1 : 0,
         JSON.stringify(session.metadata),
         new Date().toISOString(),
       ]
@@ -184,11 +186,12 @@ export class Store {
   upsertMessages(sessionId: string, messages: Message[]): void {
     const stmt = this.db.prepare(
       `INSERT INTO messages (id, session_id, role, content, timestamp, model,
-        input_tokens, output_tokens, cache_read, cache_write, tool_uses, thinking_blocks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_tokens, output_tokens, cache_read, cache_write, tool_uses, thinking_blocks,
+        record_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
         content=excluded.content, tool_uses=excluded.tool_uses,
-        thinking_blocks=excluded.thinking_blocks`
+        thinking_blocks=excluded.thinking_blocks, record_type=excluded.record_type`
     );
 
     const tx = this.db.transaction((msgs: Message[]) => {
@@ -205,7 +208,8 @@ export class Store {
           m.cacheRead,
           m.cacheWrite,
           JSON.stringify(m.toolUses),
-          JSON.stringify(m.thinkingBlocks)
+          JSON.stringify(m.thinkingBlocks),
+          m.recordType || "",
         );
       }
     });
