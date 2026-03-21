@@ -66,37 +66,13 @@ jobs:
         if: runner.os == 'Windows'
 
   # Integration tests with real Postgres + S3 (Linux only — needs Docker)
+  # Uses docker-compose (not GHA services) because MinIO needs command: server /data
+  # Runs on PRs targeting main + pushes to main (not feature branch pushes)
   integration:
     needs: [test]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: jin_test
-          POSTGRES_PASSWORD: jin_test
-          POSTGRES_DB: jin_test
-        ports:
-          - 5444:5432
-        options: >-
-          --health-cmd "pg_isready -U jin_test"
-          --health-interval 1s
-          --health-timeout 3s
-          --health-retries 10
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9444:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 10
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -107,5 +83,17 @@ jobs:
 
       - run: bun install
 
+      - name: Start Postgres + MinIO
+        run: docker compose -f test/docker-compose.integration.yml up -d --wait
+        timeout-minutes: 2
+
       - name: Run integration tests
         run: bun test test/integration.test.ts
+
+      - name: Service logs (on failure)
+        if: failure()
+        run: docker compose -f test/docker-compose.integration.yml logs
+
+      - name: Tear down services
+        if: always()
+        run: docker compose -f test/docker-compose.integration.yml down -v
