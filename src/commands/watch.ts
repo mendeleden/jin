@@ -278,7 +278,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       }
     }
 
-    for (const s of sinks) s.close();
+    await Promise.all(sinks.map(s => s.close().catch(() => {})));
     store.close();
     cleanup();
     process.exit(0);
