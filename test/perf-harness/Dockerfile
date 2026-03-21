@@ -9,7 +9,7 @@ WORKDIR /home/testuser
 
 # Copy the jin source and build
 COPY --chown=testuser:testuser . /home/testuser/jin-src
-RUN cd /home/testuser/jin-src && bun install && bun build ./src/index.ts --compile --outfile /home/testuser/bin/jin
+RUN cd /home/testuser/jin-src && bun install && bun run scripts/embed-spa.ts && bun build ./src/index.ts --compile --outfile /home/testuser/bin/jin
 
 # Add to PATH
 ENV PATH="/home/testuser/bin:${PATH}"
