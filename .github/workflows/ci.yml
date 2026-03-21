@@ -26,8 +26,10 @@ jobs:
 
       - run: bun install
 
+      # bun test has no --ignore flag; list unit test files explicitly
+      # (integration.test.ts needs Docker, acceptance/ runs as a separate job)
       - name: Run unit tests
-        run: bun test --ignore=test/integration.test.ts
+        run: bun test test/connect.test.ts test/init.test.ts test/progress.test.ts test/routing.test.ts test/search.test.ts test/self-observation.test.ts
 
   # Full acceptance test: build binary → seed data → jin init → jin start → verify
   # Simulates a real user installing and running jin on each platform
