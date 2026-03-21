@@ -171,7 +171,8 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
       stdout: logFd,
       stderr: logFd,
       stdin: "ignore",
-      env: { ...process.env },
+      detached: true,
+      env: { ...process.env, JIN_DAEMON: "1" },
     });
     require("fs").closeSync(logFd);
 

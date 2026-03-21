@@ -92,7 +92,12 @@ afterAll(() => {
   process.env.HOME = origHome;
   delete process.env.CODEX_HOME;
   delete process.env.JIN_CONFIG_DIR;
-  rmSync(tmpHome, { recursive: true, force: true });
+  const delays = [50, 100, 200, 400, 800];
+  for (let i = 0; i < delays.length; i++) {
+    try { rmSync(tmpHome, { recursive: true, force: true }); break; } catch {
+      if (i < delays.length - 1) Bun.sleepSync(delays[i]);
+    }
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

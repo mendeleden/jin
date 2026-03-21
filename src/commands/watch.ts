@@ -48,7 +48,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
 
   // Foreground mode: error if daemon is already running
-  if (isRunning()) {
+  // Skip check if we ARE the daemon (spawned by daemonize() which already wrote our PID)
+  if (!process.env.JIN_DAEMON && isRunning()) {
     const pid = readFileSync(PID_FILE, "utf-8").trim();
     console.log(`  jin is already running (PID ${pid}). Stop it first with \`jin stop\`.`);
     process.exit(1);
@@ -259,13 +260,28 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     if (pendingPush.size > 0) schedulePush();
   }, periodicInterval);
 
-  // Graceful shutdown
-  const shutdown = () => {
+  // Graceful shutdown — flush pending sink data before exit
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return; // prevent re-entry from second signal
+    shuttingDown = true;
     log("Shutting down...");
     if (pushTimer) clearTimeout(pushTimer);
     clearInterval(periodicTimer);
     watcher.close();
-    for (const s of sinks) s.close();
+
+    // Flush any pending sink pushes before closing
+    if (sinks.length > 0 && pendingPush.size > 0) {
+      const ids = new Set(pendingPush);
+      pendingPush.clear();
+      try {
+        await pushToSinks(store, sinks, ids, config, log);
+      } catch (err) {
+        log(`Flush error during shutdown: ${err}`);
+      }
+    }
+
+    await Promise.all(sinks.map(s => s.close().catch(() => {})));
     store.close();
     cleanup();
     process.exit(0);
@@ -300,6 +316,7 @@ async function daemonize(): Promise<void> {
     stdout: logFd,
     stderr: logFd,
     stdin: "ignore",
+    detached: true,
     env: { ...process.env, JIN_DAEMON: "1" },
   });
 

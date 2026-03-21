@@ -228,6 +228,7 @@ export async function startDetached(opts: { port?: number }): Promise<void> {
     stdout: logFd,
     stderr: logFd,
     stdin: "ignore",
+    detached: true,
     env: { ...process.env },
   });
   closeSync(logFd);
