@@ -35,6 +35,7 @@ jobs:
   # Simulates a real user installing and running jin on each platform
   acceptance:
     needs: [test]
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

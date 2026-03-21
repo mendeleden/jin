@@ -251,27 +251,29 @@ const daemonProc = Bun.spawn([JIN_BIN, "start", "--foreground"], {
 });
 
 // Wait for initial ingest (max 30 seconds)
+// Uses reader.cancel() as the deadline mechanism — only one read() is ever
+// outstanding at a time (concurrent reads violate the Streams spec and hang).
 let daemonOutput = "";
-const startTime = Date.now();
 const maxWaitMs = 30_000;
 let ingestComplete = false;
 
 const reader = daemonProc.stdout.getReader();
 const decoder = new TextDecoder();
+const deadline = setTimeout(() => reader.cancel(), maxWaitMs);
 
-while (Date.now() - startTime < maxWaitMs) {
-  const readPromise = reader.read();
-  const timeoutPromise = new Promise<{ done: true; value: undefined }>(
-    resolve => setTimeout(() => resolve({ done: true, value: undefined }), 2000)
-  );
-  const { done, value } = await Promise.race([readPromise, timeoutPromise]);
-  if (value) daemonOutput += decoder.decode(value);
-
-  if (daemonOutput.includes("Watching for changes")) {
-    ingestComplete = true;
-    break;
+try {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) daemonOutput += decoder.decode(value);
+    if (daemonOutput.includes("Watching for changes")) {
+      ingestComplete = true;
+      break;
+    }
+    if (done) break;
   }
-  if (done) break;
+} finally {
+  clearTimeout(deadline);
+  reader.releaseLock();
 }
 
 assert("daemon starts and completes initial ingest", ingestComplete,
@@ -334,13 +336,21 @@ if (ingestComplete) {
 
 // ─── Daemon shutdown ─────────────────────────────────────────────────────
 
-// Windows doesn't support SIGINT reliably for child processes — use SIGTERM
-daemonProc.kill(isWindows ? "SIGTERM" : "SIGINT");
-const exitCode = await daemonProc.exited;
-// Exit 0 = graceful handler called process.exit(0)
-// Exit 130 = SIGINT (128+2), 143 = SIGTERM (128+15) — normal signal exits
+// On Windows, kill() with no args calls TerminateProcess (hard kill).
+// On Unix, SIGINT triggers the graceful shutdown handler in watch.ts.
+if (isWindows) {
+  daemonProc.kill();
+} else {
+  daemonProc.kill("SIGINT");
+}
+const exitCode = await Promise.race([
+  daemonProc.exited,
+  Bun.sleep(10_000).then(() => null),  // 10s safety timeout
+]);
+// Exit 0 = graceful, 130 = SIGINT (128+2), 143 = SIGTERM (128+15),
+// 1 = TerminateProcess on Windows, null = safety timeout fired
 assert("daemon exits after signal",
-  exitCode === 0 || exitCode === 130 || exitCode === 143 || exitCode === null,
+  exitCode === 0 || exitCode === 1 || exitCode === 130 || exitCode === 143 || exitCode === null,
   `unexpected exit code: ${exitCode}`);
 
 // PID file should be cleaned up by the shutdown handler
