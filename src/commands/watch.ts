@@ -257,12 +257,27 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     if (pendingPush.size > 0) schedulePush();
   }, periodicInterval);
 
-  // Graceful shutdown
-  const shutdown = () => {
+  // Graceful shutdown — flush pending sink data before exit
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return; // prevent re-entry from second signal
+    shuttingDown = true;
     log("Shutting down...");
     if (pushTimer) clearTimeout(pushTimer);
     clearInterval(periodicTimer);
     watcher.close();
+
+    // Flush any pending sink pushes before closing
+    if (sinks.length > 0 && pendingPush.size > 0) {
+      const ids = new Set(pendingPush);
+      pendingPush.clear();
+      try {
+        await pushToSinks(store, sinks, ids, config, log);
+      } catch (err) {
+        log(`Flush error during shutdown: ${err}`);
+      }
+    }
+
     for (const s of sinks) s.close();
     store.close();
     cleanup();

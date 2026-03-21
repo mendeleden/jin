@@ -126,10 +126,11 @@ export function createTestEnv(): TestEnv {
     cleanup: () => {
       store.close();
       delete process.env.JIN_CONFIG_DIR;
-      // Windows holds SQLite mmap handles briefly after close; retry rmSync
-      for (let i = 0; i < 3; i++) {
+      // Windows holds SQLite mmap handles briefly after close; retry with backoff
+      const delays = [50, 100, 200, 400, 800];
+      for (let i = 0; i < delays.length; i++) {
         try { rmSync(dir, { recursive: true, force: true }); return; } catch {
-          if (i < 2) Bun.sleepSync(50);
+          if (i < delays.length - 1) Bun.sleepSync(delays[i]);
         }
       }
     },

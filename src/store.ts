@@ -751,7 +751,9 @@ export class Store {
 
   close(): void {
     // Checkpoint WAL before closing so Windows releases the memory-mapped .db-shm file
-    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch (e) {
+      if (process.env.DEBUG) console.warn("WAL checkpoint failed:", e);
+    }
     this.db.close();
   }
 }

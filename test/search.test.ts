@@ -32,9 +32,10 @@ import type { JinConfig } from "../src/config";
 
 afterAll(() => {
   delete process.env.JIN_CONFIG_DIR;
-  for (let i = 0; i < 3; i++) {
+  const delays = [50, 100, 200, 400, 800];
+  for (let i = 0; i < delays.length; i++) {
     try { rmSync(tmpHome, { recursive: true, force: true }); break; } catch {
-      if (i < 2) Bun.sleepSync(50);
+      if (i < delays.length - 1) Bun.sleepSync(delays[i]);
     }
   }
 });
