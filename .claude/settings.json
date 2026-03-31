@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# Remind about typecheck after TS file edits\ninput=$(cat)\nfile=$(echo \"$input\" | jq -r '.tool_input.file_path // .tool_input.filePath // empty')\nif echo \"$file\" | grep -qE '\\.ts$'; then\n  echo 'TypeScript file modified — remember to run: bun run typecheck'\nfi\nexit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

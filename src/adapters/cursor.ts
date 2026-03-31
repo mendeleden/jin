@@ -2,7 +2,6 @@ import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { createHash } from "crypto";
 import type { Adapter, Session, Message } from "./types";
 
 export class CursorAdapter implements Adapter {
@@ -11,8 +10,9 @@ export class CursorAdapter implements Adapter {
   icon = "▌";
   private chatsDir: string;
 
-  constructor() {
-    this.chatsDir = join(homedir(), ".cursor", "chats");
+  /** @param chatsDir Optional override (e.g. tests); defaults to ~/.cursor/chats */
+  constructor(chatsDir?: string) {
+    this.chatsDir = chatsDir ?? join(homedir(), ".cursor", "chats");
   }
 
   async detect(): Promise<boolean> {
@@ -92,7 +92,10 @@ export class CursorAdapter implements Adapter {
     return sessions;
   }
 
-  async messages(sessionId: string): Promise<Message[]> {
+  async messages(sessionId: string, sourcePath?: string): Promise<Message[]> {
+    if (sourcePath && existsSync(sourcePath)) {
+      return this.readMessages(sourcePath);
+    }
     const dbPath = this.findSessionDb(sessionId);
     if (!dbPath) return [];
     return this.readMessages(dbPath);
@@ -113,6 +116,7 @@ export class CursorAdapter implements Adapter {
       // Cursor stores hex-encoded JSON
       const jsonStr = Buffer.from(row.value, "hex").toString("utf-8");
       const meta = JSON.parse(jsonStr);
+      if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return null;
       return {
         agentId: meta.agentId || meta.id || "",
         name: meta.name || "",
@@ -134,12 +138,16 @@ export class CursorAdapter implements Adapter {
       const metaRow = db.query("SELECT value FROM meta WHERE key = '0'").get() as any;
       if (!metaRow?.value) return [];
       const meta = JSON.parse(Buffer.from(metaRow.value, "hex").toString("utf-8"));
+      if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return [];
 
       // Read all blobs
       const blobs = new Map<string, Buffer>();
       const rows = db.query("SELECT id, data FROM blobs").all() as any[];
       for (const row of rows) {
-        blobs.set(row.id, row.data);
+        const raw = row.data;
+        if (raw == null) continue;
+        const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+        blobs.set(row.id, buf);
       }
 
       // Traverse blob tree to collect messages
@@ -184,9 +192,12 @@ export class CursorAdapter implements Adapter {
             ? data.content.map((b: any) => b.text || "").join("\n")
             : JSON.stringify(data.content);
 
+        const role: Message["role"] =
+          data.role === "user" ? "user" : data.role === "system" ? "system" : "assistant";
+
         messages.push({
           id: rootId,
-          role: data.role === "user" ? "user" : "assistant",
+          role,
           content,
           timestamp: "",
           model: data.model || "",
@@ -196,7 +207,7 @@ export class CursorAdapter implements Adapter {
           cacheWrite: 0,
           toolUses: [],
           thinkingBlocks: [],
-          recordType: "",
+          recordType: data.role === "tool" ? "tool" : "",
         });
       }
     } catch {
