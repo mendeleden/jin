@@ -7,7 +7,8 @@ improvements.
 **Related docs:**
 - [ontology.md Section 4](../ontology.md) — Adapter Capability Matrix
 - [ontology.md Section 6](../ontology.md) — Adapter Mapping Tables
-- [architecture/adapters-ingest.md](../architecture/adapters-ingest.md) — Registry and ingest pipeline
+- [blueprint/BP-02-data-flow.md](../blueprint/BP-02-data-flow.md) — Ingest pipeline and data flow
+- [blueprint/BP-04-adapter-contract.md](../blueprint/BP-04-adapter-contract.md) — Adapter interface contract (`findChanged` / `loadConversation`)
 
 ---
 

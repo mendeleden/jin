@@ -46,9 +46,9 @@ We are doing a full v2 rewrite. Key decisions:
 ## Key References
 
 - `docs/ontology.md` — v2 data model spec (the source of truth)
-- `docs/v2-roadmap.md` — 7-phase implementation plan
-- `docs/review/index.md` — 34 code review findings (bugs, architecture, dead code, decisions)
-- `docs/code-syllabus.md` — 50-file reading order with dependency graph
+- `docs/blueprint/` — 8 reviewed architectural blueprints (source of truth for v2 design)
+- `docs/adapters/` — Per-tool storage investigations (Cursor, Codex)
+- `docs/competitor-research.md` — Market analysis and OTEL conventions
 
 ## Known Issues (from review)
 
@@ -124,4 +124,3 @@ This project uses compound engineering. Full pipeline: Office Hours → Brainsto
 - `/tooling-council` — 5-persona tooling review (Ex-Datadog, Ex-Homebrew, Ex-Stripe CLI, Ex-ClickHouse, Ex-Vector)
 
 @docs/ontology.md
-@docs/v2-roadmap.md

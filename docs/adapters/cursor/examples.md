@@ -400,87 +400,83 @@ Layer 2 is a summary transcript, not a complete record.
 
 ## 6. Normalized Jin Output
 
-What the adapter should produce from Layer 1 data:
+What the adapter should produce from Layer 1 data. Types follow
+[BP-04](../../blueprint/BP-04-adapter-contract.md).
 
-### 6.1 Session → `Session` (v1 types)
+### 6.1 composerData → `ParsedConversation`
 
 ```typescript
-const session: Session = {
-  id: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb",
+const conversation: ParsedConversation = {
+  id: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb",   // from composerData.composerId
   name: "Exploration of jin init process",
   adapterId: "cursor",
-  adapterName: "Cursor",
-  createdAt: "2026-03-23T17:03:34.542Z",       // from composerData.createdAt
-  updatedAt: "2026-03-23T17:30:00.000Z",        // from composerData.lastUpdatedAt
-  durationMs: 1585458,
-  isActive: false,
-  totalTokens: 0,                                // sum from bubbles
-  estCost: 0,
-  messageCount: 61,                              // from fullConversationHeadersOnly.length
+  cwd: "",                                         // not in Layer 1 — resolve from workspace path
+  gitRemote: "",                                   // resolve via `git remote get-url origin` at cwd
+  branch: "",                                      // resolve via `git branch --show-current` at cwd
+  model: "composer-2-fast",                        // from composerData.modelConfig.modelName
+  startedAt: "2026-03-23T17:03:34.542Z",          // from composerData.createdAt
+  endedAt: "2026-03-23T17:30:00.000Z",            // from composerData.lastUpdatedAt
   sourcePath: "~/Library/.../state.vscdb",
-  isSubAgent: false,
-  parentSessionId: "",
-  isCompacted: false,
-  metadata: {
-    model: "composer-2-fast",
-    isAgentic: true,
-    totalLinesAdded: 703,
-    totalLinesRemoved: 0,
-    subagentCount: 9,
-  },
+  sourceFormat: "sqlite",
+  relationship: "root",                            // default for top-level sessions
+  traceId: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb", // root: traceId = id
+  parentId: "",
 };
 ```
 
-### 6.2 Bubble → `Message`
+### 6.2 Bubble → `ParsedMessage`
 
 ```typescript
-const message: Message = {
+const message: ParsedMessage = {
   id: "0af06047-45c2-49bc-aa5b-7913cdf023ba",
-  role: "assistant",                              // type: 2 → "assistant"
+  role: "assistant",                               // type: 2 → "assistant"
   content: "## Package Overview\n\nThe `@open-permit/shared` package...",
-  timestamp: "2025-12-20T20:21:30.661Z",         // real per-message timestamp
-  model: "",                                       // not per-message in Layer 1
-  inputTokens: 11619,                             // from tokenCount.inputTokens
-  outputTokens: 1124,                             // from tokenCount.outputTokens
+  timestamp: "2025-12-20T20:21:30.661Z",          // real per-message timestamp from createdAt
+  model: "",                                        // not per-message in Layer 1
+  inputTokens: 11619,                              // from tokenCount.inputTokens
+  outputTokens: 1124,                              // from tokenCount.outputTokens
   cacheRead: 0,
   cacheWrite: 0,
-  toolUses: [],
-  thinkingBlocks: [],
-  recordType: "",
+  recordType: "assistant",                         // derived from bubble type
+  sequence: 5,                                     // ordinal position in bubble list
+  turn: 2,                                         // computed from role transitions
+  isSidechain: false,
+  thinkingContent: "",                             // from allThinkingBlocks if present
+  thinkingTokens: 0,
 };
 ```
 
-### 6.3 toolFormerData → `ToolUse`
+### 6.3 toolFormerData → `ParsedToolCall`
 
 ```typescript
-const toolUse: ToolUse = {
-  id: "tool_0a0af2fb-dee6-4112-afaa-d5b57211deb",   // from toolCallId
-  name: "ripgrep_raw_search",                         // from name
-  input: '{"pattern":"init","path":"/Users/..."}',    // from rawArgs
-  output: "",                                          // not available in toolFormerData
+const toolCall: ParsedToolCall = {
+  id: "tool_0a0af2fb-dee6-4112-afaa-d5b57211deb", // from toolCallId
+  name: "ripgrep_raw_search",                       // from name
+  input: '{"pattern":"init","path":"/Users/..."}',  // from rawArgs
+  output: "",                                        // not available in toolFormerData
+  isError: false,
 };
 ```
 
-### 6.4 Sub-Agent → `Session` with Relationship
+### 6.4 Sub-Agent → `ParsedConversation` with Relationship
 
 ```typescript
-const subAgentSession: Session = {
+// See BP-03 for relationship model
+const subAgent: ParsedConversation = {
   id: "929c6fa8-219c-4b50-8e65-864f28996fd3",
   name: "Sub-agent: Adapters and auto-ingest",
   adapterId: "cursor",
-  adapterName: "Cursor",
-  createdAt: "...",
-  updatedAt: "...",
-  durationMs: 0,
-  isActive: false,
-  totalTokens: 0,
-  estCost: 0,
-  messageCount: 3,                                // from JSONL line count
+  cwd: "",
+  gitRemote: "",
+  branch: "",
+  model: "",
+  startedAt: "...",
+  endedAt: "...",
   sourcePath: "~/.cursor/projects/.../subagents/929c6fa8-....jsonl",
-  isSubAgent: true,
-  parentSessionId: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb",
-  isCompacted: false,
-  metadata: {},
+  sourceFormat: "jsonl",
+  relationship: "spawned",                          // sub-agent → spawned
+  traceId: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb", // inherits parent's traceId
+  parentId: "0f3b2f51-10f6-4e93-a4c6-31c2f081e0eb", // parent conversation ID
 };
 ```
 
@@ -491,4 +487,5 @@ const subAgentSession: Session = {
 - [overview.md](./overview.md) — Data model details for each layer
 - [investigation.md](./investigation.md) — How to reproduce these queries
 - [index.md](./index.md) — Coverage gap summary
-- `src/adapters/types.ts` — `Session`, `Message`, `ToolUse` interface definitions
+- [BP-04](../../blueprint/BP-04-adapter-contract.md) — `ParsedConversation`, `ParsedMessage`, `ParsedToolCall` type definitions
+- [BP-03](../../blueprint/BP-03-conversation-model.md) — `traceId`, `parentId`, `relationship` model

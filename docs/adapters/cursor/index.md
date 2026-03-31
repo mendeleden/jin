@@ -53,4 +53,4 @@ Mapping to [ontology.md Section 4](../../ontology.md) capabilities:
 - [ontology.md Section 4](../../ontology.md) — Adapter Capability Matrix (Cursor column)
 - [ontology.md Section 6.3](../../ontology.md) — Cursor Mapping Table
 - `src/adapters/cursor.ts` — Current adapter implementation (reads Layer 3 only)
-- `src/adapters/types.ts` — `Adapter`, `Session`, `Message`, `ToolUse` interfaces
+- `src/adapters/types.ts` — `Adapter`, `ParsedConversation`, `ParsedMessage`, `ParsedToolCall` interfaces (see [BP-04](../../blueprint/BP-04-adapter-contract.md))

@@ -115,18 +115,18 @@ Desktop sessions register tools that are available to the agent:
 |---------------------|-----------------|-------|
 | `threads.id` | `Conversation.id` | UUIDv7 |
 | `threads.title` | `Conversation.name` | |
-| `threads.cwd` | `Conversation.metadata.cwd` | |
-| `threads.source` | `Conversation.metadata.source` | `exec` or `vscode` |
-| `threads.model_provider` | `Conversation.metadata.provider` | Always `openai` |
-| `threads.tokens_used` | `Conversation.total_tokens` | Cumulative |
+| `threads.cwd` | `Conversation.cwd` | Direct v2 field |
+| `threads.source` | — | No v2 equivalent (`exec` vs `vscode` — dropped) |
+| `threads.model_provider` | — | No v2 equivalent (always `openai` — dropped) |
+| `threads.tokens_used` | Derived from `SUM(messages.input_tokens + output_tokens)` | Store aggregates per-message tokens ([BP-05](../../blueprint/BP-05-store-and-migration.md)) |
 | `threads.created_at` | `Conversation.started_at` | Epoch → ISO 8601 |
 | `threads.updated_at` | `Conversation.ended_at` | Epoch → ISO 8601 |
-| `threads.git_branch` | `Conversation.metadata.git_branch` | |
-| `threads.git_origin_url` | `Conversation.metadata.git_remote` | |
-| `threads.git_sha` | `Conversation.metadata.git_sha` | |
-| `threads.cli_version` | `Conversation.metadata.cli_version` | |
-| `threads.approval_mode` | `Conversation.metadata.approval_mode` | |
-| `threads.sandbox_policy` | `Conversation.metadata.sandbox_policy` | |
+| `threads.git_branch` | `Conversation.branch` | Direct v2 field |
+| `threads.git_origin_url` | `Conversation.gitRemote` | Direct v2 field |
+| `threads.git_sha` | — | No v2 equivalent (dropped) |
+| `threads.cli_version` | — | No v2 equivalent (dropped) |
+| `threads.approval_mode` | — | No v2 equivalent (dropped) |
+| `threads.sandbox_policy` | — | No v2 equivalent (dropped) |
 
 ---
 
@@ -247,15 +247,13 @@ line N+4: event_msg:context_compacted          (companion event, minimal payload
 line N+5: response_item:reasoning              (first post-compaction response)
 ```
 
-**Jin v2 implications:** Unlike Claude Code where compaction creates two linked
+**Jin v2 handling:** Unlike Claude Code where compaction creates two linked
 Conversations (original + continuation), Codex keeps everything in one JSONL
-file. The adapter could either:
-1. Treat the `compacted` record as a boundary and split into linked
-   Conversations (consistent with Claude Code handling)
-2. Treat it as a single Conversation with a compaction marker (simpler,
-   since the replacement_history preserves context continuity)
-
-Option 1 is recommended for consistency with the v2 ontology.
+file. Per [BP-04](../../blueprint/BP-04-adapter-contract.md), the adapter
+**must** split at the `compacted` boundary and return multiple
+`ConversationRef` entries from `findChanged()` — linked via `traceId`,
+`parentId`, and `relationship = 'compacted'`
+(see [BP-03](../../blueprint/BP-03-conversation-model.md)).
 
 ### Data Model: Sub-Agents (`spawn_agent` / `wait_agent`)
 
@@ -386,12 +384,12 @@ Minimal payload — the search results are presumably in a subsequent message.
 | `response_item[custom_tool_call_output]` | `ToolCall.output` | Link via `call_id` (Desktop sessions) — parse JSON for output text |
 | `compacted.replacement_history` | Creates linked `relationship='compacted'` conversation | Boundary detection — split pre/post compaction |
 | `event_msg[token_count].last_token_usage` | `Message.inputTokens`, `.outputTokens` | Per-turn breakdown |
-| `event_msg[token_count].total_token_usage` | `Conversation.total_tokens` | Session cumulative |
+| `event_msg[token_count].total_token_usage` | Derived from `SUM(messages.input_tokens + output_tokens)` | Store aggregates ([BP-05](../../blueprint/BP-05-store-and-migration.md)) |
 | `event_msg[turn_aborted]` | Mark turn as incomplete | `reason` field indicates why (e.g. `"interrupted"`) |
 | `session_meta.source.subagent` | `Conversation.relationship = 'spawned'` | Sub-agent detection |
 | `session_meta.forked_from_id` | `Conversation.parent_id` | Parent thread reference |
-| `session_meta.agent_nickname` | `Conversation.metadata.agent_nickname` | Auto-generated name (Dirac, Kant, etc.) |
-| `session_meta.agent_role` | `Conversation.metadata.agent_role` | e.g. `"explorer"` |
+| `session_meta.agent_nickname` | — | No v2 equivalent (auto-generated name — dropped) |
+| `session_meta.agent_role` | — | No v2 equivalent (e.g. `"explorer"` — dropped) |
 | `function_call[spawn_agent]` | `ToolCall` + sub-agent Conversation linkage | Parent-side spawn record |
 | `function_call[wait_agent]` | `ToolCall` (targets = sub-agent IDs) | Parent-side wait/join |
 | `function_call_output[spawn_agent].agent_id` | Sub-agent `Conversation.id` | Cross-reference to sub-agent JSONL |

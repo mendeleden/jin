@@ -432,8 +432,8 @@ The `subagentComposerIds` array in `composerData` provides the parent→child
 relationship. Each sub-agent has its own `composerData` entry that can be
 read with the same Layer 1 reader. Jin should:
 
-- Check `subagentComposerIds` on every session
-- Create `Session` entries with `isSubAgent: true` and `parentSessionId` set
+- Check `subagentComposerIds` on every conversation
+- Create `ConversationBundle` entries with `relationship: 'spawned'` and `parentId` set (see [BP-03](../../blueprint/BP-03-conversation-model.md))
 - Use Layer 2 JSONL transcripts as supplementary source for sub-agent text
 
 ### 6.3 For Testing / Seeding Conversations
