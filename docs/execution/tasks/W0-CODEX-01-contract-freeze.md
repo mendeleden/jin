@@ -43,6 +43,7 @@ drift or accidental cross-lane redesign.
 ## Owned Files
 
 - cross-cutting shared type files
+- narrow verification tests for the frozen contract surface
 - packet files under `docs/execution/tasks/` if ownership or stop conditions
   need to be updated after freeze
 - any minimal contract publication docs needed to make Wave 1 safe
@@ -70,6 +71,7 @@ Freeze and publish these:
 ## Deliverables
 
 - a stable v2 contract surface
+- narrow verification coverage for the frozen contract surface
 - explicit note of any temporary shims that are allowed during migration
 - updated Wave 1 packets if contract freeze changes ownership or stop rules
 

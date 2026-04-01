@@ -3,6 +3,23 @@ import { join } from "path";
 import { homedir } from "os";
 import type { SinkConfig } from "./sinks/types";
 
+// Legacy v1 config surface retained only as a migration shim.
+// Frozen v2 config and routing contracts live in src/contracts/config.ts
+// and are Codex-owned during Wave 1.
+
+export type {
+  AdapterConfig as V2AdapterConfig,
+  JinConfig as V2JinConfig,
+  PostgresSinkConfig as V2PostgresSinkConfig,
+  RouteConfig as V2RouteConfig,
+  RouteMatch as V2RouteMatch,
+  S3SinkConfig as V2S3SinkConfig,
+  SinkConfig as V2SinkConfig,
+  SinkConfigBase as V2SinkConfigBase,
+  WatchConfig as V2WatchConfig,
+  WebhookSinkConfig as V2WebhookSinkConfig,
+} from "./contracts/config";
+
 export interface RouteMatch {
   project?: string;   // matches project name (case-insensitive)
   remote?: string;    // glob against git remote URL

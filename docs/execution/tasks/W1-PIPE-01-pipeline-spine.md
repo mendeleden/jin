@@ -23,10 +23,19 @@ ingest/push coordinator, change-gated push scheduling, and bounded shutdown.
 ## Read In Order
 
 1. `docs/execution/00-global-rules.md`
-2. `docs/blueprint/BP-02-data-flow.md`
-3. `docs/blueprint/BP-01-module-map.md`
-4. `docs/blueprint/BP-07-process-lifecycle.md`
-5. Current code:
+2. `docs/execution/04-frozen-contract-surface.md`
+3. `docs/blueprint/BP-02-data-flow.md`
+4. `docs/blueprint/BP-01-module-map.md`
+5. `docs/blueprint/BP-07-process-lifecycle.md`
+6. Frozen contract files:
+   - `src/contracts/adapters.ts`
+   - `src/contracts/conversations.ts`
+   - `src/contracts/store.ts`
+   - `src/contracts/sinks.ts`
+   - `src/contracts/config.ts`
+   - `src/contracts/lifecycle.ts`
+   - `src/contracts/pipeline.ts`
+7. Current code:
    - `src/commands/watch.ts`
    - `src/watcher.ts`
    - `src/lifecycle.ts`
@@ -40,6 +49,7 @@ ingest/push coordinator, change-gated push scheduling, and bounded shutdown.
 ## Forbidden Files
 
 - `src/adapters/**`
+- `src/contracts/**`
 - `src/db/**`
 - `src/sinks/**`
 - `src/config.ts`
@@ -84,6 +94,7 @@ Stop if:
 
 - the packet needs new store semantics
 - the packet needs shared type changes
+- the packet needs to edit any frozen file under `src/contracts/**`
 - the packet needs lifecycle policy changes beyond frozen BP-07 semantics
 
 ## Completion Report

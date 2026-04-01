@@ -1,5 +1,23 @@
 import type { Session, Message } from "../adapters/types";
 
+// Legacy v1 sink surface retained only as a migration shim.
+// Frozen v2 contracts live in src/contracts/sinks.ts and
+// src/contracts/config.ts and are Codex-owned during Wave 1.
+
+export type {
+  PushError as V2PushError,
+  PushPayload as V2PushPayload,
+  PushResult as V2PushResult,
+  Sink as V2Sink,
+  SinkHealth as V2SinkHealth,
+} from "../contracts/sinks";
+export type {
+  JinConfig as V2JinConfig,
+  RouteConfig as V2RouteConfig,
+  RouteMatch as V2RouteMatch,
+  SinkConfig as V2SinkConfig,
+} from "../contracts/config";
+
 export interface Sink {
   id: string;
   name: string;

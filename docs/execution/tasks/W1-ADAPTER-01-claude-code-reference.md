@@ -21,13 +21,17 @@ reference rich adapter for the new architecture.
 ## Read In Order
 
 1. `docs/execution/00-global-rules.md`
-2. `docs/blueprint/BP-04-adapter-contract.md`
-3. `docs/blueprint/BP-03-conversation-model.md`
-4. `docs/blueprint/BP-02-data-flow.md`
-5. Supporting docs:
+2. `docs/execution/04-frozen-contract-surface.md`
+3. `docs/blueprint/BP-04-adapter-contract.md`
+4. `docs/blueprint/BP-03-conversation-model.md`
+5. `docs/blueprint/BP-02-data-flow.md`
+6. Frozen contract files:
+   - `src/contracts/adapters.ts`
+   - `src/contracts/conversations.ts`
+7. Supporting docs:
    - `docs/adapters/ADAPTER_INVESTIGATION_PLAYBOOK.md`
    - `docs/architecture/adapter-claude-code.md`
-6. Current code:
+8. Current code:
    - `src/adapters/claude-code.ts`
    - `src/adapters/types.ts`
    - Claude Code fixtures under `test/fixtures/claude-code/`
@@ -41,6 +45,7 @@ reference rich adapter for the new architecture.
 ## Forbidden Files
 
 - `src/adapters/types.ts`
+- `src/contracts/**`
 - `src/adapters/registry.ts`
 - `src/db/**`
 - `src/pipeline/**`
@@ -86,6 +91,7 @@ Stop if:
 
 - the packet needs shared type changes
 - the packet needs store-specific logic to express adapter output
+- the packet needs to edit any frozen file under `src/contracts/**`
 - the packet needs routing or sink knowledge
 
 ## Completion Report

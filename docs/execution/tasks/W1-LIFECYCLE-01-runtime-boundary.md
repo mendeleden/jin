@@ -21,10 +21,15 @@ the v2 pipeline has one long-lived owner per local store.
 ## Read In Order
 
 1. `docs/execution/00-global-rules.md`
-2. `docs/blueprint/BP-07-process-lifecycle.md`
-3. `docs/blueprint/BP-08-routing-and-config.md`
-4. `docs/blueprint/BP-Product-Strategy.md`
-5. Current code:
+2. `docs/execution/04-frozen-contract-surface.md`
+3. `docs/blueprint/BP-07-process-lifecycle.md`
+4. `docs/blueprint/BP-08-routing-and-config.md`
+5. `docs/blueprint/BP-Product-Strategy.md`
+6. Frozen contract files:
+   - `src/contracts/lifecycle.ts`
+   - `src/contracts/config.ts`
+   - `src/contracts/pipeline.ts`
+7. Current code:
    - `src/lifecycle.ts`
    - `src/runguard.ts`
    - `src/commands/start.ts`
@@ -45,6 +50,7 @@ the v2 pipeline has one long-lived owner per local store.
 ## Forbidden Files
 
 - `src/pipeline/**`
+- `src/contracts/**`
 - `src/db/**`
 - `src/adapters/**`
 - `src/sinks/**`
@@ -85,6 +91,7 @@ Stop if:
 
 - the packet needs queue redesign from BP-02
 - the packet needs a second runtime for Desktop
+- the packet needs to edit any frozen file under `src/contracts/**`
 - transport details become mandatory and are not already frozen by Codex
 
 ## Completion Report

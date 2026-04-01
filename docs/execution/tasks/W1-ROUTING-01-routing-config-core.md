@@ -21,10 +21,14 @@ in command-surface or onboarding churn.
 ## Read In Order
 
 1. `docs/execution/00-global-rules.md`
-2. `docs/blueprint/BP-08-routing-and-config.md`
-3. `docs/blueprint/BP-06-sink-contract.md`
-4. `docs/blueprint/BP-07-process-lifecycle.md`
-5. Current code:
+2. `docs/execution/04-frozen-contract-surface.md`
+3. `docs/blueprint/BP-08-routing-and-config.md`
+4. `docs/blueprint/BP-06-sink-contract.md`
+5. `docs/blueprint/BP-07-process-lifecycle.md`
+6. Frozen contract files:
+   - `src/contracts/config.ts`
+   - `src/contracts/conversations.ts`
+7. Current code:
    - `src/config.ts`
    - `src/routing.ts`
    - `test/routing.test.ts`
@@ -38,6 +42,7 @@ in command-surface or onboarding churn.
 ## Forbidden Files
 
 - `src/commands/**`
+- `src/contracts/**`
 - `src/pipeline/**`
 - `src/sinks/**`
 - `src/db/**`
@@ -79,6 +84,7 @@ Stop if:
 
 - the packet needs command-level design choices
 - the packet needs lifecycle restart behavior redesigned
+- the packet needs to edit any frozen file under `src/contracts/**`
 - the packet needs Team onboarding concepts mixed into generic sink config
 
 ## Completion Report

@@ -1,5 +1,21 @@
-// Adapter interface — each coding tool implements this to expose its conversation data
-// and surrounding context artifacts (memory files, configs, rules, etc.).
+// Legacy v1 adapter/session surface retained only as a migration shim.
+// Frozen v2 contracts live in src/contracts/adapters.ts and
+// src/contracts/conversations.ts and are Codex-owned during Wave 1.
+
+export type {
+  Adapter as V2Adapter,
+  ChangeHint,
+  ChangeHintKind,
+} from "../contracts/adapters";
+export type {
+  ConversationBundle,
+  ConversationRef,
+  ConversationRelationship,
+  ConversationSourceFormat,
+  ParsedConversation,
+  ParsedMessage,
+  ParsedToolCall,
+} from "../contracts/conversations";
 
 export interface Adapter {
   id: string;

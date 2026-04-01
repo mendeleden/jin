@@ -21,10 +21,15 @@ push contract.
 ## Read In Order
 
 1. `docs/execution/00-global-rules.md`
-2. `docs/blueprint/BP-06-sink-contract.md`
-3. `docs/blueprint/BP-02-data-flow.md`
-4. `docs/blueprint/BP-05-store-and-migration.md`
-5. Current code:
+2. `docs/execution/04-frozen-contract-surface.md`
+3. `docs/blueprint/BP-06-sink-contract.md`
+4. `docs/blueprint/BP-02-data-flow.md`
+5. `docs/blueprint/BP-05-store-and-migration.md`
+6. Frozen contract files:
+   - `src/contracts/conversations.ts`
+   - `src/contracts/sinks.ts`
+   - `src/contracts/config.ts`
+7. Current code:
    - `src/sinks/webhook.ts`
    - `src/sinks/types.ts`
    - relevant sink tests under `test/`
@@ -37,6 +42,7 @@ push contract.
 ## Forbidden Files
 
 - `src/sinks/types.ts`
+- `src/contracts/**`
 - `src/sinks/postgres.ts`
 - `src/sinks/s3.ts`
 - `src/pipeline/**`
@@ -80,6 +86,7 @@ Stop if:
 
 - the packet needs to change `PushPayload`
 - retry policy must move from pipeline to sink
+- the packet needs to edit any frozen file under `src/contracts/**`
 - webhook config semantics are not frozen enough
 
 ## Completion Report
