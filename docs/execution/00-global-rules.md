@@ -15,6 +15,7 @@ These rules apply to every execution packet.
 - A worker must be able to succeed from:
   - this file
   - the dispatch protocol
+  - the live control plane
   - one task packet
   - the exact BP docs and code files named in that packet
 - Do not require a worker to rediscover the architecture from the whole repo.
@@ -51,7 +52,18 @@ These are one-way doors and remain Codex-owned until frozen and delegated.
   needs that change.
 - If a bridge from old code to new code is needed, keep the bridge explicit.
 
-## 6. Stop Conditions
+## 6. Live Control Plane Rule
+
+- Live multi-agent status must be recorded in the shared control plane, not
+  inferred from git alone.
+- The shared control plane is usually `.execution/`, or another directory
+  selected via the dispatch protocol.
+- Workers must read the current control-plane state before starting work.
+- Workers must update their own live heartbeat/progress state while working.
+- Codex must update packet assignment and transition state.
+- Cursor must update review artifacts and the blueprint scoreboard.
+
+## 7. Stop Conditions
 
 Stop and hand back to Codex if:
 
@@ -67,7 +79,7 @@ When stopping, return:
 - which file or contract caused it
 - what decision Codex must make
 
-## 7. Required Completion Report
+## 8. Required Completion Report
 
 Every worker handoff must use this exact structure:
 
@@ -91,7 +103,7 @@ Blocked / needs Codex:
 - ...
 ```
 
-## 8. Review Contract
+## 9. Review Contract
 
 Before a worker diff is accepted:
 

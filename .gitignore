@@ -16,3 +16,6 @@ site/package-lock.json
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Live multi-agent control plane
+.execution/

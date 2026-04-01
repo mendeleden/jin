@@ -13,6 +13,20 @@ The answer is:
 - Codex freezes contracts and integrates
 - Cursor audits drift and reports progress
 - worker agents execute one narrow packet at a time
+- live progress is tracked in a shared control plane outside branch-local docs
+
+## Static Vs Live
+
+The execution OS now has two layers:
+
+- `docs/execution/`
+  - committed, reviewable, branchable specification
+- shared control plane
+  - a single live state directory, usually `.execution/`, shared across all
+    agents on the machine
+
+The spec explains how the system works.
+The control plane tells you what is happening right now.
 
 ## Contents
 
@@ -24,6 +38,10 @@ The answer is:
   - status vocabulary, Cursor report shape, Codex merge gate
 - `03-blueprint-task-map.md`
   - canonical mapping from each BP file to one or more execution packets
+- `05-live-control-plane.md`
+  - the centralized live-state model for multi-agent progress tracking
+- `templates/`
+  - templates for initializing the live control plane
 - `prompts/`
   - reusable launch prompts for the first Codex and Cursor sessions
 - `tasks/`
@@ -34,13 +52,16 @@ The answer is:
 1. Start with `00-global-rules.md`.
 2. Read `01-dispatch-protocol.md`.
 3. Read `03-blueprint-task-map.md`.
-4. Execute `tasks/W0-CODEX-01-contract-freeze.md`.
-5. Start `tasks/W0-CURSOR-01-drift-audit.md` and keep it running as the
+4. Read `05-live-control-plane.md`.
+5. Initialize the shared control plane at `.execution/` or another chosen
+   control directory.
+6. Execute `tasks/W0-CODEX-01-contract-freeze.md`.
+7. Start `tasks/W0-CURSOR-01-drift-audit.md` and keep it running as the
    audit lane.
-6. After contract freeze, dispatch Wave 1 worker packets in parallel.
-7. Use Wave 2 and Wave 3 packets to finish blueprint coverage and surface
+8. After contract freeze, dispatch Wave 1 worker packets in parallel.
+9. Use Wave 2 and Wave 3 packets to finish blueprint coverage and surface
    cleanup.
-8. Let Codex perform the integration pass for any glue that packets
+10. Let Codex perform the integration pass for any glue that packets
    intentionally forbid.
 
 ## Core Roles
@@ -52,6 +73,7 @@ Codex owns:
 - contract freeze
 - cross-boundary decisions
 - packet maintenance
+- authoritative packet assignment state
 - review and approval
 - integration glue across lanes
 
@@ -62,6 +84,8 @@ Cursor owns:
 - drift detection
 - progress reporting
 - boundary-spread detection
+- blueprint scoreboard updates in the control plane
+- review artifacts
 
 Cursor does not own architecture or implementation policy.
 
@@ -72,12 +96,14 @@ Workers own:
 - one bounded code slice
 - one packet at a time
 - only the files listed in the packet
+- their live heartbeat and progress notes in the control plane
 
 Workers do not own:
 
 - global contracts
 - packet redesign
 - cross-lane integration
+- the overall program scoreboard
 
 ## Packet Catalog
 
@@ -85,6 +111,8 @@ Workers do not own:
 
 - `W0-CODEX-01-contract-freeze.md`
   - Codex-only. Freezes the one-way doors and updates packets if needed.
+- `W0-CODEX-02-live-control-plane-bootstrap.md`
+  - Codex-only. Initializes the shared control plane and packet registry.
 - `W0-CURSOR-01-drift-audit.md`
   - Cursor-only. Reports drift and progress across the whole program.
 
@@ -132,18 +160,35 @@ Workers do not own:
 ## Recommended Dispatch Order
 
 1. Codex completes `W0-CODEX-01-contract-freeze.md`.
-2. Cursor starts `W0-CURSOR-01-drift-audit.md`.
-3. Dispatch these in parallel:
+2. Codex completes `W0-CODEX-02-live-control-plane-bootstrap.md`.
+3. Cursor starts `W0-CURSOR-01-drift-audit.md`.
+4. Dispatch these in parallel:
    - `W1-DB-01-store-spine.md`
    - `W1-ROUTING-01-routing-config-core.md`
    - `W1-LIFECYCLE-01-runtime-boundary.md`
-4. Once the frozen contracts are stable enough, dispatch:
+5. Once the frozen contracts are stable enough, dispatch:
    - `W1-ADAPTER-01-claude-code-reference.md`
    - `W1-SINK-01-webhook-reference.md`
-5. Dispatch `W1-PIPE-01-pipeline-spine.md` once the store and sink contracts
+6. Dispatch `W1-PIPE-01-pipeline-spine.md` once the store and sink contracts
    are stable enough to wire together cleanly.
-6. Dispatch Wave 2 reference lanes and command lanes.
-7. Finish with Wave 3 structural cleanup and command-surface reframe.
+7. Dispatch Wave 2 reference lanes and command lanes.
+8. Finish with Wave 3 structural cleanup and command-surface reframe.
+
+## The Central Progress Rule
+
+At any moment, the answer to "what is happening across agents right now?"
+should be available in one place:
+
+- shared control plane directory, usually `.execution/`
+
+If the answer only exists in:
+
+- a branch
+- a chat thread
+- a worker's memory
+- an unmerged diff
+
+then the execution OS is failing.
 
 ## Design Principle
 

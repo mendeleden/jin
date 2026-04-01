@@ -8,10 +8,26 @@ Every dispatch should include exactly four things:
 
 1. `docs/execution/00-global-rules.md`
 2. this file
-3. one task packet from `docs/execution/tasks/`
-4. only the BP docs and current code files named in that packet
+3. `docs/execution/05-live-control-plane.md`
+4. one task packet from `docs/execution/tasks/`
+5. only the BP docs and current code files named in that packet
 
 Do not send the whole repo. Do not say "read all the docs."
+
+## The Shared Control Directory
+
+All agents must share one live control directory.
+
+Default:
+
+- `<canonical repo root>/.execution/`
+
+If you are using worktrees or containers, mount the same host control
+directory into every agent environment.
+
+Recommended environment variable:
+
+- `JIN_EXEC_CONTROL_DIR=/absolute/path/to/shared/.execution`
 
 ## Worker Prompt Skeleton
 
@@ -23,9 +39,16 @@ Work in /path/to/repo.
 Read in order:
 1. docs/execution/00-global-rules.md
 2. docs/execution/01-dispatch-protocol.md
-3. docs/execution/tasks/<packet>.md
+3. docs/execution/05-live-control-plane.md
+4. docs/execution/tasks/<packet>.md
 
 Then execute the packet exactly.
+
+Read the shared control plane first:
+- <control-dir>/program.md
+- <control-dir>/blueprints.md
+- <control-dir>/packets/<packet>.md
+- any reviews for that packet
 
 Only read the BP docs and code files named in the packet.
 Only edit the owned files named in the packet.
@@ -63,6 +86,7 @@ Use a per-task container when:
 If you use containers:
 
 - mount only the task worktree writable
+- mount the shared control directory writable into every container
 - avoid broad host mounts unless required
 - do not confuse runtime isolation with semantic safety
 
@@ -91,6 +115,37 @@ Use these states for every packet:
 - `approved`
 - `merged`
 - `blocked`
+
+## Live State Files
+
+The control directory should contain:
+
+- `program.md`
+  - Codex-owned high-level state
+- `blueprints.md`
+  - Cursor-owned BP scoreboard
+- `packets/<packet-id>.md`
+  - Codex-owned packet assignment and transition state
+- `agents/<agent-id>.md`
+  - worker-owned live heartbeat and progress notes
+- `reviews/<timestamp>-<packet-id>-<auditor>.md`
+  - Cursor-owned review artifacts
+
+Workers do not update the global scoreboard.
+Workers update only their own agent file and any progress subsection explicitly
+allowed by Codex.
+
+## Required State Transitions
+
+At minimum:
+
+1. Codex creates or updates the packet file before dispatch.
+2. Worker creates or updates its agent file on start.
+3. Worker updates heartbeat and current focus during execution.
+4. Worker marks itself ready for review in its agent file at handoff.
+5. Cursor writes a review artifact.
+6. Codex moves packet state to `approved`, `needs_codex`, `blocked`, or
+   `merged`.
 
 ## Integration Rule
 

@@ -5,9 +5,16 @@ Read these in order:
 1. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/00-global-rules.md`
 2. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/02-progress-and-audit.md`
 3. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/03-blueprint-task-map.md`
-4. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/tasks/W0-CURSOR-01-drift-audit.md`
+4. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/05-live-control-plane.md`
+5. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/tasks/W0-CURSOR-01-drift-audit.md`
 
 Then execute `W0-CURSOR-01`.
+
+If a shared control directory exists, read these first:
+
+- `$JIN_EXEC_CONTROL_DIR/program.md`
+- `$JIN_EXEC_CONTROL_DIR/blueprints.md`
+- the packet file for the work under review
 
 Your job is read-only auditing. Do not rewrite architecture and do not make
 implementation changes unless Codex explicitly reassigns you to a different

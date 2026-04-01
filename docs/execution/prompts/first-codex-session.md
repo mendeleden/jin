@@ -6,7 +6,14 @@ Start with the execution system already in the repo. Read these in order:
 2. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/01-dispatch-protocol.md`
 3. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/02-progress-and-audit.md`
 4. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/03-blueprint-task-map.md`
-5. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/tasks/W0-CODEX-01-contract-freeze.md`
+5. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/05-live-control-plane.md`
+6. `/Users/edenmendel/Documents/GitHub/jin/docs/execution/tasks/W0-CODEX-01-contract-freeze.md`
+
+If a shared control directory exists, read these before editing:
+
+- `$JIN_EXEC_CONTROL_DIR/program.md`
+- `$JIN_EXEC_CONTROL_DIR/blueprints.md`
+- any packet file for the packet you are executing
 
 Then execute `W0-CODEX-01` fully.
 

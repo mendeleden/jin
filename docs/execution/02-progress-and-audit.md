@@ -3,6 +3,14 @@
 This file defines how Cursor reports progress and how Codex decides a packet is
 ready to merge.
 
+## Authoritative Location
+
+The authoritative live progress view is the shared control plane, not the
+packet docs themselves.
+
+- `docs/execution/` explains the system
+- `.execution/` or another shared control directory records current state
+
 ## Status Vocabulary
 
 Use these labels for blueprint progress:
@@ -31,6 +39,11 @@ Every Cursor audit should return:
   - BP status labels for the blueprints touched by the packet
 - `Codex decisions needed`
   - ambiguity, packet mismatch, or cross-lane conflict
+
+Cursor should also:
+
+- update `blueprints.md`
+- write a review artifact under `reviews/`
 
 ## Codex Merge Gate
 
@@ -61,6 +74,7 @@ Optional but recommended:
 
 - note which packet currently advances each BP
 - note which packets are blocked by Codex decisions
+- note the last reviewed packet touching each BP
 
 ## Drift Severity
 
@@ -83,3 +97,13 @@ Only Codex resolves conflicts between:
 - current code
 - packet intent
 - blueprint intent
+
+## Packet-State Rule
+
+The live answer to "where is packet X?" should come from:
+
+- `packets/<packet-id>.md`
+- linked worker heartbeat file(s)
+- linked review artifact(s)
+
+not from reading branches and guessing.
