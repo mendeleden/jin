@@ -1,5 +1,16 @@
-import { getWatcherState, getDashboardState, stopWatcher } from "../lifecycle";
-import { isServiceInstalled } from "../runguard";
+import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "../contracts/lifecycle";
+import {
+  getWatcherState,
+  getDashboardState,
+  stopDashboard,
+  stopWatcher,
+} from "../lifecycle";
+import {
+  clearRuntimeState,
+  isServiceInstalled,
+  markRuntimeRunning,
+  markRuntimeStarting,
+} from "../runguard";
 
 export async function startCommand(opts: {
   service?: boolean;
@@ -13,17 +24,31 @@ export async function startCommand(opts: {
   // --service: install as OS service
   if (opts.service) {
     if (watcherState.status === "running" && watcherState.mode === "service") {
-      console.log("  Watcher already running as OS service.");
+      console.log("  jin is already running under the OS service manager.");
+      console.log("  Use service control or `jin service status` for details.");
       if (opts.ui || opts.all) {
         await startUiIfNeeded(dashboardState, opts.port);
       }
       return;
     }
-    // Stop daemon if running, then install service
-    if (watcherState.status === "running" && watcherState.mode === "daemon") {
-      console.log(`  Stopping daemon (PID ${watcherState.pid}) to install service...`);
-      await stopWatcher();
+
+    if (watcherState.status === "running") {
+      const ownerLabel =
+        watcherState.mode === "foreground"
+          ? `foreground runtime (PID ${watcherState.pid})`
+          : `runtime (PID ${watcherState.pid})`;
+      console.log(`  Stopping existing ${ownerLabel} before enabling service mode...`);
+      const stopResult = await stopWatcher({
+        waitForExitMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+        forceAfterTimeout: true,
+      });
+      if (!stopResult.completed) {
+        console.log("  The existing runtime is still stopping.");
+        console.log("  Wait for `jin status` to report `stopped`, then try again.");
+        return;
+      }
     }
+
     const { serviceCommand } = await import("./service");
     await serviceCommand("install");
     if (opts.ui || opts.all) {
@@ -41,24 +66,34 @@ export async function startCommand(opts: {
   // Default: start watcher as daemon
   if (watcherState.status === "running") {
     if (watcherState.mode === "service") {
-      console.log("  Watcher already running as OS service.");
+      console.log("  jin is already running under the OS service manager.");
+      console.log("  Use service control or `jin service status` instead of spawning a daemon.");
+    } else if (watcherState.mode === "foreground") {
+      console.log(`  jin is already running in the foreground (PID ${watcherState.pid}).`);
+      console.log("  Stop that runtime or run `jin stop` before starting a detached daemon.");
     } else {
-      console.log(`  Watcher already running (PID ${watcherState.pid}).`);
+      console.log(`  jin is already running as a detached daemon (PID ${watcherState.pid}).`);
+      console.log("  Use `jin status` or `jin stop` instead of starting a second owner.");
     }
   } else {
-    // Warn if service is installed but not active
     if (isServiceInstalled()) {
       console.log("  Note: OS service is installed but not active.");
       console.log("  The service may start on reboot. Consider `jin start --service` instead.\n");
     }
-    // Daemonize
+
+    markRuntimeStarting("daemon");
     const { watchCommand } = await import("./watch");
-    await watchCommand({ daemon: true });
+    try {
+      await watchCommand({ daemon: true });
+      markRuntimeRunning("daemon");
+    } catch (error) {
+      clearRuntimeState();
+      throw error;
+    }
   }
 
   // --all: also start dashboard
   if (opts.all) {
-    // Re-check dashboard state after watcher start
     const freshDashboard = getDashboardState();
     await startUiIfNeeded(freshDashboard, opts.port);
   }
@@ -70,19 +105,36 @@ export async function restartCommand(opts: {
   all?: boolean;
   port?: number;
 }): Promise<void> {
-  const { stopAll, stopWatcher: stopW, stopDashboard: stopD } = await import("../lifecycle");
-
   if (opts.ui && !opts.all) {
-    await stopD();
+    await stopDashboard();
     console.log("  Dashboard stopped.");
-  } else {
-    await stopAll();
-    console.log("  All components stopped.");
+    await Bun.sleep(300);
+    await startCommand(opts);
+    return;
   }
 
-  // Brief pause for cleanup
-  await Bun.sleep(300);
+  const watcherState = getWatcherState();
+  const dashboardState = getDashboardState();
 
+  if (watcherState.status === "running") {
+    console.log("  Restarting the runtime owner...");
+    const stopResult = await stopWatcher({
+      waitForExitMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+      forceAfterTimeout: true,
+    });
+    if (!stopResult.completed) {
+      console.log("  The runtime is still stopping.");
+      console.log("  Run `jin status` to confirm it is stopped, then retry `jin restart`.");
+      return;
+    }
+  }
+
+  if (dashboardState.status === "running") {
+    await stopDashboard();
+    console.log("  Dashboard stopped.");
+  }
+
+  await Bun.sleep(300);
   await startCommand(opts);
 }
 

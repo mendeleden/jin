@@ -1,5 +1,4 @@
 import {
-  stopAll,
   stopWatcher,
   stopDashboard,
   getWatcherState,
@@ -16,10 +15,29 @@ export async function stopCommand(opts?: {
       console.log("  Watcher is not running.");
       return;
     }
-    const label = state.mode === "service" ? "service" : `PID ${state.pid}`;
-    console.log(`  Stopping watcher (${label})...`);
-    await stopWatcher();
-    console.log("  Watcher stopped.");
+
+    const label =
+      state.mode === "service"
+        ? "service manager"
+        : state.mode === "foreground"
+          ? `foreground PID ${state.pid}`
+          : `PID ${state.pid}`;
+    console.log(`  Requesting watcher shutdown (${label})...`);
+    const result = await stopWatcher();
+    if (!result.requested) {
+      console.log("  Watcher is not running.");
+      return;
+    }
+    if (result.completed) {
+      const suffix = result.forced ? " after forcing shutdown." : ".";
+      console.log(`  Watcher stopped${suffix}`);
+    } else if (result.via === "service") {
+      console.log("  Service stop requested. The runtime is still stopping.");
+      console.log("  Use your service manager or `jin status` to watch for completion.");
+    } else {
+      console.log("  Shutdown requested. The runtime is still stopping.");
+      console.log("  Run `jin status` to monitor progress.");
+    }
     return;
   }
 
@@ -40,18 +58,46 @@ export async function stopCommand(opts?: {
   const dashboardState = getDashboardState();
 
   if (watcherState.status === "stopped" && dashboardState.status === "stopped") {
-    console.log("  jin is not running.");
+    console.log("  jin is already stopped.");
     return;
   }
 
+  let watcherResult:
+    | Awaited<ReturnType<typeof stopWatcher>>
+    | null = null;
+
   if (watcherState.status === "running") {
-    const label = watcherState.mode === "service" ? "service" : `PID ${watcherState.pid}`;
-    console.log(`  Stopping watcher (${label})...`);
+    const label =
+      watcherState.mode === "service"
+        ? "service manager"
+        : watcherState.mode === "foreground"
+          ? `foreground PID ${watcherState.pid}`
+          : `PID ${watcherState.pid}`;
+    console.log(`  Requesting watcher shutdown (${label})...`);
+    watcherResult = await stopWatcher();
   }
   if (dashboardState.status === "running") {
     console.log(`  Stopping dashboard (PID ${dashboardState.pid})...`);
+    await stopDashboard();
+    console.log("  Dashboard stopped.");
   }
 
-  await stopAll();
-  console.log("  Stopped.");
+  if (!watcherResult) {
+    return;
+  }
+
+  if (watcherResult.completed) {
+    const suffix = watcherResult.forced ? " after forcing shutdown." : ".";
+    console.log(`  Watcher stopped${suffix}`);
+    return;
+  }
+
+  if (watcherResult.via === "service") {
+    console.log("  Service stop requested. The runtime is still stopping.");
+    console.log("  Use your service manager or `jin status` to watch for completion.");
+    return;
+  }
+
+  console.log("  Shutdown requested. The runtime is still stopping.");
+  console.log("  Run `jin status` to monitor progress.");
 }

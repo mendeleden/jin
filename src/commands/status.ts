@@ -1,17 +1,20 @@
 import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
-import { configDir, loadConfig } from "../config";
+import { configPath, loadConfig } from "../config";
 import type { JinConfig } from "../config";
+import type { RuntimeStatus } from "../contracts/lifecycle";
 import { Store } from "../store";
 import { getAllState } from "../lifecycle";
 import type { ComponentState } from "../lifecycle";
+import {
+  getRuntimePaths,
+  getRuntimeStatus,
+  isServiceInstalled,
+  runModeLabel,
+} from "../runguard";
 import { readProgress } from "../progress";
 
-const LOG_FILE = join(configDir(), "jin.log");
-
-// ANSI helpers
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
-const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
@@ -20,48 +23,55 @@ export async function statusCommand(opts?: {
   short?: boolean;
 }): Promise<void> {
   const config = await loadConfig();
+  const runtime = getRuntimeStatus();
   const states = getAllState();
+  const paths = getRuntimePaths();
 
   if (opts?.json) {
-    return printJson(config, states);
+    return printJson(config, runtime, states, paths);
   }
   if (opts?.short) {
-    return printShort(states);
+    return printShort(runtime, states);
   }
-  return printFull(config, states);
+  return printFull(config, runtime, states, paths);
 }
 
-async function printJson(config: JinConfig, states: ComponentState[]): Promise<void> {
+async function printJson(
+  config: JinConfig,
+  runtime: RuntimeStatus,
+  states: ComponentState[],
+  paths: ReturnType<typeof getRuntimePaths>,
+): Promise<void> {
   const output: Record<string, unknown> = {
+    runtime,
     components: states,
+    paths: {
+      config: paths.configPath,
+      store: paths.storePath,
+      log: paths.logPath,
+    },
   };
 
-  try {
-    const store = new Store(config.store.dbPath);
-    output.sessions = store.sessionCount();
-    output.messages = store.messageCount();
-
-    // Get active adapters
-    const adapterRows = store.analyzeByAdapter();
-    output.adapters = Object.keys(adapterRows);
-
-    store.close();
-  } catch {
+  const stats = readStoreStats(paths.storePath);
+  if (stats) {
+    output.sessions = stats.sessions;
+    output.messages = stats.messages;
+    output.adapters = stats.adapters;
+    if (stats.totalCost > 0) {
+      output.totalCost = stats.totalCost;
+    }
+  } else {
     output.sessions = 0;
     output.messages = 0;
     output.adapters = [];
   }
 
-  output.sinks = (config.sinks || []).map((s, i) => ({
-    id: s.id || `${s.type}-${i}`,
-    type: s.type,
-    teamId: s.teamId || null,
+  output.sinks = (config.sinks || []).map((sink, index) => ({
+    id: sink.id || `${sink.type}-${index}`,
+    type: sink.type,
+    enabled: sink.enabled !== false,
   }));
-
-  if (config.routes?.length) {
-    output.routes = config.routes;
-    output.defaultSinks = config.defaultSinks || [];
-  }
+  output.routes = config.routes || [];
 
   const progress = readProgress();
   if (progress) {
@@ -73,50 +83,72 @@ async function printJson(config: JinConfig, states: ComponentState[]): Promise<v
     };
   }
 
-  output.log = LOG_FILE;
-
   console.log(JSON.stringify(output, null, 2));
 }
 
-function printShort(states: ComponentState[]): void {
-  for (const s of states) {
-    if (s.status === "running") {
+function printShort(runtime: RuntimeStatus, states: ComponentState[]): void {
+  console.log(`  runtime\t${formatRuntimeState(runtime.state)}\t${describeRuntimeOwner(runtime)}`);
+  for (const state of states) {
+    if (state.status === "running") {
       const details: string[] = [];
-      if (s.pid) details.push(`pid ${s.pid}`);
-      if (s.mode) details.push(`via ${s.mode}`);
-      if (s.port) details.push(`http://localhost:${s.port}`);
-      if (s.uptime) details.push(`uptime ${s.uptime}`);
-      console.log(`  ${s.name}\t${green("\u25cf running")}\t${details.join("  ")}`);
+      if (state.pid) details.push(`pid ${state.pid}`);
+      if (state.mode) details.push(`via ${state.mode}`);
+      if (state.lifecycleState && state.lifecycleState !== "running") {
+        details.push(`state ${state.lifecycleState}`);
+      }
+      if (state.port) details.push(`http://localhost:${state.port}`);
+      if (state.uptime) details.push(`uptime ${state.uptime}`);
+      console.log(`  ${state.name}\t${green("\u25cf running")}\t${details.join("  ")}`);
     } else {
-      console.log(`  ${s.name}\t${dim("- stopped")}`);
+      console.log(`  ${state.name}\t${dim("- stopped")}`);
     }
   }
 }
 
-async function printFull(config: JinConfig, states: ComponentState[]): Promise<void> {
+async function printFull(
+  config: JinConfig,
+  runtime: RuntimeStatus,
+  states: ComponentState[],
+  paths: ReturnType<typeof getRuntimePaths>,
+): Promise<void> {
   console.log(`\n  jin status\n`);
+  console.log(`  ${padRight("runtime", 12)}${formatRuntimeState(runtime.state)}    ${describeRuntimeOwner(runtime)}`);
+  console.log(`  ${padRight("config", 12)}${configPath()}`);
+  console.log(`  ${padRight("store", 12)}${paths.storePath}`);
 
-  // Components
-  for (const s of states) {
-    if (s.status === "running") {
+  for (const state of states) {
+    if (state.status === "running") {
       const parts: string[] = [green("\u25cf running")];
-      if (s.pid) parts.push(`pid ${s.pid}`);
-      if (s.mode) parts.push(`via ${s.mode}`);
-      if (s.uptime) parts.push(`uptime ${s.uptime}`);
-      if (s.port) parts.push(cyan(`http://localhost:${s.port}`));
-      console.log(`  ${padRight(s.name, 12)}${parts.join("    ")}`);
+      if (state.pid) parts.push(`pid ${state.pid}`);
+      if (state.mode) parts.push(`via ${state.mode}`);
+      if (state.lifecycleState && state.lifecycleState !== "running") {
+        parts.push(`state ${state.lifecycleState}`);
+      }
+      if (state.uptime) parts.push(`uptime ${state.uptime}`);
+      if (state.port) parts.push(cyan(`http://localhost:${state.port}`));
+      console.log(`  ${padRight(state.name, 12)}${parts.join("    ")}`);
     } else {
-      console.log(`  ${padRight(s.name, 12)}${dim("- stopped")}`);
+      console.log(`  ${padRight(state.name, 12)}${dim("- stopped")}`);
     }
   }
 
-  // Hint if everything is stopped
-  const allStopped = states.every((s) => s.status === "stopped");
-  if (allStopped) {
-    console.log(`\n  ${dim("run 'jin start' to begin watching")}`);
+  if (runtime.issues.length > 0) {
+    for (const issue of runtime.issues) {
+      const paused = issue.paused ? " (paused)" : "";
+      console.log(`  ${padRight("issue", 12)}${yellow(issue.subsystem)}${paused}    ${issue.message}`);
+    }
   }
 
-  // Ingestion progress
+  if (runtime.state === "stopped") {
+    if (isServiceInstalled()) {
+      console.log(`\n  ${dim("service is installed but inactive; run `jin start --service` or use your service manager")}`);
+    } else {
+      console.log(`\n  ${dim("run `jin start` to create the long-lived runtime owner")}`);
+    }
+  } else if (runtime.state === "stopping") {
+    console.log(`\n  ${dim("shutdown is in progress; run `jin status` again for completion")}`);
+  }
+
   const progress = readProgress();
   if (progress) {
     const pct = Math.round((progress.current / progress.total) * 100);
@@ -125,74 +157,50 @@ async function printFull(config: JinConfig, states: ComponentState[]): Promise<v
 
   console.log("");
 
-  // Store stats
-  try {
-    const store = new Store(config.store.dbPath);
-    const sessions = store.sessionCount();
-    const messages = store.messageCount();
-
-    // Compute total cost
-    const byAdapter = store.analyzeByAdapter();
-    let totalCost = 0;
-    const adapterNames: string[] = [];
-    for (const [name, stats] of Object.entries(byAdapter)) {
-      totalCost += stats.cost;
-      adapterNames.push(name);
-    }
-
+  const stats = readStoreStats(paths.storePath);
+  if (stats) {
     const statsLine = [
-      `sessions  ${sessions.toLocaleString()}`,
-      `messages  ${messages.toLocaleString()}`,
+      `sessions  ${stats.sessions.toLocaleString()}`,
+      `messages  ${stats.messages.toLocaleString()}`,
     ];
-    if (totalCost > 0) {
-      statsLine.push(`cost  $${totalCost.toFixed(2)}`);
+    if (stats.totalCost > 0) {
+      statsLine.push(`cost  $${stats.totalCost.toFixed(2)}`);
     }
     console.log(`  ${statsLine.join("     ")}`);
 
-    if (adapterNames.length > 0) {
-      console.log(`  adapters    ${adapterNames.join(", ")}`);
+    if (stats.adapters.length > 0) {
+      console.log(`  adapters    ${stats.adapters.join(", ")}`);
     }
-
-    store.close();
-  } catch {
+  } else {
     console.log(`  ${dim("store not initialized")}`);
   }
 
-  // Sinks
   if (config.sinks && config.sinks.length > 0) {
-    const sinkLabels = config.sinks.map((s, i) => {
-      const id = s.id || `${s.type}-${i}`;
-      const label = s.name || (s.teamId ? `${s.type}/${s.teamId}` : id);
-      return `${green("\u25cf")} ${label}`;
+    const sinkLabels = config.sinks.map((sink, index) => {
+      const id = sink.id || `${sink.type}-${index}`;
+      const enabled = sink.enabled !== false;
+      return enabled ? `${green("\u25cf")} ${id}` : `${yellow("\u25cf")} ${id} (disabled)`;
     });
     console.log(`  sinks       ${sinkLabels.join("   ")}`);
   }
 
-  // Routes
   if (config.routes && config.routes.length > 0) {
-    const count = config.routes.length;
-    const defaultLabel = config.routeUnmatchedToAll
-      ? "all sinks"
-      : config.defaultSinks?.length
-        ? config.defaultSinks.join(",")
-        : "local only";
-    console.log(`  routes      ${count} connected, unmatched \u2192 ${defaultLabel}`);
+    console.log(`  routes      ${config.routes.length} configured`);
   }
 
   console.log("");
 
-  // Log file
-  if (existsSync(LOG_FILE)) {
-    const stat = statSync(LOG_FILE);
-    console.log(`  log  ${LOG_FILE}`);
-
-    // Show last log line
+  if (existsSync(paths.logPath)) {
+    console.log(`  log  ${paths.logPath}`);
     try {
-      const log = readFileSync(LOG_FILE, "utf-8");
-      const lines = log.trim().split("\n");
-      const lastLine = lines[lines.length - 1];
-      if (lastLine) {
-        console.log(`  last: ${lastLine}`);
+      const stat = statSync(paths.logPath);
+      if (stat.size > 0) {
+        const log = readFileSync(paths.logPath, "utf-8");
+        const lines = log.trim().split("\n");
+        const lastLine = lines[lines.length - 1];
+        if (lastLine) {
+          console.log(`  last: ${lastLine}`);
+        }
       }
     } catch {}
   }
@@ -200,6 +208,60 @@ async function printFull(config: JinConfig, states: ComponentState[]): Promise<v
   console.log("");
 }
 
-function padRight(s: string, len: number): string {
-  return s + " ".repeat(Math.max(0, len - s.length));
+function readStoreStats(storePath: string): {
+  sessions: number;
+  messages: number;
+  adapters: string[];
+  totalCost: number;
+} | null {
+  if (!existsSync(storePath)) {
+    return null;
+  }
+
+  try {
+    const store = new Store(storePath);
+    const sessions = store.sessionCount();
+    const messages = store.messageCount();
+    const byAdapter = store.analyzeByAdapter();
+    const adapters = Object.keys(byAdapter);
+    let totalCost = 0;
+    for (const stats of Object.values(byAdapter)) {
+      totalCost += stats.cost;
+    }
+    store.close();
+    return { sessions, messages, adapters, totalCost };
+  } catch {
+    return null;
+  }
+}
+
+function formatRuntimeState(state: RuntimeStatus["state"]): string {
+  switch (state) {
+    case "running":
+      return green("\u25cf running");
+    case "degraded":
+      return yellow("\u25cf degraded");
+    case "starting":
+      return yellow("\u25cf starting");
+    case "stopping":
+      return yellow("\u25cf stopping");
+    default:
+      return dim("- stopped");
+  }
+}
+
+function describeRuntimeOwner(runtime: RuntimeStatus): string {
+  if (!runtime.owner) {
+    return dim(runModeLabel("none"));
+  }
+
+  const parts = [runModeLabel(runtime.owner.mode)];
+  if (runtime.owner.pid) {
+    parts.push(`pid ${runtime.owner.pid}`);
+  }
+  return parts.join("    ");
+}
+
+function padRight(value: string, length: number): string {
+  return value + " ".repeat(Math.max(0, length - value.length));
 }
