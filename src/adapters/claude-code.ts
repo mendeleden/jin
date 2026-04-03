@@ -1,26 +1,52 @@
-import { existsSync, readdirSync, statSync, readFileSync } from "fs";
-import { join, basename } from "path";
-import { homedir } from "os";
+import { execFileSync } from "child_process";
 import { createHash } from "crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { basename, join, resolve, sep } from "path";
+import { homedir } from "os";
 import { estimateCost } from "../pricing";
-import type { Adapter, Session, Message, ToolUse, ThinkingBlock, ContextArtifact, ArtifactKind } from "./types";
+import type { Adapter as ContractAdapter, ChangeHint } from "../contracts/adapters";
+import type {
+  ConversationBundle,
+  ConversationRef,
+  ConversationRelationship,
+  ParsedMessage,
+  ParsedToolCall,
+} from "../contracts/conversations";
+import type {
+  ArtifactKind,
+  ContextArtifact,
+  Message as LegacyMessage,
+  Session,
+  ThinkingBlock,
+} from "./types";
 
-// Claude Code JSONL schema
+interface ClaudeCodeAdapterOptions {
+  projectsDir?: string;
+  claudeDir?: string;
+  now?: () => Date;
+}
+
 interface RawLine {
   type: string;
   subtype?: string;
-  uuid: string;
-  parentUuid?: string;
+  uuid?: string;
+  parentUuid?: string | null;
   sessionId?: string;
-  timestamp: string;
+  timestamp?: string;
   slug?: string;
   cwd?: string;
+  gitBranch?: string;
   summary?: string;
   leafUuid?: string;
-  compactMetadata?: { trigger?: string; preTokens?: number };
+  isSidechain?: boolean;
+  compactMetadata?: {
+    trigger?: string;
+    preTokens?: number;
+  };
   message?: {
-    role: string;
-    content: unknown; // string | ContentBlock[]
+    id?: string;
+    role?: string;
+    content?: unknown;
     model?: string;
     usage?: {
       input_tokens?: number;
@@ -43,483 +69,281 @@ interface ContentBlock {
   is_error?: boolean;
 }
 
+interface ParsedRecord {
+  lineIndex: number;
+  raw: RawLine;
+}
+
+interface ParentLinkInfo {
+  relationship: ConversationRelationship;
+  traceId: string;
+  parentId: string;
+  forkPoint: number;
+}
+
+interface SegmentBuilder {
+  id: string;
+  traceId: string;
+  parentId: string;
+  relationship: ConversationRelationship;
+  forkPoint: number;
+  messages: ParsedMessage[];
+  toolRefs: Map<string, ParsedToolCall>;
+  sequence: number;
+  turn: number;
+  firstUserText: string;
+  startedAt: string;
+  endedAt: string;
+  cwd: string;
+  gitBranchHint: string;
+  modelCounts: Map<string, number>;
+}
+
+interface FileModel {
+  sessionId: string;
+  sourcePath: string;
+  refs: ConversationRef[];
+  bundles: ConversationBundle[];
+}
+
+interface ParsedFileCacheEntry {
+  size: number;
+  mtimeMs: number;
+  model: FileModel;
+}
+
+interface GitInfo {
+  remote: string;
+  branch: string;
+}
+
 const HOME = homedir();
 
-function findProjectsDir(): string {
-  // v1.0.30+ XDG path (preferred)
+function defaultProjectsDir(): string {
   const xdg = join(HOME, ".config", "claude", "projects");
   if (existsSync(xdg)) return xdg;
-  // Legacy path
   const legacy = join(HOME, ".claude", "projects");
   if (existsSync(legacy)) return legacy;
   return xdg;
 }
 
-function findClaudeDir(): string {
-  return join(HOME, ".claude");
+function stableHash(...parts: string[]): string {
+  return createHash("sha256")
+    .update(parts.join("\u001f"))
+    .digest("hex")
+    .slice(0, 24);
 }
 
-/** Accumulated metadata that can be incrementally updated from new JSONL lines */
-interface SessionMeta {
-  sessionId: string;
-  slug: string;
-  cwd: string;
-  firstMsg: string;
-  lastMsg: string;
-  msgCount: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCacheRead: number;
-  totalCacheWrite: number;
-  firstUserMessage: string;
-  primaryModel: string;
-  isCompacted: boolean;
+function normalizeIso(timestamp?: string): string {
+  if (!timestamp) return "";
+  const parsed = Date.parse(timestamp);
+  return Number.isNaN(parsed) ? timestamp : new Date(parsed).toISOString();
 }
 
-interface FileOffsetCache {
-  size: number;
-  mtimeMs: number;
-  offset: number;         // byte offset of last read position
-  messageCount: number;   // total messages parsed so far
-  meta: SessionMeta;      // accumulated metadata
-  session: Session;       // built session object
+function summarizeText(text: string, fallback: string): string {
+  const flattened = text.replace(/\s+/g, " ").trim();
+  if (!flattened) return fallback;
+  return flattened.length > 120 ? `${flattened.slice(0, 117)}...` : flattened;
 }
 
-export class ClaudeCodeAdapter implements Adapter {
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content);
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
+        return part.text;
+      }
+      return JSON.stringify(part);
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cloneBundle(bundle: ConversationBundle): ConversationBundle {
+  return {
+    conversation: { ...bundle.conversation },
+    messages: bundle.messages.map((message) => ({
+      ...message,
+      toolUses: message.toolUses.map((toolUse) => ({ ...toolUse })),
+    })),
+  };
+}
+
+function collectThinkingBlocks(message: ParsedMessage): ThinkingBlock[] {
+  if (!message.thinkingContent) return [];
+  return [
+    {
+      content: message.thinkingContent,
+      tokenCount: message.thinkingTokens,
+    },
+  ];
+}
+
+export class ClaudeCodeAdapter implements ContractAdapter {
   id = "claude-code";
   name = "Claude Code";
   icon = "◆";
+
   private projectsDir: string;
   private claudeDir: string;
-  private fileCache = new Map<string, FileOffsetCache>();
+  private now: () => Date;
+  private parsedFileCache = new Map<string, ParsedFileCacheEntry>();
+  private sessionIdToPath = new Map<string, string>();
+  private gitCache = new Map<string, GitInfo>();
 
-  constructor() {
-    this.projectsDir = findProjectsDir();
-    this.claudeDir = findClaudeDir();
+  constructor(options: ClaudeCodeAdapterOptions = {}) {
+    this.projectsDir = resolve(options.projectsDir ?? defaultProjectsDir());
+    this.claudeDir = resolve(options.claudeDir ?? join(HOME, ".claude"));
+    this.now = options.now ?? (() => new Date());
   }
 
   async detect(): Promise<boolean> {
-    if (!existsSync(this.projectsDir)) return false;
-    const entries = readdirSync(this.projectsDir);
-    return entries.some((d) => {
-      const sub = join(this.projectsDir, d);
-      try {
-        if (!statSync(sub).isDirectory()) return false;
-        return readdirSync(sub).some((f) => f.endsWith(".jsonl"));
-      } catch {
-        return false;
+    return this.collectSourceFiles().length > 0;
+  }
+
+  async findChanged(hint?: ChangeHint): Promise<ConversationRef[]> {
+    const discoveredFiles = this.collectSourceFiles();
+    const discoveredSet = new Set(discoveredFiles);
+    const refs: ConversationRef[] = [];
+    const seenRefs = new Set<string>();
+
+    for (const cachedPath of [...this.parsedFileCache.keys()]) {
+      if (!discoveredSet.has(cachedPath)) {
+        this.parsedFileCache.delete(cachedPath);
+        for (const [sessionId, indexedPath] of [...this.sessionIdToPath.entries()]) {
+          if (indexedPath === cachedPath) {
+            this.sessionIdToPath.delete(sessionId);
+          }
+        }
       }
+    }
+
+    const candidateFiles =
+      hint?.kind === "fs-change"
+        ? this.collectChangedPaths(hint.changedPaths ?? [])
+        : discoveredFiles;
+
+    const shouldReturnAll = !hint || hint.kind === "startup-scan";
+
+    for (const filePath of candidateFiles) {
+      if (!existsSync(filePath)) {
+        this.parsedFileCache.delete(filePath);
+        continue;
+      }
+
+      const stat = statSync(filePath);
+      const cached = this.parsedFileCache.get(filePath);
+      const changed =
+        shouldReturnAll ||
+        hint?.kind === "fs-change" ||
+        !cached ||
+        cached.size !== stat.size ||
+        cached.mtimeMs !== stat.mtimeMs;
+
+      if (!changed) continue;
+
+      const model = this.getFileModel(filePath, true);
+      if (!model) continue;
+
+      for (const ref of model.refs) {
+        const key = `${ref.sourcePath}::${ref.id}`;
+        if (seenRefs.has(key)) continue;
+        seenRefs.add(key);
+        refs.push(ref);
+      }
+    }
+
+    refs.sort((left, right) =>
+      `${left.sourcePath}:${left.id}`.localeCompare(`${right.sourcePath}:${right.id}`),
+    );
+    return refs;
+  }
+
+  async loadConversation(ref: ConversationRef): Promise<ConversationBundle | null> {
+    if (ref.adapterId !== this.id) return null;
+
+    const model = this.getFileModel(ref.sourcePath);
+    if (!model) return null;
+
+    const bundle = model.bundles.find((candidate) => candidate.conversation.id === ref.id);
+    if (!bundle) return null;
+
+    const conversation = { ...bundle.conversation };
+    const gitInfo = this.resolveGit(conversation.cwd);
+    if (!conversation.gitRemote) conversation.gitRemote = gitInfo.remote;
+    if (!conversation.branch) conversation.branch = gitInfo.branch;
+
+    return cloneBundle({
+      conversation,
+      messages: bundle.messages,
     });
   }
 
+  watchPaths(): string[] {
+    return existsSync(this.projectsDir) ? [this.projectsDir] : [];
+  }
+
   async sessions(): Promise<Session[]> {
-    if (!existsSync(this.projectsDir)) return [];
     const sessions: Session[] = [];
-
-    for (const projDir of readdirSync(this.projectsDir)) {
-      const dirPath = join(this.projectsDir, projDir);
-      try {
-        if (!statSync(dirPath).isDirectory()) continue;
-      } catch {
-        continue;
+    for (const filePath of this.collectSourceFiles()) {
+      const model = this.getFileModel(filePath);
+      if (!model) continue;
+      for (const bundle of model.bundles) {
+        sessions.push(this.toLegacySession(bundle));
       }
-
-      // Scan top-level JSONL files (main sessions + legacy agent- files)
-      for (const file of readdirSync(dirPath)) {
-        if (file.endsWith(".jsonl")) {
-          const filePath = join(dirPath, file);
-          await this.addSessionFromFile(filePath, file.startsWith("agent-"), "", sessions);
-        }
-      }
-
-      // Scan nested subagents directories: <session-uuid>/subagents/agent-*.jsonl
-      for (const entry of readdirSync(dirPath)) {
-        const sessionSubDir = join(dirPath, entry, "subagents");
-        try {
-          if (!statSync(sessionSubDir).isDirectory()) continue;
-          for (const agentFile of readdirSync(sessionSubDir)) {
-            if (!agentFile.endsWith(".jsonl")) continue;
-            const filePath = join(sessionSubDir, agentFile);
-            await this.addSessionFromFile(filePath, true, entry, sessions);
-          }
-        } catch { /* not a directory or no subagents */ }
-      }
-
-      // Backpressure: yield between project directories so GC can reclaim
-      // the file text buffers from parseSessionMetaFull() calls above.
-      Bun.gc(false);
-      await Bun.sleep(0);
     }
-
-    // Prune cache entries for files no longer seen
-    const seenPaths = new Set(sessions.map(s => s.sourcePath).filter(Boolean));
-    for (const path of this.fileCache.keys()) {
-      if (!seenPaths.has(path)) this.fileCache.delete(path);
-    }
-
-    sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    sessions.sort(
+      (left, right) =>
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+    );
     return sessions;
   }
 
-  /** Parse a single file into a Session without scanning all directories.
-   *  Used by the watcher for targeted ingest of a known changed file. */
   async sessionForFile(filePath: string): Promise<Session | null> {
-    const sessions: Session[] = [];
-    const fileName = basename(filePath);
-    const isSubAgent = fileName.startsWith("agent-");
-    // Detect parent session ID from path: .../parent-uuid/subagents/agent-*.jsonl
-    let parentSessionId = "";
-    if (filePath.includes("/subagents/")) {
-      const parts = filePath.split("/");
-      const subIdx = parts.indexOf("subagents");
-      if (subIdx > 0) parentSessionId = parts[subIdx - 1];
-    }
-    await this.addSessionFromFile(filePath, isSubAgent, parentSessionId, sessions);
-    return sessions[0] || null;
+    const model = this.getFileModel(filePath, true);
+    if (!model || model.bundles.length === 0) return null;
+    return this.toLegacySession(model.bundles[0]);
   }
 
-  private async addSessionFromFile(
-    filePath: string, isSubAgent: boolean, parentSessionId: string, sessions: Session[]
-  ): Promise<void> {
-    try {
-      const stat = statSync(filePath);
-      const cached = this.fileCache.get(filePath);
+  async messages(sessionId: string, sourcePath?: string): Promise<LegacyMessage[]> {
+    const bundle = sourcePath
+      ? this.getFileModel(sourcePath)?.bundles.find(
+          (candidate) => candidate.conversation.id === sessionId,
+        )
+      : this.findBundleById(sessionId);
 
-      // Unchanged file — reuse cached session
-      if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-        cached.session.isActive = Date.now() - new Date(cached.session.updatedAt).getTime() < 5 * 60 * 1000;
-        sessions.push(cached.session);
-        return;
-      }
-
-      // Determine read strategy: tail (append) or full (new/truncated)
-      let meta: SessionMeta;
-      let newOffset: number;
-
-      if (cached && stat.size > cached.offset) {
-        // TAIL READ: file grew — read only new bytes, update metadata incrementally
-        const blob = Bun.file(filePath).slice(cached.offset);
-        const newText = await blob.text();
-        const newLines = newText.split("\n").filter(Boolean);
-        meta = { ...cached.meta }; // clone to avoid mutating cache before success
-        for (const line of newLines) {
-          try {
-            this.updateMetaFromLine(meta, JSON.parse(line));
-          } catch { continue; }
-        }
-        newOffset = stat.size;
-      } else {
-        // FULL READ: new file or truncated — parse from byte 0
-        meta = await this.parseSessionMetaFull(filePath);
-        if (!meta || meta.msgCount === 0) return;
-        newOffset = stat.size;
-      }
-
-      if (meta.msgCount === 0) return;
-
-      const session: Session = {
-        id: meta.sessionId,
-        name: this.buildSessionName(meta),
-        adapterId: this.id,
-        adapterName: this.name,
-        createdAt: meta.firstMsg,
-        updatedAt: meta.lastMsg,
-        durationMs: new Date(meta.lastMsg).getTime() - new Date(meta.firstMsg).getTime(),
-        isActive: Date.now() - new Date(meta.lastMsg).getTime() < 5 * 60 * 1000,
-        totalTokens: meta.totalInputTokens + meta.totalOutputTokens,
-        estCost: estimateCost(meta.primaryModel, meta.totalInputTokens, meta.totalOutputTokens, meta.totalCacheRead, meta.totalCacheWrite),
-        messageCount: meta.msgCount,
-        sourcePath: filePath,
-        isSubAgent,
-        parentSessionId,
-        isCompacted: meta.isCompacted,
-        metadata: { cwd: meta.cwd, slug: meta.slug, fileSize: stat.size },
-      };
-
-      this.fileCache.set(filePath, {
-        size: stat.size, mtimeMs: stat.mtimeMs,
-        offset: newOffset, messageCount: meta.msgCount,
-        meta, session,
-      });
-      sessions.push(session);
-    } catch { /* skip unreadable files */ }
+    if (!bundle) return [];
+    return bundle.messages.map((message) => this.toLegacyMessage(message));
   }
 
-  /** Update accumulated metadata from a single parsed JSONL line */
-  private updateMetaFromLine(meta: SessionMeta, raw: RawLine): void {
-    if (!meta.sessionId && raw.sessionId) meta.sessionId = raw.sessionId;
-    if (!meta.slug && raw.slug) meta.slug = raw.slug;
-    if (!meta.cwd && raw.cwd) meta.cwd = raw.cwd;
-
-    if (raw.type === "summary" || (raw.type === "system" && raw.subtype === "compact_boundary")) {
-      meta.isCompacted = true;
-    }
-
-    if (raw.type === "user" || raw.type === "assistant") {
-      if (!meta.firstMsg) meta.firstMsg = raw.timestamp;
-      meta.lastMsg = raw.timestamp;
-      meta.msgCount++;
-
-      if (raw.type === "user" && !meta.firstUserMessage && raw.message?.content) {
-        const content = raw.message.content;
-        if (typeof content === "string") {
-          meta.firstUserMessage = content.slice(0, 120);
-        } else if (Array.isArray(content)) {
-          const textBlock = (content as ContentBlock[]).find((b) => b.type === "text");
-          if (textBlock?.text) meta.firstUserMessage = textBlock.text.slice(0, 120);
-        }
-      }
-
-      if (raw.message?.usage) {
-        meta.totalInputTokens += raw.message.usage.input_tokens || 0;
-        meta.totalOutputTokens += raw.message.usage.output_tokens || 0;
-        meta.totalCacheRead += raw.message.usage.cache_read_input_tokens || 0;
-        meta.totalCacheWrite += raw.message.usage.cache_creation_input_tokens || 0;
-      }
-      if (raw.message?.model && !meta.primaryModel) {
-        meta.primaryModel = raw.message.model;
-      }
-    }
+  async newMessages(
+    sessionId: string,
+    sourcePath: string,
+    afterIndex: number,
+  ): Promise<LegacyMessage[]> {
+    const allMessages = await this.messages(sessionId, sourcePath);
+    return afterIndex > 0 && afterIndex < allMessages.length
+      ? allMessages.slice(afterIndex)
+      : allMessages;
   }
 
-  private buildSessionName(meta: SessionMeta): string {
-    let name = meta.firstUserMessage.replace(/<[^>]+>/g, "").trim();
-    if (name.length > 120) name = name.slice(0, 117) + "...";
-    name = name.replace(/\n/g, " ");
-    return name || meta.slug || meta.sessionId.slice(0, 8);
-  }
-
-  async messages(sessionId: string, sourcePath?: string): Promise<Message[]> {
-    // Fast path: use the known source path if available
-    if (sourcePath && existsSync(sourcePath)) {
-      return this.parseMessages(sourcePath);
-    }
-    const filePath = await this.findSessionFile(sessionId);
-    if (!filePath) return [];
-    return this.parseMessages(filePath);
-  }
-
-  /** Return only messages added since the given count (for delta SQLite inserts) */
-  async newMessages(sessionId: string, sourcePath: string, afterIndex: number): Promise<Message[]> {
-    if (!sourcePath || !existsSync(sourcePath)) return [];
-    const all = await this.parseMessages(sourcePath);
-    return afterIndex > 0 && afterIndex < all.length ? all.slice(afterIndex) : all;
-  }
-
-  watchPaths(): string[] {
-    // Return only the top-level projects directory with recursive watch.
-    // Previously returned every subdirectory, causing overlapping watchers
-    // that fired 3-6x per file change (each with recursive:true).
-    if (!existsSync(this.projectsDir)) return [];
-    return [this.projectsDir];
-  }
-
-  private async findSessionFile(sessionId: string): Promise<string | null> {
-    if (!existsSync(this.projectsDir)) return null;
-
-    const checkFile = async (filePath: string): Promise<boolean> => {
-      try {
-        const firstLine = (await Bun.file(filePath).text()).split("\n")[0];
-        if (!firstLine) return false;
-        const parsed = JSON.parse(firstLine);
-        return parsed.sessionId === sessionId || parsed.uuid === sessionId;
-      } catch { return false; }
-    };
-
-    for (const projDir of readdirSync(this.projectsDir)) {
-      const dirPath = join(this.projectsDir, projDir);
-      try {
-        if (!statSync(dirPath).isDirectory()) continue;
-
-        // Check top-level JSONL files
-        for (const file of readdirSync(dirPath)) {
-          if (!file.endsWith(".jsonl")) continue;
-          const filePath = join(dirPath, file);
-          if (await checkFile(filePath)) return filePath;
-        }
-
-        // Check nested subagent directories: <uuid>/subagents/agent-*.jsonl
-        for (const entry of readdirSync(dirPath)) {
-          const subagentsDir = join(dirPath, entry, "subagents");
-          try {
-            if (!statSync(subagentsDir).isDirectory()) continue;
-            for (const agentFile of readdirSync(subagentsDir)) {
-              if (!agentFile.endsWith(".jsonl")) continue;
-              const filePath = join(subagentsDir, agentFile);
-              if (await checkFile(filePath)) return filePath;
-            }
-          } catch { /* not a dir or no subagents */ }
-        }
-      } catch { continue; }
-    }
-    return null;
-  }
-
-  /** Full parse from byte 0 — used for new files or truncated files */
-  private async parseSessionMetaFull(filePath: string): Promise<SessionMeta> {
-    const text = await Bun.file(filePath).text();
-    const lines = text.split("\n").filter(Boolean);
-
-    const meta: SessionMeta = {
-      sessionId: "", slug: "", cwd: "",
-      firstMsg: "", lastMsg: "",
-      msgCount: 0,
-      totalInputTokens: 0, totalOutputTokens: 0,
-      totalCacheRead: 0, totalCacheWrite: 0,
-      firstUserMessage: "", primaryModel: "",
-      isCompacted: false,
-    };
-
-    for (const line of lines) {
-      try {
-        this.updateMetaFromLine(meta, JSON.parse(line));
-      } catch { continue; }
-    }
-
-    if (!meta.sessionId) meta.sessionId = basename(filePath, ".jsonl");
-    if (!meta.firstMsg) meta.firstMsg = new Date().toISOString();
-    if (!meta.lastMsg) meta.lastMsg = new Date().toISOString();
-
-    return meta;
-  }
-
-  private async parseMessages(filePath: string): Promise<Message[]> {
-    const text = await Bun.file(filePath).text();
-    const lines = text.split("\n").filter(Boolean);
-    const messages: Message[] = [];
-    const toolUseRefs = new Map<string, { msgIdx: number; toolIdx: number }>();
-
-    for (const line of lines) {
-      try {
-        const raw: RawLine = JSON.parse(line);
-
-        // Capture summary records (compaction output)
-        if (raw.type === "summary" && raw.summary) {
-          messages.push({
-            id: raw.uuid || `summary-${messages.length}`,
-            role: "system",
-            content: raw.summary,
-            timestamp: raw.timestamp || "",
-            model: "",
-            inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
-            toolUses: [], thinkingBlocks: [],
-            recordType: "summary",
-          });
-          continue;
-        }
-
-        // Capture system records (init, compact_boundary)
-        if (raw.type === "system") {
-          const content = raw.subtype === "compact_boundary"
-            ? JSON.stringify(raw.compactMetadata || {})
-            : raw.subtype || "system";
-          messages.push({
-            id: raw.uuid || `system-${messages.length}`,
-            role: "system",
-            content,
-            timestamp: raw.timestamp || "",
-            model: "",
-            inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
-            toolUses: [], thinkingBlocks: [],
-            recordType: raw.subtype ? `system:${raw.subtype}` : "system",
-          });
-          continue;
-        }
-
-        if (raw.type !== "user" && raw.type !== "assistant") continue;
-        if (!raw.message) continue;
-
-        const msg: Message = {
-          id: raw.uuid,
-          role: raw.message.role as "user" | "assistant",
-          content: "",
-          timestamp: raw.timestamp,
-          model: raw.message.model || "",
-          inputTokens: raw.message.usage?.input_tokens || 0,
-          outputTokens: raw.message.usage?.output_tokens || 0,
-          cacheRead: raw.message.usage?.cache_read_input_tokens || 0,
-          cacheWrite: raw.message.usage?.cache_creation_input_tokens || 0,
-          toolUses: [],
-          thinkingBlocks: [],
-          recordType: raw.type,
-        };
-
-        const content = raw.message.content;
-        if (typeof content === "string") {
-          msg.content = content;
-        } else if (Array.isArray(content)) {
-          const blocks = content as ContentBlock[];
-          const textParts: string[] = [];
-
-          for (const block of blocks) {
-            switch (block.type) {
-              case "text":
-                if (block.text) textParts.push(block.text);
-                break;
-              case "thinking":
-                if (block.thinking) {
-                  msg.thinkingBlocks.push({
-                    content: block.thinking,
-                    tokenCount: Math.ceil(block.thinking.length / 4),
-                  });
-                }
-                break;
-              case "tool_use":
-                const toolUse: ToolUse = {
-                  id: block.id || "",
-                  name: block.name || "",
-                  input: block.input ? JSON.stringify(block.input) : "",
-                  output: "",
-                };
-                msg.toolUses.push(toolUse);
-                if (block.id) {
-                  toolUseRefs.set(block.id, {
-                    msgIdx: messages.length,
-                    toolIdx: msg.toolUses.length - 1,
-                  });
-                }
-                break;
-              case "tool_result":
-                if (block.tool_use_id && toolUseRefs.has(block.tool_use_id)) {
-                  const ref = toolUseRefs.get(block.tool_use_id)!;
-                  const targetMsg = messages[ref.msgIdx];
-                  if (targetMsg && targetMsg.toolUses[ref.toolIdx]) {
-                    let output = "";
-                    if (typeof block.content === "string") {
-                      output = block.content;
-                    } else if (Array.isArray(block.content)) {
-                      output = (block.content as any[])
-                        .map((c) => c.text || JSON.stringify(c))
-                        .join("\n");
-                    }
-                    targetMsg.toolUses[ref.toolIdx].output = output;
-                  }
-                }
-                break;
-            }
-          }
-          msg.content = textParts.join("\n\n");
-        }
-
-        messages.push(msg);
-      } catch {
-        continue;
-      }
-    }
-    return messages;
-  }
-
-  /** Collect context artifacts: memory files, plans, todos, rules, configs, etc. */
   async artifacts(): Promise<ContextArtifact[]> {
     const artifacts: ContextArtifact[] = [];
 
-    const addFile = (path: string, kind: ArtifactKind, name: string, scope: ContextArtifact["scope"]) => {
+    const addFile = (
+      path: string,
+      kind: ArtifactKind,
+      name: string,
+      scope: ContextArtifact["scope"],
+    ) => {
       if (!existsSync(path)) return;
       try {
         const stat = statSync(path);
         if (!stat.isFile()) return;
-        const content = readFileSync(path, "utf-8");
-        const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+        const content = readFileSync(path, "utf8");
+        const hash = stableHash(path, content);
         artifacts.push({
           id: `cc:${hash}:${basename(path)}`,
           adapterId: this.id,
@@ -527,78 +351,767 @@ export class ClaudeCodeAdapter implements Adapter {
           name,
           path,
           scope,
-          content: content.length > 100_000 ? content.slice(0, 100_000) + "\n...[truncated]" : content,
+          content:
+            content.length > 100_000
+              ? `${content.slice(0, 100_000)}\n...[truncated]`
+              : content,
           contentHash: hash,
           updatedAt: stat.mtime.toISOString(),
           metadata: { size: stat.size },
         });
-      } catch { /* skip unreadable */ }
+      } catch {
+        // Skip unreadable files.
+      }
     };
 
-    const scanDir = (dir: string, kind: ArtifactKind, namePrefix: string, scope: ContextArtifact["scope"]) => {
+    const scanDir = (
+      dir: string,
+      kind: ArtifactKind,
+      namePrefix: string,
+      scope: ContextArtifact["scope"],
+    ) => {
       if (!existsSync(dir)) return;
       try {
-        for (const f of readdirSync(dir)) {
-          if (f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".jsonl")) {
-            addFile(join(dir, f), kind, `${namePrefix}/${f}`, scope);
+        for (const entry of readdirSync(dir)) {
+          if (!entry.endsWith(".md") && !entry.endsWith(".json") && !entry.endsWith(".jsonl")) {
+            continue;
           }
+          addFile(join(dir, entry), kind, `${namePrefix}/${entry}`, scope);
         }
-      } catch { /* skip */ }
+      } catch {
+        // Skip unreadable directories.
+      }
     };
 
-    // Global CLAUDE.md
     addFile(join(this.claudeDir, "CLAUDE.md"), "memory", "CLAUDE.md (global)", "global");
-
-    // Global settings
-    addFile(join(this.claudeDir, "settings.json"), "config", "settings.json (global)", "global");
-
-    // Global rules
+    addFile(
+      join(this.claudeDir, "settings.json"),
+      "config",
+      "settings.json (global)",
+      "global",
+    );
     scanDir(join(this.claudeDir, "rules"), "rules", "rules (global)", "global");
-
-    // Global agents
     scanDir(join(this.claudeDir, "agents"), "agent-def", "agents (global)", "global");
-
-    // Global commands/skills
     scanDir(join(this.claudeDir, "commands"), "skill", "commands (global)", "global");
     scanDir(join(this.claudeDir, "skills"), "skill", "skills (global)", "global");
-
-    // Prompt history
     addFile(join(this.claudeDir, "history.jsonl"), "history", "history.jsonl", "global");
-
-    // Stats cache
     addFile(join(this.claudeDir, "stats-cache.json"), "config", "stats-cache.json", "global");
-
-    // MCP config (in ~/.claude.json)
     addFile(join(HOME, ".claude.json"), "mcp", ".claude.json (MCP + prefs)", "global");
-
-    // Plans
     scanDir(join(this.claudeDir, "plans"), "plan", "plans", "global");
 
-    // Per-project memory directories
     if (existsSync(this.projectsDir)) {
-      for (const projDir of readdirSync(this.projectsDir)) {
-        const memDir = join(this.projectsDir, projDir, "memory");
-        if (existsSync(memDir)) {
-          scanDir(memDir, "memory", `memory (${projDir})`, "project");
+      for (const projectDir of readdirSync(this.projectsDir)) {
+        const memoryDir = join(this.projectsDir, projectDir, "memory");
+        if (existsSync(memoryDir)) {
+          scanDir(memoryDir, "memory", `memory (${projectDir})`, "project");
         }
       }
     }
 
-    // Todos
-    const todosDir = join(this.claudeDir, "todos");
-    scanDir(todosDir, "todo", "todos", "session");
+    scanDir(join(this.claudeDir, "todos"), "todo", "todos", "session");
 
-    // Tasks
     const tasksDir = join(this.claudeDir, "tasks");
     if (existsSync(tasksDir)) {
       try {
-        for (const taskListDir of readdirSync(tasksDir)) {
-          const tasksFile = join(tasksDir, taskListDir, "tasks.json");
-          addFile(tasksFile, "todo", `tasks/${taskListDir}`, "session");
+        for (const taskDir of readdirSync(tasksDir)) {
+          addFile(join(tasksDir, taskDir, "tasks.json"), "todo", `tasks/${taskDir}`, "session");
         }
-      } catch { /* skip */ }
+      } catch {
+        // Skip unreadable task directories.
+      }
     }
 
     return artifacts;
+  }
+
+  private collectSourceFiles(rootDir = this.projectsDir): string[] {
+    if (!existsSync(rootDir)) return [];
+
+    const files: string[] = [];
+    const stack = [resolve(rootDir)];
+
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+
+      let stat;
+      try {
+        stat = statSync(current);
+      } catch {
+        continue;
+      }
+
+      if (stat.isFile()) {
+        if (current.endsWith(".jsonl")) files.push(current);
+        continue;
+      }
+
+      try {
+        for (const entry of readdirSync(current)) {
+          stack.push(join(current, entry));
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    files.sort();
+    return files;
+  }
+
+  private collectChangedPaths(changedPaths: string[]): string[] {
+    if (changedPaths.length === 0) return this.collectSourceFiles();
+
+    const files = new Set<string>();
+
+    for (const changedPath of changedPaths) {
+      const resolvedPath = resolve(changedPath);
+
+      if (!resolvedPath.startsWith(this.projectsDir)) {
+        continue;
+      }
+
+      if (!existsSync(resolvedPath)) {
+        if (resolvedPath.endsWith(".jsonl")) {
+          this.parsedFileCache.delete(resolvedPath);
+        }
+        continue;
+      }
+
+      let stat;
+      try {
+        stat = statSync(resolvedPath);
+      } catch {
+        continue;
+      }
+
+      if (stat.isFile()) {
+        if (resolvedPath.endsWith(".jsonl")) files.add(resolvedPath);
+        continue;
+      }
+
+      for (const nestedFile of this.collectSourceFiles(resolvedPath)) {
+        files.add(nestedFile);
+      }
+    }
+
+    return [...files].sort();
+  }
+
+  private getFileModel(filePath: string, forceReload = false): FileModel | null {
+    const resolvedPath = resolve(filePath);
+    if (!existsSync(resolvedPath)) {
+      this.parsedFileCache.delete(resolvedPath);
+      return null;
+    }
+
+    const stat = statSync(resolvedPath);
+    const cached = this.parsedFileCache.get(resolvedPath);
+    if (
+      !forceReload &&
+      cached &&
+      cached.size === stat.size &&
+      cached.mtimeMs === stat.mtimeMs
+    ) {
+      return cached.model;
+    }
+
+    const model = this.buildFileModel(resolvedPath);
+    if (!model) {
+      this.parsedFileCache.delete(resolvedPath);
+      return null;
+    }
+
+    this.parsedFileCache.set(resolvedPath, {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      model,
+    });
+    this.sessionIdToPath.set(model.sessionId, resolvedPath);
+    return model;
+  }
+
+  private buildFileModel(filePath: string): FileModel | null {
+    const records = this.readRecords(filePath);
+    if (records.length === 0) return null;
+
+    const sessionId =
+      records.find((record) => record.raw.sessionId)?.raw.sessionId ??
+      basename(filePath, ".jsonl");
+    const initialCwd =
+      records.find((record) => typeof record.raw.cwd === "string" && record.raw.cwd.trim())?.raw
+        .cwd ?? "";
+    const initialGitBranch =
+      records.find(
+        (record) => typeof record.raw.gitBranch === "string" && record.raw.gitBranch.trim(),
+      )?.raw.gitBranch ?? "";
+
+    const parentLink = this.resolveParentLink(filePath, sessionId);
+    const rootId = sessionId;
+
+    const builders: SegmentBuilder[] = [
+      this.createSegmentBuilder({
+        id: rootId,
+        traceId: parentLink.traceId || rootId,
+        parentId: parentLink.parentId,
+        relationship: parentLink.relationship,
+        forkPoint: parentLink.forkPoint,
+        cwd: initialCwd,
+        gitBranchHint: initialGitBranch,
+      }),
+    ];
+
+    let current = builders[0];
+    let pendingCompactionSeed = "";
+
+    for (const record of records) {
+      const raw = record.raw;
+
+      if (raw.type === "system" && raw.subtype === "compact_boundary") {
+        pendingCompactionSeed = this.compactionSeed(rootId, raw, record.lineIndex);
+        if (current.messages.length > 0) {
+          current = this.createSegmentBuilder({
+            id: this.compactedConversationId(rootId, pendingCompactionSeed),
+            traceId: builders[0].traceId,
+            parentId: current.id,
+            relationship: "compacted",
+            forkPoint: -1,
+            cwd: current.cwd || initialCwd,
+            gitBranchHint: current.gitBranchHint || initialGitBranch,
+          });
+          builders.push(current);
+        }
+      } else if (raw.type === "summary" && raw.summary) {
+        const currentHasOnlySystemMessages =
+          current.messages.length > 0 &&
+          current.messages.every((message) => message.role === "system");
+
+        if (current.messages.length > 0 && !currentHasOnlySystemMessages) {
+          const seed =
+            pendingCompactionSeed || this.compactionSeed(rootId, raw, record.lineIndex);
+          current = this.createSegmentBuilder({
+            id: this.compactedConversationId(rootId, seed),
+            traceId: builders[0].traceId,
+            parentId: current.id,
+            relationship: "compacted",
+            forkPoint: -1,
+            cwd: current.cwd || initialCwd,
+            gitBranchHint: current.gitBranchHint || initialGitBranch,
+          });
+          builders.push(current);
+        }
+        pendingCompactionSeed = "";
+      }
+
+      const message = this.parseMessageRecord(record, current, sessionId);
+      if (!message) continue;
+      current.messages.push(message);
+
+      if (message.timestamp) {
+        if (!current.startedAt) current.startedAt = message.timestamp;
+        current.endedAt = message.timestamp;
+      }
+      if (!current.firstUserText && message.role === "user" && message.content) {
+        current.firstUserText = message.content;
+      }
+      if (message.model) {
+        current.modelCounts.set(
+          message.model,
+          (current.modelCounts.get(message.model) ?? 0) + 1,
+        );
+      }
+      if (!current.cwd && raw.cwd) current.cwd = raw.cwd;
+      if (!current.gitBranchHint && raw.gitBranch) current.gitBranchHint = raw.gitBranch;
+    }
+
+    const allBundles = builders
+      .filter((builder) => builder.messages.length > 0)
+      .map((builder) => this.finalizeBundle(builder, filePath, rootId));
+
+    if (allBundles.length === 0) return null;
+
+    return {
+      sessionId,
+      sourcePath: filePath,
+      refs: allBundles.map((bundle) => ({
+        id: bundle.conversation.id,
+        sourcePath: filePath,
+        adapterId: this.id,
+      })),
+      bundles: allBundles,
+    };
+  }
+
+  private createSegmentBuilder(input: {
+    id: string;
+    traceId: string;
+    parentId: string;
+    relationship: ConversationRelationship;
+    forkPoint: number;
+    cwd: string;
+    gitBranchHint: string;
+  }): SegmentBuilder {
+    return {
+      id: input.id,
+      traceId: input.traceId,
+      parentId: input.parentId,
+      relationship: input.relationship,
+      forkPoint: input.forkPoint,
+      messages: [],
+      toolRefs: new Map<string, ParsedToolCall>(),
+      sequence: 0,
+      turn: 0,
+      firstUserText: "",
+      startedAt: "",
+      endedAt: "",
+      cwd: input.cwd,
+      gitBranchHint: input.gitBranchHint,
+      modelCounts: new Map<string, number>(),
+    };
+  }
+
+  private parseMessageRecord(
+    record: ParsedRecord,
+    segment: SegmentBuilder,
+    sessionId: string,
+  ): ParsedMessage | null {
+    const raw = record.raw;
+    const timestamp = normalizeIso(raw.timestamp);
+    const sequence = ++segment.sequence;
+
+    if (raw.type === "summary" && raw.summary) {
+      return {
+        id: raw.uuid || stableHash(sessionId, "summary", String(record.lineIndex)),
+        role: "system",
+        content: raw.summary,
+        recordType: "summary",
+        model: "",
+        sequence,
+        turn: -1,
+        isSidechain: false,
+        parentMessageId: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinkingContent: "",
+        thinkingTokens: 0,
+        timestamp,
+        toolUses: [],
+      };
+    }
+
+    if (raw.type === "system") {
+      return {
+        id: raw.uuid || stableHash(sessionId, "system", String(record.lineIndex)),
+        role: "system",
+        content:
+          raw.subtype === "compact_boundary"
+            ? JSON.stringify(raw.compactMetadata ?? {})
+            : raw.subtype || "system",
+        recordType: raw.subtype ? `system:${raw.subtype}` : "system",
+        model: "",
+        sequence,
+        turn: -1,
+        isSidechain: false,
+        parentMessageId: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinkingContent: "",
+        thinkingTokens: 0,
+        timestamp,
+        toolUses: [],
+      };
+    }
+
+    if ((raw.type !== "user" && raw.type !== "assistant") || !raw.message) {
+      return null;
+    }
+
+    const role =
+      raw.message.role === "assistant" || raw.type === "assistant"
+        ? "assistant"
+        : raw.message.role === "system"
+          ? "system"
+          : "user";
+    const isSidechain = Boolean(raw.isSidechain);
+
+    let turn = -1;
+    if (!isSidechain && role !== "system") {
+      if (role === "user") {
+        segment.turn += 1;
+      } else if (segment.turn === 0) {
+        segment.turn = 1;
+      }
+      turn = segment.turn;
+    }
+
+    const toolUses: ParsedToolCall[] = [];
+    const textParts: string[] = [];
+    const thinkingParts: string[] = [];
+
+    const content = raw.message.content;
+    if (typeof content === "string") {
+      textParts.push(content);
+    } else if (Array.isArray(content)) {
+      content.forEach((entry, blockIndex) => {
+        const block = entry as ContentBlock;
+        switch (block.type) {
+          case "text":
+            if (block.text) textParts.push(block.text);
+            break;
+          case "thinking":
+            if (block.thinking) thinkingParts.push(block.thinking);
+            break;
+          case "tool_use": {
+            const toolUse: ParsedToolCall = {
+              id:
+                block.id ||
+                stableHash(
+                  raw.uuid ?? raw.message?.id ?? sessionId,
+                  block.name ?? "tool",
+                  String(blockIndex),
+                ),
+              name: block.name || "unknown",
+              input:
+                block.input == null
+                  ? ""
+                  : typeof block.input === "string"
+                    ? block.input
+                    : JSON.stringify(block.input),
+              output: "",
+              isError: false,
+              durationMs: -1,
+              timestamp,
+            };
+            toolUses.push(toolUse);
+            segment.toolRefs.set(toolUse.id, toolUse);
+            break;
+          }
+          case "tool_result": {
+            const output = extractToolResultText(block.content);
+            if (output) textParts.push(output);
+            const target = block.tool_use_id ? segment.toolRefs.get(block.tool_use_id) : undefined;
+            if (target) {
+              target.output = output;
+              target.isError = Boolean(block.is_error);
+            }
+            break;
+          }
+          default:
+            if (block.text) textParts.push(block.text);
+            break;
+        }
+      });
+    }
+
+    const thinkingContent = thinkingParts.join("\n\n").trim();
+    let messageContent = textParts.join("\n\n").trim();
+    if (!messageContent && thinkingContent) messageContent = thinkingContent;
+    if (!messageContent && toolUses.length > 0) {
+      messageContent = toolUses.map((toolUse) => `[tool:${toolUse.name}]`).join("\n");
+    }
+
+    return {
+      id:
+        raw.uuid ||
+        stableHash(
+          sessionId,
+          raw.message.id ?? raw.type,
+          normalizeIso(raw.timestamp),
+          String(record.lineIndex),
+        ),
+      role,
+      content: messageContent,
+      recordType: raw.type,
+      model: raw.message.model || "",
+      sequence,
+      turn,
+      isSidechain,
+      parentMessageId: raw.parentUuid ?? "",
+      inputTokens: raw.message.usage?.input_tokens || 0,
+      outputTokens: raw.message.usage?.output_tokens || 0,
+      cacheRead: raw.message.usage?.cache_read_input_tokens || 0,
+      cacheWrite: raw.message.usage?.cache_creation_input_tokens || 0,
+      thinkingContent,
+      thinkingTokens: thinkingContent ? Math.max(1, Math.ceil(thinkingContent.length / 4)) : 0,
+      timestamp,
+      toolUses,
+    };
+  }
+
+  private finalizeBundle(
+    segment: SegmentBuilder,
+    sourcePath: string,
+    rootId: string,
+  ): ConversationBundle {
+    const primaryModel = [...segment.modelCounts.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? "";
+    const name = summarizeText(
+      segment.firstUserText,
+      segment.relationship === "spawned"
+        ? basename(sourcePath, ".jsonl")
+        : rootId.slice(0, 8),
+    );
+
+    return {
+      conversation: {
+        id: segment.id,
+        traceId: segment.traceId || rootId,
+        parentId: segment.parentId,
+        relationship: segment.relationship,
+        forkPoint: segment.forkPoint,
+        adapterId: this.id,
+        name,
+        cwd: segment.cwd,
+        gitRemote: "",
+        branch: segment.gitBranchHint || "",
+        model: primaryModel,
+        startedAt: segment.startedAt || segment.messages[0]?.timestamp || "",
+        endedAt:
+          segment.endedAt ||
+          segment.messages[segment.messages.length - 1]?.timestamp ||
+          segment.startedAt ||
+          "",
+        sourcePath,
+        sourceFormat: "jsonl",
+      },
+      messages: segment.messages,
+    };
+  }
+
+  private readRecords(filePath: string): ParsedRecord[] {
+    try {
+      const text = readFileSync(filePath, "utf8");
+      return text
+        .split("\n")
+        .map((line, lineIndex) => ({ line, lineIndex }))
+        .filter(({ line }) => line.trim().length > 0)
+        .flatMap(({ line, lineIndex }) => {
+          try {
+            return [{ lineIndex, raw: JSON.parse(line) as RawLine }];
+          } catch {
+            return [];
+          }
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  private compactionSeed(rootId: string, raw: RawLine, lineIndex: number): string {
+    return raw.leafUuid || raw.uuid || raw.timestamp || stableHash(rootId, String(lineIndex));
+  }
+
+  private compactedConversationId(rootId: string, boundarySeed: string): string {
+    return stableHash(rootId, boundarySeed);
+  }
+
+  private resolveParentLink(filePath: string, sessionId: string): ParentLinkInfo {
+    const parentSessionId = this.parentSessionIdFromPath(filePath);
+    if (!parentSessionId) {
+      return {
+        relationship: "root",
+        traceId: sessionId,
+        parentId: "",
+        forkPoint: -1,
+      };
+    }
+
+    const parentPath = this.parentSourcePath(filePath, parentSessionId);
+    if (!parentPath) {
+      return {
+        relationship: "root",
+        traceId: sessionId,
+        parentId: "",
+        forkPoint: -1,
+      };
+    }
+
+    const parentModel = this.getFileModel(parentPath);
+    if (!parentModel || parentModel.bundles.length === 0) {
+      return {
+        relationship: "root",
+        traceId: sessionId,
+        parentId: "",
+        forkPoint: -1,
+      };
+    }
+
+    const needles = [sessionId, basename(filePath, ".jsonl"), basename(filePath)];
+    let matchedParentId = parentModel.bundles[parentModel.bundles.length - 1]?.conversation.id ?? "";
+    let forkPoint = -1;
+
+    outer: for (const bundle of parentModel.bundles) {
+      for (const message of bundle.messages) {
+        for (const toolUse of message.toolUses) {
+          const haystack = `${toolUse.name}\n${toolUse.input}\n${toolUse.output}`;
+          if (needles.some((needle) => needle && haystack.includes(needle))) {
+            matchedParentId = bundle.conversation.id;
+            forkPoint = message.turn;
+            break outer;
+          }
+        }
+      }
+    }
+
+    return {
+      relationship: "spawned",
+      traceId: parentModel.bundles[0]?.conversation.traceId || parentSessionId,
+      parentId: matchedParentId,
+      forkPoint,
+    };
+  }
+
+  private parentSessionIdFromPath(filePath: string): string {
+    const normalized = resolve(filePath);
+    const marker = `${sep}subagents${sep}`;
+    if (!normalized.includes(marker)) return "";
+    const parts = normalized.split(sep);
+    const subagentsIndex = parts.lastIndexOf("subagents");
+    return subagentsIndex > 0 ? parts[subagentsIndex - 1] : "";
+  }
+
+  private parentSourcePath(filePath: string, parentSessionId: string): string | null {
+    const indexed = this.sessionIdToPath.get(parentSessionId);
+    if (indexed && existsSync(indexed)) return indexed;
+
+    const projectRoot = this.projectRootForPath(filePath);
+    const canonicalPath = join(projectRoot, `${parentSessionId}.jsonl`);
+    if (existsSync(canonicalPath)) return canonicalPath;
+
+    const topLevelJsonl = this.collectSourceFiles(projectRoot).find(
+      (candidate) => basename(candidate, ".jsonl") === parentSessionId,
+    );
+    return topLevelJsonl ?? null;
+  }
+
+  private projectRootForPath(filePath: string): string {
+    const relative = resolve(filePath).slice(this.projectsDir.length + 1);
+    const [projectSegment] = relative.split(sep);
+    return projectSegment ? join(this.projectsDir, projectSegment) : this.projectsDir;
+  }
+
+  private resolveGit(cwd: string): GitInfo {
+    if (!cwd) return { remote: "", branch: "" };
+
+    const resolvedCwd = resolve(cwd);
+    const cached = this.gitCache.get(resolvedCwd);
+    if (cached) return cached;
+
+    const runGit = (args: string[]): string => {
+      try {
+        return execFileSync("git", args, { cwd: resolvedCwd, encoding: "utf8" }).trim();
+      } catch {
+        return "";
+      }
+    };
+
+    const info = {
+      remote: runGit(["remote", "get-url", "origin"]),
+      branch: runGit(["rev-parse", "--abbrev-ref", "HEAD"]),
+    };
+    this.gitCache.set(resolvedCwd, info);
+    return info;
+  }
+
+  private findBundleById(conversationId: string): ConversationBundle | null {
+    const indexedPath = this.sessionIdToPath.get(conversationId);
+    if (indexedPath) {
+      const indexedBundle = this.getFileModel(indexedPath)?.bundles.find(
+        (bundle) => bundle.conversation.id === conversationId,
+      );
+      if (indexedBundle) return indexedBundle;
+    }
+
+    for (const filePath of this.collectSourceFiles()) {
+      const bundle = this.getFileModel(filePath)?.bundles.find(
+        (candidate) => candidate.conversation.id === conversationId,
+      );
+      if (bundle) return bundle;
+    }
+
+    return null;
+  }
+
+  private toLegacySession(bundle: ConversationBundle): Session {
+    const totalInputTokens = bundle.messages.reduce(
+      (sum, message) => sum + message.inputTokens,
+      0,
+    );
+    const totalOutputTokens = bundle.messages.reduce(
+      (sum, message) => sum + message.outputTokens,
+      0,
+    );
+    const totalCacheRead = bundle.messages.reduce((sum, message) => sum + message.cacheRead, 0);
+    const totalCacheWrite = bundle.messages.reduce(
+      (sum, message) => sum + message.cacheWrite,
+      0,
+    );
+
+    const durationMs =
+      bundle.conversation.startedAt && bundle.conversation.endedAt
+        ? Math.max(
+            0,
+            new Date(bundle.conversation.endedAt).getTime() -
+              new Date(bundle.conversation.startedAt).getTime(),
+          )
+        : 0;
+
+    return {
+      id: bundle.conversation.id,
+      name: bundle.conversation.name,
+      adapterId: this.id,
+      adapterName: this.name,
+      createdAt: bundle.conversation.startedAt,
+      updatedAt: bundle.conversation.endedAt,
+      durationMs,
+      isActive:
+        bundle.conversation.endedAt !== "" &&
+        this.now().getTime() - new Date(bundle.conversation.endedAt).getTime() < 5 * 60 * 1000,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      estCost: estimateCost(
+        bundle.conversation.model,
+        totalInputTokens,
+        totalOutputTokens,
+        totalCacheRead,
+        totalCacheWrite,
+      ),
+      messageCount: bundle.messages.length,
+      sourcePath: bundle.conversation.sourcePath,
+      isSubAgent: bundle.conversation.relationship === "spawned",
+      parentSessionId: bundle.conversation.parentId,
+      isCompacted: bundle.conversation.relationship === "compacted",
+      metadata: {
+        cwd: bundle.conversation.cwd,
+        traceId: bundle.conversation.traceId,
+        relationship: bundle.conversation.relationship,
+        forkPoint: bundle.conversation.forkPoint,
+      },
+    };
+  }
+
+  private toLegacyMessage(message: ParsedMessage): LegacyMessage {
+    return {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      model: message.model,
+      inputTokens: message.inputTokens,
+      outputTokens: message.outputTokens,
+      cacheRead: message.cacheRead,
+      cacheWrite: message.cacheWrite,
+      toolUses: message.toolUses.map((toolUse) => ({
+        id: toolUse.id,
+        name: toolUse.name,
+        input: toolUse.input,
+        output: toolUse.output,
+      })),
+      thinkingBlocks: collectThinkingBlocks(message),
+      recordType: message.recordType,
+    };
   }
 }
