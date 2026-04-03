@@ -4,6 +4,7 @@ import type { MessageFtsRow } from "./messages";
 export interface SearchMessagesOptions {
   query: string;
   adapterId?: string;
+  since?: string;
   limit?: number;
 }
 
@@ -64,6 +65,11 @@ export function searchMessages(
   if (options.adapterId) {
     query += " AND c.adapter_id = ?";
     params.push(options.adapterId);
+  }
+
+  if (options.since) {
+    query += " AND COALESCE(NULLIF(c.ended_at, ''), c.started_at) >= ?";
+    params.push(options.since);
   }
 
   query += " ORDER BY rank ASC, m.sequence ASC LIMIT ?";

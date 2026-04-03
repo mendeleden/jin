@@ -1,5 +1,7 @@
-import { loadConfig } from "../config";
-import { Store } from "../store";
+import { configDir } from "../config";
+import { getStore } from "../db/store";
+import { listConversations, parseSinceInput } from "../db/query-surface";
+import type { Conversation, Message } from "../contracts/conversations";
 import { mkdirSync, existsSync } from "fs";
 import { join } from "path";
 
@@ -10,8 +12,7 @@ export async function exportCommand(opts: {
   since?: string;
   limit?: number;
 }): Promise<void> {
-  const config = await loadConfig();
-  const store = new Store(config.store.dbPath);
+  const store = getStore(configDir());
 
   const format = opts.format || "json";
   const outputDir = opts.output || join(process.cwd(), "jin-export");
@@ -22,60 +23,55 @@ export async function exportCommand(opts: {
 
   let since: string | undefined;
   if (opts.since) {
-    const match = opts.since.match(/^(\d+)(h|d|m|w)$/);
-    if (match) {
-      const ms = { h: 3600_000, d: 86400_000, m: 60_000, w: 604800_000 }[match[2]]!;
-      since = new Date(Date.now() - parseInt(match[1]) * ms).toISOString();
-    } else {
-      since = opts.since;
-    }
+    since = parseSinceInput(opts.since);
   }
 
-  const sessions = store.listSessions({
+  const conversations = listConversations(store.database, {
     adapterId: opts.adapter,
     since,
     limit: opts.limit || 500,
   });
 
-  console.log(`jin export — ${sessions.length} session(s) to ${outputDir}\n`);
+  console.log(`jin export — ${conversations.length} conversation(s) to ${outputDir}\n`);
 
-  for (const session of sessions) {
-    const messages = store.getMessages(session.id);
-    const safeName = session.name
+  for (const conversation of conversations) {
+    const messages = store.getMessages(conversation.id);
+    const safeName = conversation.name
       .replace(/[^a-zA-Z0-9-_]/g, "-")
       .replace(/-+/g, "-")
       .slice(0, 50);
-    const dateStr = session.updatedAt.slice(0, 10);
+    const dateStr = (conversation.endedAt || conversation.startedAt).slice(0, 10);
+    const fileStem = `${dateStr}-${safeName || "conversation"}-${conversation.id.slice(0, 8)}`;
 
     if (format === "markdown") {
-      const md = sessionToMarkdown(session, messages);
-      const filename = `${safeName}-${dateStr}.md`;
+      const md = conversationToMarkdown(conversation, messages);
+      const filename = `${fileStem}.md`;
       await Bun.write(join(outputDir, filename), md);
       console.log(`  [+] ${filename}`);
     } else {
-      const data = { session, messages };
-      const filename = `${safeName}-${dateStr}.json`;
+      const data = { conversation, messages };
+      const filename = `${fileStem}.json`;
       await Bun.write(join(outputDir, filename), JSON.stringify(data, null, 2));
       console.log(`  [+] ${filename}`);
     }
   }
 
-  console.log(`\n  Exported ${sessions.length} session(s) to ${outputDir}`);
-  store.close();
+  console.log(`\n  Exported ${conversations.length} conversation(s) to ${outputDir}`);
 }
 
-function sessionToMarkdown(
-  session: { name: string; adapterName: string; createdAt: string; updatedAt: string; totalTokens: number; estCost: number; messageCount: number },
-  messages: { role: string; content: string; timestamp: string; model: string; toolUses: { name: string }[]; thinkingBlocks: { content: string; tokenCount: number }[] }[]
+function conversationToMarkdown(
+  conversation: Conversation,
+  messages: Message[],
 ): string {
   const lines: string[] = [];
-  lines.push(`# Session: ${session.name}\n`);
-  lines.push(`**Adapter**: ${session.adapterName}`);
-  lines.push(`**Date**: ${session.createdAt.slice(0, 19)}`);
-  lines.push(`**Duration**: ${session.updatedAt.slice(0, 19)}`);
-  lines.push(`**Messages**: ${session.messageCount}`);
-  lines.push(`**Tokens**: ${session.totalTokens}`);
-  lines.push(`**Est. Cost**: $${session.estCost.toFixed(4)}`);
+  lines.push(`# Conversation: ${conversation.name}\n`);
+  lines.push(`**Adapter**: ${conversation.adapterId}`);
+  lines.push(`**Started**: ${conversation.startedAt.slice(0, 19)}`);
+  lines.push(`**Ended**: ${conversation.endedAt.slice(0, 19)}`);
+  lines.push(`**Relationship**: ${conversation.relationship}`);
+  lines.push(`**Messages**: ${conversation.messageCount}`);
+  lines.push(`**Tokens**: ${conversation.inputTokens + conversation.outputTokens}`);
+  lines.push(`**Est. Cost**: $${conversation.estCost.toFixed(4)}`);
   lines.push(`\n---\n`);
 
   for (const msg of messages) {
@@ -86,10 +82,10 @@ function sessionToMarkdown(
       lines.push(`## Assistant (${time})${msg.model ? ` — ${msg.model}` : ""}\n`);
     }
 
-    for (const tb of msg.thinkingBlocks) {
+    if (msg.thinkingContent) {
       lines.push(`<details>`);
-      lines.push(`<summary>Thinking (${tb.tokenCount} tokens)</summary>\n`);
-      lines.push(tb.content);
+      lines.push(`<summary>Thinking (${msg.thinkingTokens} tokens)</summary>\n`);
+      lines.push(msg.thinkingContent);
       lines.push(`\n</details>\n`);
     }
 
