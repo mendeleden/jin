@@ -68,9 +68,14 @@ export async function teamConfigCommand(opts: {
 
     curl -fsSL https://raw.githubusercontent.com/mendeleden/jin/main/install.sh | sh && jin init --team=${encoded}
 
-  Existing install (add sink + connect projects):
+  Existing install (workspace onboarding bridge):
 
     jin connect --team=${encoded}
+
+  Low-level BYO integration config stays separate:
+
+    jin sink add ...
+    jin route add ...
 
   --- Config details ---
   ${JSON.stringify(clean, null, 2)}

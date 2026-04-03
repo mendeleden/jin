@@ -1,9 +1,11 @@
-import { loadConfig, saveConfig, configDir, configPath, ensureConfigDir } from "../config";
+import { loadConfig, saveConfig, configPath, ensureConfigDir } from "../config";
 import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { decodeTeamConfig } from "../sinks/types";
-import { createSink, availableSinks } from "../sinks/registry";
+import { createSink } from "../sinks/registry";
 import { ingestCommand } from "./ingest";
+import { ensureSinkConfigured, type SinkCandidateInput } from "./sink";
+import { getRuntimePaths } from "../runguard";
 
 export async function initCommand(opts?: { team?: string; json?: boolean; skills?: boolean }): Promise<void> {
   ensureConfigDir();
@@ -12,35 +14,19 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   // Handle --team flag: decode base64 team config
   if (opts?.team) {
     try {
-      const sinkConfig = decodeTeamConfig(opts.team);
-      if (!sinkConfig.developerId) {
-        sinkConfig.developerId = process.env.USER || process.env.USERNAME || "dev-" + Date.now();
+      const sinkCandidate = toTeamSinkCandidate(decodeTeamConfig(opts.team));
+      const existingSinkCount = config.sinks.length;
+      const result = await ensureSinkConfigured(config, sinkCandidate);
+
+      if (!result.created) {
+        console.log(`  sink: already configured (${result.sinkId}), skipping`);
+      } else if (existingSinkCount > 0) {
+        console.log(
+          `  \x1b[33mNote:\x1b[0m Adding workspace sink alongside ${existingSinkCount} existing sink(s).`,
+        );
       }
 
-      // Append instead of replacing — don't nuke existing sinks
-      if (!config.sinks) config.sinks = [];
-      const duplicate = config.sinks.find((s) =>
-        s.type === sinkConfig.type &&
-        s.connectionString === sinkConfig.connectionString &&
-        s.url === sinkConfig.url &&
-        s.bucket === sinkConfig.bucket
-      );
-      if (duplicate) {
-        console.log(`  sink: already configured (${duplicate.id || sinkConfig.type}), skipping`);
-      } else {
-        if (config.sinks.length > 0) {
-          console.log(`  \x1b[33mNote:\x1b[0m Adding team sink alongside ${config.sinks.length} existing sink(s).`);
-        }
-        config.sinks.push(sinkConfig);
-      }
-
-      config.team = {
-        teamId: sinkConfig.teamId || "",
-        developerId: sinkConfig.developerId || "",
-        syncMode: "realtime",
-      };
-
-      const sink = createSink(sinkConfig);
+      const sink = createSink(result.sink, config.sinks.findIndex((entry) => entry.id === result.sinkId));
       const health = await sink.healthCheck();
       if (health.ok) {
         console.log(`  sink: ${sink.name} connected`);
@@ -93,7 +79,7 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
     // Include projects from store after ingest
     let projects: string[] = [];
     try {
-      const store = new Store(config.store.dbPath);
+      const store = new Store(getRuntimePaths().storePath);
       projects = store.listProjects().map((p: any) => p.name);
       store.close();
     } catch { /* store may not exist */ }
@@ -101,7 +87,7 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
     console.log(JSON.stringify({
       detected: detected.map(d => ({ id: d.id, name: d.name, sessions: d.sessionCount })),
       notFound,
-      sinks: config.sinks.map(s => ({ type: s.type, teamId: s.teamId })),
+      sinks: config.sinks.map(s => ({ id: s.id, type: s.type, enabled: s.enabled !== false })),
       projects,
       config: configPath(),
     }, null, 2));
@@ -120,7 +106,7 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   if (config.sinks.length > 0) {
     console.log("");
     for (const s of config.sinks) {
-      console.log(`  \x1b[33m>\x1b[0m ${s.type}${s.teamId ? ` (${s.teamId})` : ""}`);
+      console.log(`  \x1b[33m>\x1b[0m ${s.id} (${s.type})`);
     }
   }
 
@@ -145,5 +131,34 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   if (opts?.skills) {
     const { setupSkillsCommand } = await import("./setup-skills");
     await setupSkillsCommand();
+  }
+}
+
+function toTeamSinkCandidate(decoded: ReturnType<typeof decodeTeamConfig>): SinkCandidateInput {
+  switch (decoded.type) {
+    case "postgres":
+      return {
+        type: "postgres",
+        id: decoded.id,
+        connectionString: decoded.connectionString,
+      };
+    case "webhook":
+      return {
+        type: "webhook",
+        id: decoded.id,
+        url: decoded.url,
+        headers: decoded.headers,
+      };
+    case "s3":
+      return {
+        type: "s3",
+        id: decoded.id,
+        bucket: decoded.bucket,
+        region: decoded.region,
+        endpoint: decoded.endpoint,
+        accessKeyId: decoded.accessKeyId,
+        secretAccessKey: decoded.secretAccessKey,
+        prefix: decoded.prefix,
+      };
   }
 }
