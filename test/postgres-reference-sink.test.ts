@@ -74,6 +74,27 @@ describe("PostgresSink", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("healthCheck surfaces permission denied on jin_meta instead of reporting missing schema", async () => {
+    const calls: SqlCall[] = [];
+
+    setSqlTransport(
+      calls,
+      async () =>
+        new Response("permission denied for relation public.jin_meta", {
+          status: 403,
+          statusText: "Forbidden",
+        }),
+    );
+
+    const result = (await makeSink().healthCheck()) as SinkHealth;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Postgres HTTP error 403");
+    expect(result.error).toContain("permission denied for relation public.jin_meta");
+    expect(result.error).not.toContain("Remote schema is not initialized");
+    expect(calls).toHaveLength(1);
+  });
+
   test("push uses full-snapshot DML only and keeps pushed plus failed equal to the payload count", async () => {
     const calls: SqlCall[] = [];
     const payloads = [makePayload("conv-ok", 7), makePayload("conv-fail", 8)];

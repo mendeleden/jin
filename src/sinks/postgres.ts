@@ -524,14 +524,12 @@ function failAllPayloads(
 
 function looksLikeMissingMetaTable(error: unknown): boolean {
   const message = toErrorMessage(error).toLowerCase();
-  return (
-    message.includes("jin_meta") &&
-    (
-      message.includes("does not exist") ||
-      message.includes("undefined table") ||
-      message.includes("relation")
-    )
-  );
+  if (!message.includes("jin_meta")) {
+    return false;
+  }
+
+  const code = readPostgresErrorCode(error);
+  return code === "42P01" || message.includes("does not exist") || message.includes("undefined table");
 }
 
 function toErrorMessage(error: unknown): string {
@@ -540,4 +538,18 @@ function toErrorMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+function readPostgresErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const record = error as Record<string, unknown>;
+  const code =
+    record.code ??
+    record.sqlstate ??
+    record.sqlState;
+
+  return typeof code === "string" && code.trim() !== "" ? code : undefined;
 }
