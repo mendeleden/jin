@@ -46,27 +46,27 @@ they should still all mount or point to the same control directory.
 
 ## Ownership Model
 
-### Codex-Owned
+### `codex-BRAIN`-Owned
 
 - `program.md`
 - `packets/*.md`
 - assignment state
 - approval / blocked / merged transitions
 
-### Cursor-Owned
+### `*-REVIEWER-*`-Owned
 
 - `blueprints.md`
 - `reviews/*.md`
 - drift and progress updates
 
-### Worker-Owned
+### `codex-WORKER-*`-Owned
 
 - `agents/*.md`
 - heartbeat
 - current focus
 - handoff-ready note
 
-Workers do not own:
+`codex-WORKER-*` does not own:
 
 - the program scoreboard
 - packet approval state
@@ -82,14 +82,27 @@ Workers do not own:
     W1-DB-01.md
     ...
   agents/
-    codex-main.md
-    claude-db-01.md
-    cursor-audit.md
+    codex-BRAIN.md
+    codex-WORKER-db-store-spine.md
+    cursor-REVIEWER-wave-1-audit.md
     ...
   reviews/
     2026-04-01-W0-CODEX-01-cursor.md
     ...
 ```
+
+## Naming Convention
+
+The live control plane should expose one human-usable name per session:
+
+- `codex-BRAIN`
+- `codex-WORKER-<task-slug>`
+- `cursor-REVIEWER-<task-slug>`
+- `claude-code-REVIEWER-<task-slug>`
+
+If a legacy heartbeat filename still exists from an earlier naming scheme, keep
+the file but record the preferred session name inside it until the next cleanup
+pass.
 
 ## Required Files
 
@@ -118,7 +131,7 @@ Canonical packet state:
 
 - packet title
 - status
-- assigned agent
+- assigned agent role name
 - branch / worktree
 - depends on
 - unblocks
@@ -131,6 +144,7 @@ Canonical packet state:
 Live worker heartbeat:
 
 - agent id
+- preferred session name
 - packet id
 - branch / worktree / container
 - status
@@ -177,7 +191,7 @@ These are blueprint alignment states.
 
 ### On Dispatch
 
-Codex:
+`codex-BRAIN`:
 
 1. updates `program.md`
 2. updates `packets/<packet-id>.md`
@@ -185,7 +199,7 @@ Codex:
 
 ### On Agent Start
 
-Worker:
+`codex-WORKER-*`:
 
 1. reads `program.md`, `blueprints.md`, and its packet file
 2. writes or updates `agents/<agent-id>.md`
@@ -193,7 +207,7 @@ Worker:
 
 ### During Work
 
-Worker:
+`codex-WORKER-*`:
 
 - updates `last heartbeat`
 - updates `current focus`
@@ -201,17 +215,17 @@ Worker:
 
 ### On Handoff
 
-Worker:
+`codex-WORKER-*`:
 
 - marks its own agent file as `review_ready`
 - records files changed and tests run
 
-Cursor:
+`*-REVIEWER-*`:
 
 - writes a review artifact
 - updates `blueprints.md`
 
-Codex:
+`codex-BRAIN`:
 
 - updates packet state and next action
 
@@ -219,9 +233,9 @@ Codex:
 
 To minimize write conflicts:
 
-- Codex writes `program.md` and `packets/*.md`
-- Cursor writes `blueprints.md` and `reviews/*.md`
-- workers write only `agents/*.md`
+- `codex-BRAIN` writes `program.md` and `packets/*.md`
+- reviewers write `blueprints.md` and `reviews/*.md`
+- `codex-WORKER-*` writes only `agents/*.md`
 
 This is the key design choice that keeps one centralized location without
 everyone fighting over one file.

@@ -10,9 +10,9 @@ It exists to answer one question:
 The answer is:
 
 - blueprint docs are the source of truth
-- Codex freezes contracts and integrates
-- Cursor audits drift and reports progress
-- worker agents execute one narrow packet at a time
+- `codex-BRAIN` freezes contracts and integrates
+- `cursor-REVIEWER-*` or `claude-code-REVIEWER-*` audits drift and reports progress
+- `codex-WORKER-*` executes one narrow packet at a time
 - live progress is tracked in a shared control plane outside branch-local docs
 
 ## Static Vs Live
@@ -66,9 +66,9 @@ The control plane tells you what is happening right now.
 
 ## Core Roles
 
-### Codex
+### `codex-BRAIN`
 
-Codex owns:
+`codex-BRAIN` owns:
 
 - contract freeze
 - cross-boundary decisions
@@ -77,9 +77,9 @@ Codex owns:
 - review and approval
 - integration glue across lanes
 
-### Cursor
+### `*-REVIEWER-*`
 
-Cursor owns:
+`cursor-REVIEWER-*` or `claude-code-REVIEWER-*` owns:
 
 - drift detection
 - progress reporting
@@ -87,18 +87,18 @@ Cursor owns:
 - blueprint scoreboard updates in the control plane
 - review artifacts
 
-Cursor does not own architecture or implementation policy.
+Reviewers do not own architecture or implementation policy.
 
-### Workers
+### `codex-WORKER-*`
 
-Workers own:
+`codex-WORKER-*` owns:
 
 - one bounded code slice
 - one packet at a time
 - only the files listed in the packet
 - their live heartbeat and progress notes in the control plane
 
-Workers do not own:
+`codex-WORKER-*` does not own:
 
 - global contracts
 - packet redesign
