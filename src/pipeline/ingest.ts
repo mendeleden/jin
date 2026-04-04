@@ -1,13 +1,23 @@
 import {
   DEFAULT_INGEST_BATCH_SIZE,
+  DEFAULT_FIND_CHANGED_TIMEOUT_MS,
+  DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
 } from "../contracts/pipeline";
 import type { Adapter, ChangeHint } from "../contracts/adapters";
+import type { ConversationRef } from "../contracts/conversations";
 import type { ConversationStore } from "../contracts/store";
 import type { IngestResult, PipelineLogger } from "./types";
 
 export interface IngestOptions {
   batchSize?: number;
   logger?: PipelineLogger;
+  findChangedTimeoutMs?: number;
+  loadConversationTimeoutMs?: number;
+  onBatchProcessed?: (info: {
+    adapterId: string;
+    processedRefs: number;
+    totalRefs: number;
+  }) => void | Promise<void>;
 }
 
 const EMPTY_INGEST_RESULT: IngestResult = {
@@ -34,11 +44,34 @@ export async function ingestOne(
     options.batchSize,
     DEFAULT_INGEST_BATCH_SIZE,
   );
+  const findChangedTimeoutMs = normalizeTimeoutMs(
+    options.findChangedTimeoutMs,
+    DEFAULT_FIND_CHANGED_TIMEOUT_MS,
+  );
+  const loadConversationTimeoutMs = normalizeTimeoutMs(
+    options.loadConversationTimeoutMs,
+    DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
+  );
 
   let refs;
   try {
-    refs = await adapter.findChanged(hint);
+    refs = await withTimeout(
+      () => adapter.findChanged(hint),
+      findChangedTimeoutMs,
+      new AdapterCallTimeoutError({
+        adapterId: adapter.id,
+        operation: "findChanged",
+        timeoutMs: findChangedTimeoutMs,
+      }),
+    );
   } catch (error) {
+    if (error instanceof AdapterCallTimeoutError) {
+      logger.warn(
+        `Adapter ${adapter.id} findChanged timed out after ${findChangedTimeoutMs}ms; skipping adapter for this cycle`,
+      );
+      return EMPTY_INGEST_RESULT;
+    }
+
     logger.error(`Adapter ${adapter.id} failed during findChanged`, error);
     return EMPTY_INGEST_RESULT;
   }
@@ -51,7 +84,16 @@ export async function ingestOne(
 
     for (const ref of batch) {
       try {
-        const bundle = await adapter.loadConversation(ref);
+        const bundle = await withTimeout(
+          () => adapter.loadConversation(ref),
+          loadConversationTimeoutMs,
+          new AdapterCallTimeoutError({
+            adapterId: adapter.id,
+            operation: "loadConversation",
+            ref,
+            timeoutMs: loadConversationTimeoutMs,
+          }),
+        );
         if (!bundle) {
           continue;
         }
@@ -63,6 +105,13 @@ export async function ingestOne(
           changedConversationIds.add(bundle.conversation.id);
         }
       } catch (error) {
+        if (error instanceof AdapterCallTimeoutError) {
+          logger.warn(
+            `Adapter ${adapter.id} loadConversation timed out for ${ref.id} after ${loadConversationTimeoutMs}ms; skipping ref`,
+          );
+          continue;
+        }
+
         logger.error(
           `Adapter ${adapter.id} failed to load conversation ${ref.id}`,
           error,
@@ -71,6 +120,13 @@ export async function ingestOne(
     }
 
     if (start + batchSize < refs.length) {
+      if (options.onBatchProcessed) {
+        await options.onBatchProcessed({
+          adapterId: adapter.id,
+          processedRefs: start + batch.length,
+          totalRefs: refs.length,
+        });
+      }
       await Bun.sleep(0);
     }
   }
@@ -120,4 +176,55 @@ function normalizeBatchSize(
   }
 
   return Math.max(1, Math.floor(batchSize));
+}
+
+function normalizeTimeoutMs(
+  timeoutMs: number | undefined,
+  fallback: number,
+): number {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(timeoutMs));
+}
+
+async function withTimeout<T>(
+  work: () => Promise<T>,
+  timeoutMs: number,
+  error: AdapterCallTimeoutError,
+): Promise<T> {
+  return Promise.race([
+    work(),
+    Bun.sleep(timeoutMs).then(() => {
+      throw error;
+    }),
+  ]);
+}
+
+class AdapterCallTimeoutError extends Error {
+  readonly adapterId: string;
+  readonly operation: "findChanged" | "loadConversation";
+  readonly ref?: ConversationRef;
+  readonly timeoutMs: number;
+
+  constructor(options: {
+    adapterId: string;
+    operation: "findChanged" | "loadConversation";
+    ref?: ConversationRef;
+    timeoutMs: number;
+  }) {
+    const target =
+      options.operation === "findChanged"
+        ? "findChanged"
+        : `loadConversation(${options.ref?.id ?? "unknown"})`;
+    super(
+      `Adapter ${options.adapterId} ${target} timed out after ${options.timeoutMs}ms`,
+    );
+    this.name = "AdapterCallTimeoutError";
+    this.adapterId = options.adapterId;
+    this.operation = options.operation;
+    this.ref = options.ref;
+    this.timeoutMs = options.timeoutMs;
+  }
 }

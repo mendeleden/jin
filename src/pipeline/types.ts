@@ -66,6 +66,9 @@ export interface RunPipelineOptions {
   scheduleStartupWork?: boolean;
   watcherFactory?: PipelineWatcherFactory;
   shutdownDrainTimeoutMs?: number;
+  rssWarningBytes?: number;
+  rssHardLimitBytes?: number;
+  getRssBytes?: () => number;
   onShutdownTimeout?: (
     result: PipelineShutdownResult,
   ) => void | Promise<void>;

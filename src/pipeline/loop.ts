@@ -2,6 +2,8 @@ import { DEFAULT_SCAN_INTERVAL_MS } from "../contracts/config";
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "../contracts/lifecycle";
 import {
   DEFAULT_INGEST_BATCH_SIZE,
+  DEFAULT_FIND_CHANGED_TIMEOUT_MS,
+  DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
   DEFAULT_PUSH_BATCH_SIZE,
   DEFAULT_WATCH_DEBOUNCE_MS,
 } from "../contracts/pipeline";
@@ -24,6 +26,9 @@ const NOOP_LOGGER: PipelineLogger = {
   warn() {},
   error() {},
 };
+
+const DEFAULT_RSS_WARNING_BYTES = 200 * 1024 * 1024;
+const DEFAULT_RSS_HARD_LIMIT_BYTES = 256 * 1024 * 1024;
 
 // BP-02 uses a shutdown-specific full scan, but the frozen adapter contract only
 // publishes startup/fs-change/periodic hints. Reusing periodic-scan preserves
@@ -61,13 +66,31 @@ export async function runPipeline(
     options.pushBatchSize,
     DEFAULT_PUSH_BATCH_SIZE,
   );
+  const findChangedTimeoutMs = normalizeTimeoutMs(
+    DEFAULT_FIND_CHANGED_TIMEOUT_MS,
+  );
+  const loadConversationTimeoutMs = normalizeTimeoutMs(
+    DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
+  );
   const shutdownDrainTimeoutMs =
     options.shutdownDrainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS;
+  const rssWarningBytes = normalizeRssBytes(
+    options.rssWarningBytes,
+    DEFAULT_RSS_WARNING_BYTES,
+  );
+  const rssHardLimitBytes = normalizeRssBytes(
+    options.rssHardLimitBytes,
+    DEFAULT_RSS_HARD_LIMIT_BYTES,
+  );
+  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
 
   let currentWork: PipelineWorkItem | null = null;
   let stopping = false;
   let shutdownPromise: Promise<PipelineShutdownResult> | null = null;
+  let shutdownInitiated = false;
+  let abandonedWorkItems = 0;
   const idleResolvers: Array<() => void> = [];
+  let rssWarningActive = false;
 
   const scanIntervalMs =
     options.scanIntervalMs === undefined
@@ -131,17 +154,7 @@ export async function runPipeline(
   }
 
   async function performShutdown(): Promise<PipelineShutdownResult> {
-    stopping = true;
-    watcher.close();
-
-    if (periodicTimer) {
-      clearInterval(periodicTimer);
-    }
-
-    const abandonedWorkItems = queue.discard(
-      (item) => item.kind !== "shutdown-flush",
-    );
-    queue.enqueue({ kind: "shutdown-flush" });
+    initiateShutdown();
 
     const timedOut = await Promise.race([
       coordinatorDone.then(() => false),
@@ -185,6 +198,8 @@ export async function runPipeline(
           continue;
         }
 
+        enforceRssBudget(`pipeline work item ${work.kind}`);
+
         switch (work.kind) {
           case "reconcile-adapters": {
             activeAdapters = await resolveAdapters(options.adapterSource);
@@ -198,7 +213,14 @@ export async function runPipeline(
               work.hint,
               {
                 batchSize: ingestBatchSize,
+                findChangedTimeoutMs,
+                loadConversationTimeoutMs,
                 logger,
+                onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
+                  enforceRssBudget(
+                    `ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
+                  );
+                },
               },
             );
             if (result.anyChanged) {
@@ -223,7 +245,14 @@ export async function runPipeline(
               work.hint,
               {
                 batchSize: ingestBatchSize,
+                findChangedTimeoutMs,
+                loadConversationTimeoutMs,
                 logger,
+                onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
+                  enforceRssBudget(
+                    `ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
+                  );
+                },
               },
             );
             if (result.anyChanged) {
@@ -245,7 +274,14 @@ export async function runPipeline(
               SHUTDOWN_SCAN_HINT,
               {
                 batchSize: ingestBatchSize,
+                findChangedTimeoutMs,
+                loadConversationTimeoutMs,
                 logger,
+                onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
+                  enforceRssBudget(
+                    `shutdown ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
+                  );
+                },
               },
             );
             await pushDirty(options.store, options.sinks, options.routes, {
@@ -257,7 +293,14 @@ export async function runPipeline(
           }
         }
       } catch (error) {
-        logger.error(`Pipeline work item ${work.kind} failed`, error);
+        if (error instanceof PipelineRssHardLimitError) {
+          shutdownPromise ??= performShutdown();
+          if (work.kind === "shutdown-flush") {
+            shouldStop = true;
+          }
+        } else {
+          logger.error(`Pipeline work item ${work.kind} failed`, error);
+        }
       } finally {
         currentWork = null;
         resolveIdleIfNeeded();
@@ -275,6 +318,51 @@ export async function runPipeline(
     }
 
     queue.enqueue({ kind: "push" });
+  }
+
+  function initiateShutdown(): void {
+    if (shutdownInitiated) {
+      return;
+    }
+
+    shutdownInitiated = true;
+    stopping = true;
+    watcher.close();
+
+    if (periodicTimer) {
+      clearInterval(periodicTimer);
+    }
+
+    abandonedWorkItems = queue.discard(
+      (item) => item.kind !== "shutdown-flush",
+    );
+    queue.enqueue({ kind: "shutdown-flush" });
+  }
+
+  function enforceRssBudget(context: string): void {
+    const rssBytes = getRssBytes();
+    if (!Number.isFinite(rssBytes) || rssBytes < 0) {
+      return;
+    }
+
+    if (rssBytes >= rssHardLimitBytes) {
+      logger.error(
+        `RSS ${formatRssMb(rssBytes)} MB exceeded the ${formatRssMb(rssHardLimitBytes)} MB hard limit during ${context}; starting bounded shutdown`,
+      );
+      throw new PipelineRssHardLimitError(rssBytes, rssHardLimitBytes);
+    }
+
+    if (rssBytes >= rssWarningBytes) {
+      if (!rssWarningActive) {
+        logger.warn(
+          `RSS ${formatRssMb(rssBytes)} MB is above the ${formatRssMb(rssWarningBytes)} MB warning threshold during ${context}`,
+        );
+        rssWarningActive = true;
+      }
+      return;
+    }
+
+    rssWarningActive = false;
   }
 
   function resolveIdleIfNeeded(): void {
@@ -307,4 +395,41 @@ function normalizeBatchSize(
   }
 
   return Math.max(1, Math.floor(batchSize));
+}
+
+function normalizeTimeoutMs(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(timeoutMs));
+}
+
+function normalizeRssBytes(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+function formatRssMb(bytes: number): number {
+  return Math.round(bytes / (1024 * 1024));
+}
+
+class PipelineRssHardLimitError extends Error {
+  readonly rssBytes: number;
+  readonly hardLimitBytes: number;
+
+  constructor(rssBytes: number, hardLimitBytes: number) {
+    super(
+      `RSS ${formatRssMb(rssBytes)} MB exceeded hard limit ${formatRssMb(hardLimitBytes)} MB`,
+    );
+    this.name = "PipelineRssHardLimitError";
+    this.rssBytes = rssBytes;
+    this.hardLimitBytes = hardLimitBytes;
+  }
 }

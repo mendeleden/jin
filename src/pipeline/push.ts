@@ -33,6 +33,11 @@ export async function pushDirty(
   let failedConversations = 0;
 
   for (const sink of sinks) {
+    if (!isSinkEnabled(sink)) {
+      logger.info(`Skipping disabled sink ${sink.id}`);
+      continue;
+    }
+
     const dirtyConversationIds = store.conversationsNeedingPush(sink.id);
     if (dirtyConversationIds.length === 0) {
       continue;
@@ -204,4 +209,8 @@ function errorToMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+function isSinkEnabled(sink: Sink): boolean {
+  return (sink as Sink & { enabled?: boolean }).enabled !== false;
 }
