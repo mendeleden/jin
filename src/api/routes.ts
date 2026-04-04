@@ -15,8 +15,13 @@ import {
   type ConversationTreeNode,
 } from "../db/query-surface";
 import { getStore } from "../db/store";
+import {
+  createLocalControlBoundary,
+  type LocalControlBoundary,
+} from "./control";
 
 type Handler = (req: Request, params: Record<string, string>) => Response | Promise<Response>;
+type QueryStore = ReturnType<typeof getStore>;
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -24,10 +29,40 @@ const json = (data: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
-export function createRoutes(store: unknown): Map<string, Handler> {
+export interface CreateRoutesOptions {
+  queryStore?: QueryStore;
+  controlBoundary?: LocalControlBoundary;
+}
+
+export function createRoutes(
+  store: unknown,
+  options: CreateRoutesOptions = {},
+): Map<string, Handler> {
   void store;
   const routes = new Map<string, Handler>();
-  const queryStore = getStore(configDir());
+  const queryStore = options.queryStore ?? getStore(configDir());
+  const controlBoundary =
+    options.controlBoundary ?? createLocalControlBoundary();
+
+  // --- Local control boundary ---
+  routes.set("GET /api/control/status", () => {
+    return json(controlBoundary.getStatus());
+  });
+
+  routes.set("POST /api/control/start", async () => {
+    const result = await controlBoundary.runAction("start");
+    return json(result, result.ok ? 200 : 409);
+  });
+
+  routes.set("POST /api/control/stop", async () => {
+    const result = await controlBoundary.runAction("stop");
+    return json(result, result.ok ? 200 : 409);
+  });
+
+  routes.set("POST /api/control/restart", async () => {
+    const result = await controlBoundary.runAction("restart");
+    return json(result, result.ok ? 200 : 409);
+  });
 
   // --- Overview ---
   routes.set("GET /api/overview", () => {
