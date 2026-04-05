@@ -1,8 +1,8 @@
-import { getAllState } from "../lifecycle";
+import { getAllState } from "../daemon/process-state";
 import {
   getRuntimePaths,
   getRuntimeStatus,
-} from "../runguard";
+} from "../daemon/runtime-state";
 import type {
   RuntimeIssue,
   RuntimeOwnershipRecord,

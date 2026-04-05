@@ -1,4 +1,4 @@
-import type { JinConfig, RouteConfig, RouteMatch } from "./config";
+import type { RouteConfig, RouteMatch } from "./config";
 import type { Sink } from "./sinks/types";
 
 export interface RoutableConversation {
@@ -48,27 +48,6 @@ export function sinksForConversation(
   }
 
   return allSinks.filter((sink) => sinkIds.has(sink.id));
-}
-
-// Legacy wrapper retained as a narrow bridge while callers migrate to the
-// pure conversation-based API.
-export function sinksForSession(
-  conversationOrSession: unknown,
-  routesOrStore: unknown,
-  configOrSinks: Pick<JinConfig, "routes"> | ReadonlyArray<RouteConfig> | unknown,
-  maybeAllSinks?: ReadonlyArray<Sink>,
-): Sink[] {
-  const conversation = toRoutableConversation(conversationOrSession);
-  const routes =
-    maybeAllSinks === undefined
-      ? extractRoutes(routesOrStore)
-      : extractRoutes(configOrSinks);
-  const allSinks =
-    maybeAllSinks === undefined
-      ? extractSinks(configOrSinks)
-      : [...maybeAllSinks];
-
-  return sinksForConversation(conversation, routes, allSinks);
 }
 
 export function matchesRoute(
@@ -131,48 +110,6 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${source}$`, "u");
 }
 
-function extractRoutes(
-  value: Pick<JinConfig, "routes"> | ReadonlyArray<RouteConfig> | unknown,
-): RouteConfig[] {
-  if (Array.isArray(value)) {
-    return [...value];
-  }
-  if (isRecord(value) && Array.isArray(value.routes)) {
-    return [...value.routes];
-  }
-  return [];
-}
-
-function extractSinks(value: unknown): Sink[] {
-  return Array.isArray(value) ? [...(value as Sink[])] : [];
-}
-
-function toRoutableConversation(value: unknown): RoutableConversation {
-  if (!isRecord(value)) {
-    return {
-      gitRemote: "",
-      adapterId: "",
-      branch: "",
-      name: "",
-    };
-  }
-
-  return {
-    gitRemote: asString(value.gitRemote) ?? "",
-    adapterId: asString(value.adapterId) ?? "",
-    branch: asString(value.branch) ?? "",
-    name: asString(value.name) ?? "",
-  };
-}
-
 function identity(value: string): string {
   return value;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from "fs";
-import type { WatchEvent } from "./adapters/types";
+import type { WatchEvent } from "../adapters/types";
 
 interface WatcherOptions {
   debounceMs: number;

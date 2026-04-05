@@ -56,6 +56,17 @@ implemented and validated.
 - temporary bridges are removed or explicitly justified
 - import graph is cleaner, not more tangled
 
+## BP Acceptance Matrix
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| BP-01 daemon ownership lives under `daemon/` | implemented | `src/daemon/process-state.ts`, `src/daemon/runtime-state.ts`, `src/daemon/daemonize.ts`; verified by `bun test test/lifecycle-boundary.test.ts` and `bun test test/config-mutation-control.test.ts` |
+| BP-01 / BP-02 watcher implementation lives under `pipeline/` | implemented | `src/pipeline/file-watcher.ts`, `src/pipeline/watcher.ts`; verified by `bun test test/pipeline-spine.test.ts` |
+| BP-08 routing stays pure conversation-based without the legacy wrapper | implemented | `src/routing.ts`, `src/commands/watch.ts`; verified by `bun test test/routing.test.ts` |
+| BP-07 / BP-08 API route factory uses the v2 options path only | implemented | `src/api/routes.ts`, `src/api/server.ts`; verified by `bun test test/local-control-boundary.test.ts` and `bun test test/read-only-query-surface.test.ts` |
+| BP-Product command/help reframing | out of scope | deferred to `W3-PRODUCT-01` per packet boundary |
+| BP-04 / BP-06 removal of live adapter and sink compatibility shims | out of scope | deferred because current v1 command surfaces still depend on those shims |
+
 ## Stop And Escalate
 
 This is a Codex integration packet because it is intentionally cross-cutting.
@@ -71,6 +82,15 @@ Files changed:
 
 Tests run:
 - ...
+
+BP acceptance matrix:
+- <requirement> -> implemented in <file>, tested by <test>
+- <requirement> -> deferred with Codex approval
+- <requirement> -> out of scope per packet boundary
+
+V1 comparison:
+- parity kept / intentional BP-backed change / deferred regression
+- or `no prior v1 surface`
 
 BP alignment:
 - BP-01: module layout and ownership aligned

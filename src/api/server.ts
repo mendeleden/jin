@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
-import { Store } from "../store";
-import { loadConfig, configDir } from "../config";
+import { configDir } from "../config";
 import { createRoutes, matchRoute } from "./routes";
 import embeddedHtml from "./_spa";
 
@@ -41,9 +40,7 @@ export async function startServer(opts: {
     console.log(`  Note: Another dashboard running on port ${existingPort} (PID ${existingPid}).`);
   }
 
-  const config = await loadConfig();
-  const store = new Store(config.store.dbPath);
-  const routes = createRoutes(store);
+  const routes = createRoutes();
 
   // Dashboard HTML is embedded at compile time via scripts/embed-spa.ts
   const spaHtml = embeddedHtml;

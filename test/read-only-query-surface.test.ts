@@ -117,7 +117,7 @@ describe("read-only query surface", () => {
     const { store } = createQueryEnv();
     seedQuerySurface(store);
 
-    const routes = createRoutes(null);
+    const routes = createRoutes();
 
     const traceRoute = matchRoute(routes, "GET", "/api/sessions/trace-root");
     expect(traceRoute).not.toBeNull();

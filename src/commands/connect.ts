@@ -22,7 +22,7 @@ import { persistConfigChange } from "./config-control";
 import { normalizeRemote, sinkIdsForConversation } from "../routing";
 import { decodeTeamConfig, type SinkConfig as TeamSinkConfig } from "../sinks/types";
 import { Store } from "../store";
-import { getRuntimePaths } from "../runguard";
+import { getRuntimePaths } from "../daemon/runtime-state";
 
 interface ConnectOptions {
   postgres?: string;

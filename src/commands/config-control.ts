@@ -1,7 +1,7 @@
 import { saveConfig, type JinConfig } from "../config";
 import type { RuntimeIssue } from "../contracts/lifecycle";
-import { getWatcherState } from "../lifecycle";
-import { getRuntimeStatus, markRuntimeRunning } from "../runguard";
+import { getWatcherState } from "../daemon/process-state";
+import { getRuntimeStatus, markRuntimeRunning } from "../daemon/runtime-state";
 import { restartCommand } from "./start";
 
 const OPERATOR_PAUSE_PREFIX = "sink paused by operator:";

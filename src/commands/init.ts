@@ -5,7 +5,7 @@ import { decodeTeamConfig } from "../sinks/types";
 import { createSink } from "../sinks/registry";
 import { ingestCommand } from "./ingest";
 import { ensureSinkConfigured, type SinkCandidateInput } from "./sink";
-import { getRuntimePaths } from "../runguard";
+import { getRuntimePaths } from "../daemon/runtime-state";
 
 export async function initCommand(opts?: { team?: string; json?: boolean; skills?: boolean }): Promise<void> {
   ensureConfigDir();

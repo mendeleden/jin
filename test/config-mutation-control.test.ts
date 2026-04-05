@@ -35,11 +35,11 @@ mock.module("../src/sinks/registry", () => ({
   availableSinks: () => ["postgres", "webhook", "s3"],
 }));
 
-mock.module("../src/lifecycle", () => ({
+mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => watcherState,
 }));
 
-mock.module("../src/runguard", () => ({
+mock.module("../src/daemon/runtime-state", () => ({
   getRuntimeStatus: () => runtimeStatus,
   getRuntimePaths: () => runtimePaths,
   markRuntimeRunning: (mode: string, issues: any[]) => {

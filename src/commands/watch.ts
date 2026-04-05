@@ -3,9 +3,10 @@ import type { JinConfig } from "../config";
 import { Store } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { createSink } from "../sinks/registry";
-import { FileWatcher } from "../watcher";
+import { daemonize } from "../daemon/daemonize";
+import { FileWatcher } from "../pipeline/file-watcher";
 import { autoTagSession } from "../tagger";
-import { sinksForSession } from "../routing";
+import { sinksForConversation } from "../routing";
 import type { Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
@@ -21,7 +22,7 @@ const FILE_COOLDOWN_MS = 5_000;
 const fileLastIngestedAt = new Map<string, number>();
 
 export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
-  const { isServiceActive, isDaemonRunning, isServiceInstalled } = await import("../runguard");
+  const { isServiceActive, isServiceInstalled } = await import("../daemon/runtime-state");
 
   // Block if OS service is running — but not if WE are the service
   // JIN_LAUNCHED_BY_SERVICE is set in both the systemd unit and launchd plist
@@ -293,51 +294,6 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   await new Promise(() => {});
 }
 
-/** Fork to background */
-async function daemonize(): Promise<void> {
-  // Resolve how to spawn ourselves
-  const { realpathSync } = await import("fs");
-  let exe: string;
-  try {
-    exe = realpathSync("/proc/self/exe");
-  } catch {
-    exe = process.execPath;
-  }
-
-  // Detect if running as compiled binary or via bun
-  const isCompiled = !exe.endsWith("bun") && !exe.endsWith("node");
-  const cmd = isCompiled
-    ? [exe, "start", "--foreground"]
-    : [exe, "run", process.argv[1], "start", "--foreground"];
-
-  const logFd = require("fs").openSync(LOG_FILE, "a");
-
-  const proc = Bun.spawn(cmd, {
-    stdout: logFd,
-    stderr: logFd,
-    stdin: "ignore",
-    detached: true,
-    env: { ...process.env, JIN_DAEMON: "1" },
-  });
-
-  require("fs").closeSync(logFd);
-
-  // Wait a moment to check it started
-  await Bun.sleep(500);
-  if (proc.exitCode !== null) {
-    console.error("  Failed to start daemon. Check logs at:", LOG_FILE);
-    process.exit(1);
-  }
-
-  writeFileSync(PID_FILE, String(proc.pid));
-  console.log(`  jin daemon started (PID ${proc.pid})`);
-  console.log(`  Logs: ${LOG_FILE}`);
-  console.log(`  Stop: jin stop`);
-
-  // Detach — let the spawned process run independently
-  proc.unref();
-}
-
 // Backpressure: push sessions in batches to avoid loading all messages into memory at once.
 const PUSH_BATCH_SIZE = 20;
 
@@ -361,7 +317,7 @@ async function pushToSinks(
   for (const id of sessionIds) {
     const session = store.getSession(id);
     if (!session) continue;
-    const targetSinks = sinksForSession(session, store, config, sinks);
+    const targetSinks = sinksForConversation(session, config.routes, sinks);
     const filteredSinks = targetSinks.filter(sink => {
       const sinkNeeds = needsPush.get(sink.id);
       return !sinkNeeds || sinkNeeds.has(id);

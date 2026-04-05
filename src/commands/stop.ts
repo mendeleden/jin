@@ -3,7 +3,7 @@ import {
   stopDashboard,
   getWatcherState,
   getDashboardState,
-} from "../lifecycle";
+} from "../daemon/process-state";
 
 export async function stopCommand(opts?: {
   watcher?: boolean;

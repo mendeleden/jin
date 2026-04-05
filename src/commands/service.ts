@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { configDir } from "../config";
-import { stopWatcher } from "../lifecycle";
+import { stopWatcher } from "../daemon/process-state";
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "../contracts/lifecycle";
 import {
   clearRuntimeState,
   getRuntimeStatus,
   markRuntimeRunning,
   markRuntimeStarting,
-} from "../runguard";
+} from "../daemon/runtime-state";
 
 const PLATFORM = process.platform;
 const HOME = process.env.HOME || process.env.USERPROFILE || "";

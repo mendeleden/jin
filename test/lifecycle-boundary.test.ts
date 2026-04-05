@@ -28,7 +28,7 @@ let runtimePaths = {
   logPath: "",
 };
 
-mock.module("../src/lifecycle", () => ({
+mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => watcherState,
   getDashboardState: () => dashboardState,
   getAllState: () => [watcherState, dashboardState],
@@ -41,7 +41,7 @@ mock.module("../src/lifecycle", () => ({
   },
 }));
 
-mock.module("../src/runguard", () => ({
+mock.module("../src/daemon/runtime-state", () => ({
   clearRuntimeState: () => {},
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,

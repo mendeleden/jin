@@ -4,13 +4,13 @@ import {
   getDashboardState,
   stopDashboard,
   stopWatcher,
-} from "../lifecycle";
+} from "../daemon/process-state";
 import {
   clearRuntimeState,
   isServiceInstalled,
   markRuntimeRunning,
   markRuntimeStarting,
-} from "../runguard";
+} from "../daemon/runtime-state";
 
 export async function startCommand(opts: {
   service?: boolean;

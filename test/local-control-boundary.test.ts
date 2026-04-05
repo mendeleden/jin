@@ -9,11 +9,11 @@ const fakeQueryStore = {
   getMessages: () => [],
 };
 
-mock.module("../src/lifecycle", () => ({
+mock.module("../src/daemon/process-state", () => ({
   getAllState: () => components,
 }));
 
-mock.module("../src/runguard", () => ({
+mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
 }));
@@ -133,7 +133,7 @@ describe("local control boundary", () => {
 
   test("control routes delegate lifecycle actions instead of becoming a runtime", async () => {
     const actionCalls: string[] = [];
-    const routes = createRoutes(null, {
+    const routes = createRoutes({
       queryStore: fakeQueryStore as any,
       controlBoundary: createLocalControlBoundary({
         getStatus: () => ({

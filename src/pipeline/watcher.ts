@@ -1,4 +1,4 @@
-import { FileWatcher } from "../watcher";
+import { FileWatcher } from "./file-watcher";
 import {
   DEFAULT_WATCH_DEBOUNCE_MS,
 } from "../contracts/pipeline";

@@ -35,10 +35,8 @@ export interface CreateRoutesOptions {
 }
 
 export function createRoutes(
-  store: unknown,
   options: CreateRoutesOptions = {},
 ): Map<string, Handler> {
-  void store;
   const routes = new Map<string, Handler>();
   const queryStore = options.queryStore ?? getStore(configDir());
   const controlBoundary =

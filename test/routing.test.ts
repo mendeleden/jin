@@ -5,7 +5,6 @@ import {
   matchesRoute,
   sinkIdsForConversation,
   sinksForConversation,
-  sinksForSession,
 } from "../src/routing";
 import type { Sink } from "../src/sinks/types";
 
@@ -158,19 +157,19 @@ describe("routing engine", () => {
     expect(sinksForConversation(makeConversation(), [], ALL_SINKS)).toEqual([]);
   });
 
-  test("supports a minimal compatibility bridge for config-backed callers", () => {
-    const conversation = makeConversation();
+  test("accepts wider session-shaped callers without a routing bridge", () => {
+    const conversation = {
+      ...makeConversation(),
+      adapterName: "Cursor",
+      sourcePath: "/tmp/conversation.jsonl",
+    };
     const routes: RouteConfig[] = [
       { match: { remote: "github.com/acme/*" }, sinks: ["postgres-team"] },
       { match: { adapter: "cursor" }, sinks: ["webhook-cursor"] },
     ];
 
     expect(
-      sinksForSession(conversation, { routes }, ALL_SINKS).map((sink) => sink.id),
-    ).toEqual(["postgres-team", "webhook-cursor"]);
-
-    expect(
-      sinksForSession(conversation, { ignored: true }, { routes }, ALL_SINKS).map(
+      sinksForConversation(conversation, routes, ALL_SINKS).map(
         (sink) => sink.id,
       ),
     ).toEqual(["postgres-team", "webhook-cursor"]);

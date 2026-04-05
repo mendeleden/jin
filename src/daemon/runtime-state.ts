@@ -6,14 +6,14 @@ import {
   writeFileSync,
 } from "fs";
 import { join, resolve } from "path";
-import { configDir, configPath } from "./config";
+import { configDir, configPath } from "../config";
 import type {
   RuntimeIssue,
   RuntimeMode,
   RuntimeOwnershipRecord,
   RuntimeState,
   RuntimeStatus,
-} from "./contracts/lifecycle";
+} from "../contracts/lifecycle";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");

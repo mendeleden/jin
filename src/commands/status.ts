@@ -3,14 +3,14 @@ import { configPath, loadConfig } from "../config";
 import type { JinConfig } from "../config";
 import type { RuntimeStatus } from "../contracts/lifecycle";
 import { Store } from "../store";
-import { getAllState } from "../lifecycle";
-import type { ComponentState } from "../lifecycle";
+import { getAllState } from "../daemon/process-state";
+import type { ComponentState } from "../daemon/process-state";
 import {
   getRuntimePaths,
   getRuntimeStatus,
   isServiceInstalled,
   runModeLabel,
-} from "../runguard";
+} from "../daemon/runtime-state";
 import { readProgress } from "../progress";
 
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;

@@ -1,18 +1,18 @@
 import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
-import { configDir } from "./config";
+import { configDir } from "../config";
 import {
   SHUTDOWN_DRAIN_TIMEOUT_MS,
   type RuntimeIssue,
   type RuntimeMode,
   type RuntimeOwnershipRecord,
   type RuntimeState,
-} from "./contracts/lifecycle";
+} from "../contracts/lifecycle";
 import {
   clearRuntimeState,
   getRuntimeStatus,
   markRuntimeStopping,
-} from "./runguard";
+} from "./runtime-state";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const UI_PID_FILE = join(configDir(), "ui.pid");
