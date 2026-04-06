@@ -762,6 +762,11 @@ export class Store {
   }
 }
 
+// Explicit alias for the remaining compatibility surfaces that still read the
+// legacy local SQLite schema directly. Canonical v2 read/write paths live
+// under src/db/.
+export { Store as LegacyStore };
+
 function rowToSession(row: any): Session {
   return {
     id: row.id,

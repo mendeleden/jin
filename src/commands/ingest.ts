@@ -1,16 +1,36 @@
 import { loadConfig } from "../config";
-import { Store } from "../store";
+import { LegacyStore } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { autoTagSession } from "../tagger";
 import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 import { writeProgress, clearProgress } from "../progress";
+import { configDir } from "../config";
+import {
+  getRuntimePaths,
+  getRuntimeStatus,
+  runModeLabel,
+} from "../daemon/runtime-state";
 
 export async function ingestCommand(): Promise<void> {
-  const config = await loadConfig();
-  const store = new Store(config.store.dbPath);
+  const runtime = getRuntimeStatus();
+  if (runtime.owner && runtime.state !== "stopped") {
+    console.error(
+      `  Error: jin is already running under ${runModeLabel(runtime.owner.mode)}.`,
+    );
+    console.error(
+      "  Stop the active runtime or use `jin start` / `jin status` instead of running a second write-capable coordinator.",
+    );
+    process.exit(1);
+  }
 
-  if (!existsSync(config.store.rawDir)) {
-    mkdirSync(config.store.rawDir, { recursive: true });
+  const config = await loadConfig();
+  const storePath = getRuntimePaths().storePath;
+  const rawDir = config.store?.rawDir ?? join(configDir(), "raw");
+  const store = new LegacyStore(storePath);
+
+  if (!existsSync(rawDir)) {
+    mkdirSync(rawDir, { recursive: true });
   }
 
   const adapters = allAdapters();
@@ -72,6 +92,6 @@ export async function ingestCommand(): Promise<void> {
   store.refreshProjectStats();
 
   clearProgress();
-  console.log(`\n  Done. ${totalSessions} sessions, ${totalMessages} messages, ${totalArtifacts} artifacts ingested.`);
+  console.log(`\n  Done. ${totalSessions} conversations, ${totalMessages} messages, ${totalArtifacts} artifacts ingested.`);
   store.close();
 }

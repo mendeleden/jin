@@ -1,8 +1,9 @@
 import { loadConfig, configDir } from "../config";
-import { Store } from "../store";
+import { LegacyStore } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { existsSync, readFileSync, mkdirSync } from "fs";
 import { join } from "path";
+import { getRuntimePaths } from "../daemon/runtime-state";
 
 interface Metrics {
   timestamp: string;
@@ -250,7 +251,7 @@ async function measureDaemonLinux(pid: number): Promise<DaemonMetrics | null> {
 
 async function measureIngest(config: any): Promise<IngestMetrics | null> {
   try {
-    const store = new Store(config.store.dbPath);
+    const store = new LegacyStore(getRuntimePaths().storePath);
     const adapters = allAdapters();
     const activeAdapters = [];
 
@@ -318,7 +319,7 @@ function printMetrics(m: Metrics): void {
   };
 
   console.log(`
-  jin benchmark — v${m.version}
+  jin benchmark — local daemon and ingest budgets (v${m.version})
   ${m.timestamp}
 
   System
@@ -344,7 +345,7 @@ function printMetrics(m: Metrics): void {
     const uptimeHrs = Math.round(d.uptimeSeconds / 3600 * 10) / 10;
     const cpuMinutes = Math.round(d.cpuPercent * d.uptimeSeconds / 100 / 60);
 
-    console.log(`  Daemon (PID ${d.pid}, uptime ${uptimeHrs}h)
+    console.log(`  Local Daemon (PID ${d.pid}, uptime ${uptimeHrs}h)
   ─────────────────────────────────────────────────────
   Metric          Value              Budget        Status
   CPU %           ${d.cpuPercent}%${" ".repeat(Math.max(0, 19 - String(d.cpuPercent).length - 1))}< 0.5% idle    ${budgetCpu}
@@ -370,10 +371,10 @@ function printMetrics(m: Metrics): void {
     const budgetTime = i.coldIngestMs <= 5000 ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
     const budgetMem = i.peakRssKB <= 150 * 1024 ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
 
-    console.log(`  Cold Ingest
+    console.log(`  Cold Local Ingest
   ─────────────────────────────────────────────────────
   Time            ${i.coldIngestMs} ms${" ".repeat(Math.max(0, 15 - String(i.coldIngestMs).length))}< 5000 ms      ${budgetTime}
-  Sessions        ${i.sessionsIngested}
+  Conversations   ${i.sessionsIngested}
   Messages        ${fmt(i.messagesIngested, "")}
   Peak RSS        ${fmt(i.peakRssKB, "KB")}${" ".repeat(Math.max(0, 15 - fmt(i.peakRssKB, "KB").length))}< 150 MB       ${budgetMem}
 `);

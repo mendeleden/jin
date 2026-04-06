@@ -21,7 +21,7 @@ import {
 import { persistConfigChange } from "./config-control";
 import { normalizeRemote, sinkIdsForConversation } from "../routing";
 import { decodeTeamConfig, type SinkConfig as TeamSinkConfig } from "../sinks/types";
-import { Store } from "../store";
+import { LegacyStore } from "../store";
 import { getRuntimePaths } from "../daemon/runtime-state";
 
 interface ConnectOptions {
@@ -42,7 +42,6 @@ interface ConnectOptions {
   secretAccessKey?: string;
   prefix?: string;
   remote?: string;
-  directory?: string;
   json?: boolean;
   yes?: boolean;
 }
@@ -69,7 +68,9 @@ export async function connectCommand(
   project: string,
   opts: ConnectOptions,
 ): Promise<void> {
-  if (!project && !opts.remote && !opts.directory) {
+  const legacySinkShortcut = usesLegacySinkShortcut(opts);
+
+  if (!project && !opts.remote) {
     if (opts.team) {
       ensureConfigDir();
       const config = await loadConfig();
@@ -89,13 +90,19 @@ export async function connectCommand(
     }
 
     fail(
-      "specify a project from the local store, --remote, or --directory",
+      "specify a local repo or --remote",
       [
-        "  Usage: jin connect <project> --postgres=\"...\" [--id=<sink-id>]",
-        "         jin connect <project> --sink=<existing-sink-id>",
-        "         jin connect <project> --team=<workspace-code>",
-        '         jin connect --remote="github.com/org/repo" --sink=<id>',
-        '         jin connect --directory="/path/to/project" --sink=<id>',
+        "  Workspace onboarding:",
+        "    jin connect --team=<workspace-code>",
+        "    jin connect <repo> --sink=<existing-sink-id>",
+        '    jin connect --remote="github.com/org/repo" --sink=<id>',
+        "",
+        "  Low-level integration wiring:",
+        "    jin sink add <type> ...",
+        '    jin route add --remote="github.com/org/repo" --sink=<id>',
+        "",
+        "  Compatibility shortcut:",
+        '    jin connect <repo> --postgres="..."',
       ],
     );
   }
@@ -103,6 +110,11 @@ export async function connectCommand(
   ensureConfigDir();
   const config = await loadConfig();
   const sinkResult = await resolveOrCreateSink(config, opts);
+  if (legacySinkShortcut && !opts.json) {
+    console.log(
+      "  Compatibility bridge: prefer `jin sink add ...` plus `jin route add ...` for generic integrations.",
+    );
+  }
   const routeTarget = resolveConnectTarget(project, opts);
   const routeResult = upsertRoute(config, routeTarget.match, [sinkResult.sinkId]);
 
@@ -149,11 +161,11 @@ export async function interactiveConnect(opts: {
     output: process.stdout,
   });
 
-  console.log("\n  jin connect — configure repo routing\n");
+  console.log("\n  jin connect — workspace / repo routing\n");
 
   if (projects.length === 0) {
     console.log(
-      "  No projects found in the local store. Run 'jin start' or 'jin init' first.\n",
+      "  No indexed repos found in the local store. Run 'jin start' first.\n",
     );
     rl.close();
     return;
@@ -177,7 +189,7 @@ export async function interactiveConnect(opts: {
   }
 
   if (summary.connected.length > 0) {
-    console.log("\n  Currently connected:");
+    console.log("\n  Currently routed:");
     for (const entry of summary.connected) {
       console.log(`    ${entry.project} → ${entry.sinks.join(", ")}`);
     }
@@ -188,14 +200,23 @@ export async function interactiveConnect(opts: {
     config: sink,
   }));
 
+  if (!opts.sinkId && existingSinks.length === 0) {
+    console.log("\n  No workspace or integration destinations are configured yet.");
+    console.log("  Workspace onboarding: jin connect --team=<workspace-code>");
+    console.log("  Generic integration:  jin sink add <type> ...");
+    console.log("  Then route repos with `jin connect <repo> --sink=<id>` or `jin route add ...`.\n");
+    rl.close();
+    return;
+  }
+
   let connectCount = 0;
 
   while (true) {
     console.log("");
     const prompt =
       connectCount === 0
-        ? "  Connect a project (number, name, or 'done'): "
-        : "  Connect another project? (number, name, or 'done'): ";
+        ? "  Connect a repo (number, name, or 'done'): "
+        : "  Connect another repo? (number, name, or 'done'): ";
     const input = await ask(rl, prompt);
 
     if (input.toLowerCase() === "done" || input === "") {
@@ -214,66 +235,21 @@ export async function interactiveConnect(opts: {
       continue;
     }
 
-    console.log(`\n  Sink for ${projectName}:`);
-    console.log("    1. postgres");
-    console.log("    2. s3");
-    console.log("    3. webhook");
-    if (existingSinks.length > 0) {
-      for (let index = 0; index < existingSinks.length; index += 1) {
-        const existing = existingSinks[index];
-        console.log(`    ${4 + index}. Use existing: ${sinkDisplayLabel(existing.config)}`);
-      }
+    console.log(`\n  Destination for ${projectName}:`);
+    for (let index = 0; index < existingSinks.length; index += 1) {
+      const existing = existingSinks[index];
+      console.log(`    ${index + 1}. ${sinkDisplayLabel(existing.config)}`);
     }
 
     const sinkChoice = await ask(rl, "  > ");
     const sinkNum = Number.parseInt(sinkChoice, 10);
 
-    if (sinkNum >= 4 && sinkNum < 4 + existingSinks.length) {
-      const chosen = existingSinks[sinkNum - 4];
-      await connectCommand(projectName, { sink: chosen.id });
-      connectCount += 1;
-      continue;
-    }
-
-    const connectOpts: Record<string, string> = {};
-
-    if (sinkNum === 1 || sinkChoice.toLowerCase() === "postgres") {
-      const connectionString = await ask(rl, "  Connection string: ");
-      if (!connectionString) {
-        console.log("  Skipped.");
-        continue;
-      }
-      connectOpts.postgres = connectionString;
-    } else if (sinkNum === 2 || sinkChoice.toLowerCase() === "s3") {
-      const bucket = await ask(rl, "  Bucket: ");
-      if (!bucket) {
-        console.log("  Skipped.");
-        continue;
-      }
-      const region = await ask(rl, "  Region [us-east-1]: ");
-      const accessKey = await ask(rl, "  Access Key ID: ");
-      const secretKey = await ask(rl, "  Secret Access Key: ");
-      if (!accessKey || !secretKey) {
-        console.log("  S3 sinks require both credentials. Skipped.");
-        continue;
-      }
-      connectOpts.s3 = bucket;
-      connectOpts.region = region || "us-east-1";
-      connectOpts["access-key-id"] = accessKey;
-      connectOpts["secret-access-key"] = secretKey;
-    } else if (sinkNum === 3 || sinkChoice.toLowerCase() === "webhook") {
-      const url = await ask(rl, "  Webhook URL: ");
-      if (!url) {
-        console.log("  Skipped.");
-        continue;
-      }
-      connectOpts.webhook = url;
-    } else {
+    if (Number.isNaN(sinkNum) || sinkNum < 1 || sinkNum > existingSinks.length) {
       console.log("  Invalid choice, skipped.");
       continue;
     }
 
-    await connectCommand(projectName, connectOpts);
+    await connectCommand(projectName, { sink: existingSinks[sinkNum - 1].id });
     connectCount += 1;
 
     const refreshedConfig = await loadConfig();
@@ -286,11 +262,11 @@ export async function interactiveConnect(opts: {
   const finalConfig = await loadConfig();
   const finalSummary = summarizeProjects(projects, finalConfig);
   console.log(
-    `\n  Setup complete. ${finalSummary.connected.length} project${
+    `\n  Setup complete. ${finalSummary.connected.length} repo${
       finalSummary.connected.length === 1 ? "" : "s"
-    } connected, ${finalSummary.unrouted.length} local only.`,
+    } routed, ${finalSummary.unrouted.length} local only.`,
   );
-  console.log("  Run 'jin start' to begin watching.\n");
+  console.log("  Run 'jin start' if the local daemon is not already running.\n");
 
   rl.close();
 }
@@ -305,9 +281,10 @@ export async function connectionsCommand(): Promise<void> {
     projects.length === 0 &&
     config.sinks.length === 0
   ) {
-    console.log("\n  No connections configured. No projects found.\n");
-    console.log('  Connect a repo:     jin connect <project> --postgres="..."');
-    console.log("  Run guided setup:   jin connect\n");
+    console.log("\n  No workspace or integration routing configured. No indexed repos found.\n");
+    console.log("  Workspace setup:    jin connect --team=<workspace-code>");
+    console.log("  Add integration:    jin sink add <type> ...");
+    console.log("  Guided repo route:  jin connect\n");
     return;
   }
 
@@ -320,7 +297,7 @@ export async function connectionsCommand(): Promise<void> {
   }
 
   if (summary.connected.length > 0) {
-    console.log("\n  Connected Projects:\n");
+    console.log("\n  Routed Repos:\n");
     const maxName = Math.max(...summary.connected.map((entry) => entry.project.length));
     for (const entry of summary.connected) {
       const name = entry.project.padEnd(maxName);
@@ -329,7 +306,7 @@ export async function connectionsCommand(): Promise<void> {
   }
 
   if (summary.unrouted.length > 0) {
-    console.log("\n  Unrouted (local only):\n");
+    console.log("\n  Local-only Repos:\n");
     const home = homedir();
     const maxName = Math.max(...summary.unrouted.map((project) => project.name.length));
     for (const project of summary.unrouted) {
@@ -341,14 +318,14 @@ export async function connectionsCommand(): Promise<void> {
   }
 
   if (config.sinks.length > 0) {
-    console.log("\n  Sinks:\n");
+    console.log("\n  Destinations:\n");
     for (const sink of config.sinks) {
       const routeCount = config.routes.filter((route) => route.sinks.includes(sink.id)).length;
       const usage =
         routeCount > 0
           ? `${routeCount} route${routeCount === 1 ? "" : "s"}`
           : "\x1b[2munused\x1b[0m";
-      const state = sink.enabled === false ? "  \x1b[33mpaused\x1b[0m" : "";
+      const state = sink.enabled === false ? "  \x1b[33mdisabled\x1b[0m" : "";
       console.log(
         `    ${sinkDisplayLabel(sink).padEnd(24)}  ${sink.type}${state}  (${usage})`,
       );
@@ -429,7 +406,7 @@ function loadProjects(): ProjectRow[] {
   let store: Store | null = null;
 
   try {
-    store = new Store(storePath);
+    store = new LegacyStore(storePath);
     return store.listProjects() as ProjectRow[];
   } catch {
     return [];
@@ -591,21 +568,6 @@ function resolveConnectTarget(
     };
   }
 
-  if (opts.directory) {
-    const projectRow = loadProjects().find(
-      (candidate) => candidate.directory === opts.directory,
-    );
-    if (!projectRow) {
-      fail(`no indexed project found for directory "${opts.directory}"`, [
-        "  Use `jin connect --remote=...` for repos that are not indexed yet.",
-      ]);
-    }
-    return {
-      match: { remote: requireProjectRemote(projectRow) },
-      label: projectRow.name,
-    };
-  }
-
   return resolveProjectTarget(project);
 }
 
@@ -616,7 +578,7 @@ function resolveProjectTarget(
     (candidate) => candidate.name.toLowerCase() === projectName.toLowerCase(),
   );
   if (!project) {
-    fail(`project "${projectName}" was not found in the local store`, [
+    fail(`repo "${projectName}" was not found in the local store`, [
       "  Run `jin connect --remote=...` if you want to route an unindexed repo.",
     ]);
   }
@@ -629,7 +591,7 @@ function resolveProjectTarget(
 
 function requireProjectRemote(project: ProjectRow): string {
   if (!project.git_remote) {
-    fail(`project "${project.name}" does not have a git remote`, [
+    fail(`repo "${project.name}" does not have a git remote`, [
       "  BP-08 routes repos by remote identity, not by cwd.",
       "  Use `jin connect --remote=...` if you need an explicit rule.",
     ]);
@@ -656,4 +618,8 @@ function fail(message: string, details: string[] = []): never {
     console.error(detail);
   }
   process.exit(1);
+}
+
+function usesLegacySinkShortcut(opts: ConnectOptions): boolean {
+  return !!(opts.postgres || opts.s3 || opts.webhook);
 }

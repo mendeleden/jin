@@ -119,6 +119,15 @@ describe("read-only query surface", () => {
 
     const routes = createRoutes();
 
+    const conversationsRoute = matchRoute(routes, "GET", "/api/conversations");
+    expect(conversationsRoute).not.toBeNull();
+    const conversationsResponse = await conversationsRoute!.handler(
+      new Request("http://localhost/api/conversations"),
+      conversationsRoute!.params,
+    );
+    const conversationsPayload = await conversationsResponse.json();
+    expect(conversationsPayload).toHaveLength(3);
+
     const traceRoute = matchRoute(routes, "GET", "/api/sessions/trace-root");
     expect(traceRoute).not.toBeNull();
     const traceResponse = await traceRoute!.handler(

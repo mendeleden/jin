@@ -1,11 +1,11 @@
 import { loadConfig, saveConfig, configPath, ensureConfigDir } from "../config";
-import { Store } from "../store";
+import { LegacyStore } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { decodeTeamConfig } from "../sinks/types";
 import { createSink } from "../sinks/registry";
 import { ingestCommand } from "./ingest";
 import { ensureSinkConfigured, type SinkCandidateInput } from "./sink";
-import { getRuntimePaths } from "../daemon/runtime-state";
+import { getRuntimePaths, getRuntimeStatus, runModeLabel } from "../daemon/runtime-state";
 
 export async function initCommand(opts?: { team?: string; json?: boolean; skills?: boolean }): Promise<void> {
   ensureConfigDir();
@@ -62,8 +62,12 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
 
   await saveConfig(config);
 
-  // Auto-ingest so projects are immediately discoverable
-  if (detected.length > 0) {
+  const runtime = getRuntimeStatus();
+  const canRunCompatibilityIngest =
+    !runtime.owner || runtime.state === "stopped";
+
+  // Compatibility ingest only runs when no long-lived runtime owns the store.
+  if (detected.length > 0 && canRunCompatibilityIngest) {
     if (opts?.json) {
       // Suppress ingest console output in JSON mode
       const origLog = console.log;
@@ -72,6 +76,11 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
     } else {
       await ingestCommand();
     }
+  } else if (detected.length > 0 && !opts?.json) {
+    console.log(
+      `  Compatibility note: skipping one-shot ingest because jin is already running under ${runModeLabel(runtime.owner!.mode)}.`,
+    );
+    console.log("  Use `jin status` to inspect the active daemon, or restart it if you need new config applied.");
   }
 
   // JSON mode for scripting
@@ -79,13 +88,18 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
     // Include projects from store after ingest
     let projects: string[] = [];
     try {
-      const store = new Store(getRuntimePaths().storePath);
+      const store = new LegacyStore(getRuntimePaths().storePath);
       projects = store.listProjects().map((p: any) => p.name);
       store.close();
     } catch { /* store may not exist */ }
 
     console.log(JSON.stringify({
-      detected: detected.map(d => ({ id: d.id, name: d.name, sessions: d.sessionCount })),
+      detected: detected.map((d) => ({
+        id: d.id,
+        name: d.name,
+        sessions: d.sessionCount,
+        conversations: d.sessionCount,
+      })),
       notFound,
       sinks: config.sinks.map(s => ({ id: s.id, type: s.type, enabled: s.enabled !== false })),
       projects,
@@ -97,7 +111,7 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   // Clean human output
   console.log("");
   for (const d of detected) {
-    console.log(`  \x1b[32m+\x1b[0m ${d.name}  \x1b[2m${d.sessionCount} sessions\x1b[0m`);
+    console.log(`  \x1b[32m+\x1b[0m ${d.name}  \x1b[2m${d.sessionCount} conversations\x1b[0m`);
   }
   if (notFound.length > 0) {
     console.log(`  \x1b[2m- ${notFound.join(", ")}\x1b[0m`);
@@ -111,11 +125,16 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   }
 
   console.log(`\n  \x1b[2m${configPath()}\x1b[0m`);
+  console.log("  Note: `jin start` is the primary local-first bootstrap path.");
 
   // If we have sinks but no routes, guide user to connect projects
   const hasRoutes = (config.routes || []).length > 0;
   if (config.sinks.length > 0 && !hasRoutes) {
-    console.log(`\n  Next: \x1b[1mjin connect\x1b[0m  (connect projects to sinks)`);
+    if (opts?.team) {
+      console.log(`\n  Next: \x1b[1mjin connect\x1b[0m  (route local repos to this workspace)`);
+    } else {
+      console.log(`\n  Next: \x1b[1mjin route add\x1b[0m  (or \x1b[1mjin connect\x1b[0m for guided repo routing)`);
+    }
 
     // If --team was used and stdin is a TTY, auto-launch interactive connect
     if (opts?.team && process.stdin.isTTY) {

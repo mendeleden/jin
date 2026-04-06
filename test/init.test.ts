@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { join } from "path";
 import { createFakeSink, makeSession } from "./helpers";
 import type { Adapter, Session, Message } from "../src/adapters/types";
 
@@ -6,6 +7,13 @@ import type { Adapter, Session, Message } from "../src/adapters/types";
 
 let fakeSink = createFakeSink();
 let mockAdapters: Adapter[] = [];
+let runtimeStatus: any;
+let runtimePaths = {
+  configDir: "",
+  configPath: "",
+  storePath: "",
+  logPath: "",
+};
 
 mock.module("../src/sinks/registry", () => ({
   createSink: () => fakeSink,
@@ -15,6 +23,17 @@ mock.module("../src/sinks/registry", () => ({
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
   detectAdapters: async () => [],
+}));
+
+mock.module("../src/daemon/process-state", () => ({
+  getAllState: () => [],
+}));
+
+mock.module("../src/daemon/runtime-state", () => ({
+  getRuntimePaths: () => runtimePaths,
+  getRuntimeStatus: () => runtimeStatus,
+  isServiceInstalled: () => false,
+  runModeLabel: (mode: string) => mode,
 }));
 
 // ── Imports (after mocks) ────────────────────────────────────────────────
@@ -42,6 +61,13 @@ let exitMock: ReturnType<typeof mockProcessExit>;
 
 beforeEach(() => {
   env = createTestEnv();
+  runtimePaths = {
+    configDir: env.dir,
+    configPath: join(env.dir, "config.json"),
+    storePath: join(env.dir, "store.db"),
+    logPath: join(env.dir, "jin.log"),
+  };
+  runtimeStatus = { state: "stopped", issues: [] };
   console_ = captureConsole();
   exitMock = mockProcessExit();
   fakeSink = createFakeSink();
@@ -116,7 +142,7 @@ describe("jin init --team", () => {
     await initCommand({ team: teamCode });
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("Adding team sink alongside");
+    expect(output).toContain("Adding workspace sink alongside");
   });
 });
 
@@ -182,6 +208,28 @@ describe("jin init auto-ingest", () => {
 
     // Progress file should be cleaned up after ingest finishes
     expect(readProgress()).toBeNull();
+  });
+
+  test("skips compatibility ingest when a long-lived runtime is already active", async () => {
+    const session = makeSession("test-session-running-runtime", {
+      adapterId: "mock-adapter",
+      adapterName: "Mock Adapter",
+    });
+    mockAdapters = [createMockAdapter([session])];
+    runtimeStatus = {
+      state: "running",
+      owner: makeOwner("daemon", 515),
+      issues: [],
+    };
+
+    await initCommand();
+
+    const store = new Store(env.store.db.filename as string);
+    const sessions = store.listSessions();
+    store.close();
+
+    expect(sessions.some((entry: any) => entry.id === session.id)).toBe(false);
+    expect(console_.logs.join("\n")).toContain("skipping one-shot ingest");
   });
 });
 
@@ -268,3 +316,14 @@ describe("jin status — ingestion progress", () => {
     clearProgress();
   });
 });
+
+function makeOwner(mode: "daemon" | "service" | "foreground", pid = 321) {
+  return {
+    pid,
+    mode,
+    startedAt: "2026-04-01T12:00:00.000Z",
+    configDir: runtimePaths.configDir,
+    storePath: runtimePaths.storePath,
+    logPath: runtimePaths.logPath,
+  };
+}

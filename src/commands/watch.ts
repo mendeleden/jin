@@ -1,13 +1,13 @@
-import { loadConfig, saveConfig, configDir } from "../config";
+import { loadConfig, configDir } from "../config";
 import type { JinConfig } from "../config";
-import { Store } from "../store";
+import { LegacyStore } from "../store";
 import { allAdapters } from "../adapters/registry";
 import { createSink } from "../sinks/registry";
 import { daemonize } from "../daemon/daemonize";
 import { FileWatcher } from "../pipeline/file-watcher";
 import { autoTagSession } from "../tagger";
 import { sinksForConversation } from "../routing";
-import type { Adapter, WatchEvent } from "../adapters/types";
+import type { LegacyAdapter as Adapter, WatchEvent } from "../adapters/types";
 import type { Sink, PushPayload } from "../sinks/types";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
 import { join, basename } from "path";
@@ -22,7 +22,11 @@ const FILE_COOLDOWN_MS = 5_000;
 const fileLastIngestedAt = new Map<string, number>();
 
 export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
-  const { isServiceActive, isServiceInstalled } = await import("../daemon/runtime-state");
+  const {
+    getRuntimePaths,
+    isServiceActive,
+    isServiceInstalled,
+  } = await import("../daemon/runtime-state");
 
   // Block if OS service is running — but not if WE are the service
   // JIN_LAUNCHED_BY_SERVICE is set in both the systemd unit and launchd plist
@@ -57,10 +61,12 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
 
   const config = await loadConfig();
-  const store = new Store(config.store.dbPath);
+  const runtimePaths = getRuntimePaths();
+  const rawDir = config.store?.rawDir ?? join(configDir(), "raw");
+  const store = new LegacyStore(runtimePaths.storePath);
 
-  if (!existsSync(config.store.rawDir)) {
-    mkdirSync(config.store.rawDir, { recursive: true });
+  if (!existsSync(rawDir)) {
+    mkdirSync(rawDir, { recursive: true });
   }
 
   // Write PID file
@@ -111,23 +117,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     } catch {}
   }
 
-  // Auto-detect newly installed tools that were previously disabled
-  for (const adapter of adapters) {
-    if (config.adapters[adapter.id]?.enabled) continue; // already handled
-    try {
-      if (await adapter.detect()) {
-        activeAdapters.push(adapter);
-        config.adapters[adapter.id] = { enabled: true };
-        log(`New tool detected: ${adapter.name} — auto-enabled`);
-      }
-    } catch {}
-  }
-  if (Object.values(config.adapters).some((a) => a.enabled)) {
-    await saveConfig(config);
-  }
-
   if (activeAdapters.length === 0) {
-    log("No active adapters detected. Run `jin init` first.");
+    log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
     cleanup();
     process.exit(1);
   }
@@ -141,7 +132,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     })
   ).catch(() => {});
 
-  console.log(`jin start --foreground — monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
+  console.log(`jin start --foreground — local daemon monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
   for (const a of activeAdapters) {
     console.log(`  [~] ${a.name}`);
   }
@@ -156,11 +147,11 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   log("Initial ingest...");
   const changedSessions = new Set<string>();
   for (const adapter of activeAdapters) {
-    const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
+    const ingested = await ingestAdapter(adapter, store, rawDir);
     for (const id of ingested) changedSessions.add(id);
   }
   clearProgress();
-  log(`Ingested ${store.sessionCount()} sessions, ${store.messageCount()} messages.`);
+  log(`Ingested ${store.sessionCount()} conversations, ${store.messageCount()} messages.`);
 
   // Initial push
   if (sinks.length > 0 && changedSessions.size > 0) {
@@ -193,8 +184,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const { shouldExcludeEvent } = await import("../self-observation");
   const jinOutputPaths = {
     logFile: LOG_FILE,
-    dbPath: config.store.dbPath,
-    rawDir: config.store.rawDir,
+    dbPath: runtimePaths.storePath,
+    rawDir,
   };
 
   // Set up file watcher
@@ -254,7 +245,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     checkMemory();
     if (sinks.length === 0) return;
     for (const adapter of activeAdapters) {
-      const ingested = await ingestAdapter(adapter, store, config.store.rawDir);
+      const ingested = await ingestAdapter(adapter, store, rawDir);
       for (const id of ingested) pendingPush.add(id);
     }
     clearProgress();

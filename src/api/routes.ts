@@ -77,8 +77,8 @@ export function createRoutes(
     });
   });
 
-  // --- Sessions ---
-  routes.set("GET /api/sessions", (req) => {
+  // --- Conversations (legacy /api/sessions aliases kept for existing clients) ---
+  const listConversationsHandler: Handler = (req) => {
     const url = new URL(req.url);
     const adapter = url.searchParams.get("adapter") || undefined;
     const since = url.searchParams.get("since")
@@ -103,9 +103,12 @@ export function createRoutes(
     }
 
     return json(conversations.map(toSessionLike));
-  });
+  };
 
-  routes.set("GET /api/sessions/:id", (req, params) => {
+  routes.set("GET /api/conversations", listConversationsHandler);
+  routes.set("GET /api/sessions", listConversationsHandler);
+
+  const getConversationHandler: Handler = (req, params) => {
     const url = new URL(req.url);
     const matches = findConversationMatches(queryStore.database, params.id, 10);
     const conversation =
@@ -161,7 +164,10 @@ export function createRoutes(
       parent: parent ? toSessionLike(parent) : null,
       children,
     });
-  });
+  };
+
+  routes.set("GET /api/conversations/:id", getConversationHandler);
+  routes.set("GET /api/sessions/:id", getConversationHandler);
 
   // --- Analytics ---
   routes.set("GET /api/analytics/timeline", (req) => {
@@ -191,12 +197,15 @@ export function createRoutes(
     return json(listProjectsByRemote(queryStore.database));
   });
 
-  routes.set("GET /api/projects/:id/sessions", (_req, params) => {
+  const listProjectConversationsHandler: Handler = (_req, params) => {
     const remote = decodeProjectParam(params.id);
     return json(
       listConversations(queryStore.database, { remote }).map(toSessionLike),
     );
-  });
+  };
+
+  routes.set("GET /api/projects/:id/conversations", listProjectConversationsHandler);
+  routes.set("GET /api/projects/:id/sessions", listProjectConversationsHandler);
 
   // --- Tags ---
   routes.set("GET /api/tags", () => {

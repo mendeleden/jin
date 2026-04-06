@@ -18,7 +18,7 @@ export async function teamConfigCommand(opts: {
   const sinkType = opts.type;
   if (!sinkType) {
     console.log(`
-  jin team-config — generate a team onboarding code
+  jin team-config — generate a workspace onboarding code
 
   Usage:
     jin team-config --type=webhook --url=https://your-api.com/jin --name=team-prod
@@ -31,7 +31,10 @@ export async function teamConfigCommand(opts: {
 
   Available sink types: ${availableSinks().join(", ")}
 
-  The output is a base64 code that teammates use:
+  The output is a base64 workspace code for:
+    jin connect --team=<code>
+
+  Compatibility helper:
     jin init --team=<code>
 `);
     return;
@@ -60,17 +63,21 @@ export async function teamConfigCommand(opts: {
   const encoded = encodeTeamConfig(clean);
 
   console.log(`
-  Team config generated.
+  Workspace onboarding bridge generated.
 
-  --- Share this with your team ---
+  --- Share this with your workspace users ---
 
-  Fresh install:
+  Local-first bootstrap:
 
-    curl -fsSL https://raw.githubusercontent.com/mendeleden/jin/main/install.sh | sh && jin init --team=${encoded}
+    jin start
 
-  Existing install (workspace onboarding bridge):
+  Workspace routing:
 
     jin connect --team=${encoded}
+
+  Compatibility helper:
+
+    jin init --team=${encoded}
 
   Low-level BYO integration config stays separate:
 

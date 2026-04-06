@@ -11,15 +11,20 @@ const fakeQueryStore = {
 
 mock.module("../src/daemon/process-state", () => ({
   getAllState: () => components,
+  getWatcherState: () => components.find((component) => component.name === "watcher") ?? { status: "stopped" },
+  getDashboardState: () => components.find((component) => component.name === "dashboard") ?? { status: "stopped" },
+  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
+  stopDashboard: async () => {},
 }));
 
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
-}));
-
-mock.module("../src/db/store", () => ({
-  getStore: () => fakeQueryStore,
+  isServiceInstalled: () => false,
+  markRuntimeStarting: () => runtimeStatus,
+  markRuntimeRunning: () => runtimeStatus,
+  clearRuntimeState: () => {},
+  runModeLabel: (mode: string) => mode,
 }));
 
 const {

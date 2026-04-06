@@ -1,13 +1,38 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { join } from "path";
 import { createFakeSink } from "./helpers";
 
 // ── Module Mocks (hoisted by bun) ────────────────────────────────────────
 
 let fakeSink = createFakeSink();
+let runtimePaths = {
+  configDir: "",
+  configPath: "",
+  storePath: "",
+  logPath: "",
+};
 
 mock.module("../src/sinks/registry", () => ({
   createSink: () => fakeSink,
   availableSinks: () => ["postgres", "webhook", "s3"],
+}));
+
+mock.module("../src/daemon/process-state", () => ({
+  getWatcherState: () => ({ name: "watcher", status: "stopped", lifecycleState: "stopped" }),
+  getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
+  getAllState: () => [],
+  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
+  stopDashboard: async () => {},
+}));
+
+mock.module("../src/daemon/runtime-state", () => ({
+  getRuntimePaths: () => runtimePaths,
+  getRuntimeStatus: () => ({ state: "stopped", issues: [] }),
+  isServiceInstalled: () => false,
+  markRuntimeStarting: () => ({ state: "starting", issues: [] }),
+  markRuntimeRunning: () => ({ state: "running", issues: [] }),
+  clearRuntimeState: () => {},
+  runModeLabel: (mode: string) => mode,
 }));
 
 // ── Imports (after mocks) ────────────────────────────────────────────────
@@ -39,6 +64,12 @@ let exitMock: ReturnType<typeof mockProcessExit>;
 beforeEach(() => {
   env = createTestEnv();
   seedStore(env.store);
+  runtimePaths = {
+    configDir: env.dir,
+    configPath: join(env.dir, "config.json"),
+    storePath: join(env.dir, "store.db"),
+    logPath: join(env.dir, "jin.log"),
+  };
   console_ = captureConsole();
   exitMock = mockProcessExit();
   fakeSink = createFakeSink();
@@ -63,7 +94,7 @@ describe("jin connect", () => {
     expect(config.sinks[0].type).toBe("postgres");
     expect(config.sinks[0].connectionString).toBe("postgresql://localhost:5432/jin");
     expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.project).toBe("alpha");
+    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
     expect(config.routes[0].sinks).toContain("postgres-0");
   });
 
@@ -80,7 +111,7 @@ describe("jin connect", () => {
     expect(config.sinks).toHaveLength(2);
     // But only 1 route for alpha — updated, not duplicated
     expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.project).toBe("alpha");
+    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
   });
 
   test("connect with --sink routes to existing sink (no new sink)", async () => {
@@ -98,7 +129,7 @@ describe("jin connect", () => {
     const config = await readTestConfig(env.dir);
     expect(config.sinks).toHaveLength(sinkCount); // no new sink
     expect(config.routes).toHaveLength(2);
-    expect(config.routes[1].match.project).toBe("beta");
+    expect(config.routes[1].match.remote).toBe("github.com/org/beta");
     expect(config.routes[1].sinks).toContain("postgres-0");
   });
 
@@ -123,9 +154,8 @@ describe("jin connect", () => {
     const config = await readTestConfig(env.dir);
     expect(config.sinks).toHaveLength(1);
     expect(config.sinks[0].connectionString).toBe("postgresql://team-db:5432/shared");
-    expect(config.sinks[0].teamId).toBe("team-42");
     expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.project).toBe("alpha");
+    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
   });
 
   test("connect with --remote creates remote-based route", async () => {
@@ -158,7 +188,7 @@ describe("jin connect", () => {
     ).rejects.toThrow(ExitError);
 
     const output = console_.errors.join("\n");
-    expect(output).toContain("Specify a sink type");
+    expect(output).toContain("specify a sink type or existing sink");
   });
 
   test("duplicate connection string reuses existing sink", async () => {
@@ -174,43 +204,26 @@ describe("jin connect", () => {
     expect(config.routes[0].sinks[0]).toBe(config.routes[1].sinks[0]);
   });
 
-  test("connect with --directory creates directory-matched route", async () => {
-    await connectCommand("", {
-      directory: "/home/dev/projects/alpha",
-      postgres: "postgresql://localhost:5432/jin",
-    });
-
-    const config = await readTestConfig(env.dir);
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.directory).toBe("/home/dev/projects/alpha");
-    expect(config.routes[0].match.project).toBeUndefined();
-    expect(config.routes[0].match.remote).toBeUndefined();
-    expect(config.routes[0].sinks).toContain("postgres-0");
-  });
-
-  test("connect with --directory deduplicates on same directory", async () => {
-    await connectCommand("", {
-      directory: "/home/dev/projects/alpha",
-      postgres: "postgresql://localhost:5432/jin",
-    });
-    await connectCommand("", {
-      directory: "/home/dev/projects/alpha",
-      postgres: "postgresql://localhost:5432/jin_v2",
-    });
-
-    const config = await readTestConfig(env.dir);
-    // Only 1 route for the same directory — updated, not duplicated
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.directory).toBe("/home/dev/projects/alpha");
-  });
-
   test("connect with sink opts but no match target shows error", async () => {
     await expect(
       connectCommand("", { postgres: "postgresql://localhost:5432/jin" })
     ).rejects.toThrow(ExitError);
 
     const output = console_.errors.join("\n");
-    expect(output).toContain("specify a project");
+    expect(output).toContain("specify a local repo");
+  });
+
+  test("connect no longer supports the legacy --directory bridge", async () => {
+    await expect(
+      connectCommand("", {
+        // @ts-expect-error legacy bridge intentionally unsupported
+        directory: "/home/dev/projects/alpha",
+        postgres: "postgresql://localhost:5432/jin",
+      })
+    ).rejects.toThrow(ExitError);
+
+    const output = console_.errors.join("\n");
+    expect(output).toContain("specify a local repo or --remote");
   });
 });
 
@@ -245,7 +258,7 @@ describe("jin disconnect", () => {
     expect(config.sinks).toHaveLength(1);
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("disconnected");
+    expect(output).toContain("Disconnected alpha");
   });
 
   test("disconnect --remove-sink removes sink if unused", async () => {
@@ -282,7 +295,7 @@ describe("jin disconnect", () => {
     ).rejects.toThrow(ExitError);
 
     const output = console_.errors.join("\n");
-    expect(output).toContain("No connection found");
+    expect(output).toContain('repo "nonexistent" was not found');
   });
 });
 
@@ -297,7 +310,7 @@ describe("jin connections", () => {
     await connectionsCommand();
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("Connected");
+    expect(output).toContain("Routed Repos");
     expect(output).toContain("alpha");
     expect(output).toContain("postgres-0");
   });
@@ -322,7 +335,7 @@ describe("jin connections", () => {
     await connectionsCommand();
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("Sinks");
+    expect(output).toContain("Destinations");
     expect(output).toContain("postgres-0");
     expect(output).toContain("1 route");
   });
@@ -337,6 +350,6 @@ describe("jin connections", () => {
     await connectionsCommand();
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("No connections configured");
+    expect(output).toContain("No workspace or integration routing configured");
   });
 });

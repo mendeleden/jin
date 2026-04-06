@@ -99,14 +99,6 @@ export async function sinkEnableCommand(sinkId: string): Promise<void> {
   await setSinkEnabled(sinkId, true);
 }
 
-export async function sinkPauseCommand(sinkId: string): Promise<void> {
-  await sinkDisableCommand(sinkId);
-}
-
-export async function sinkResumeCommand(sinkId: string): Promise<void> {
-  await sinkEnableCommand(sinkId);
-}
-
 export async function ensureSinkConfigured(
   config: JinConfig,
   input: SinkCandidateInput,
@@ -250,7 +242,7 @@ async function setSinkEnabled(sinkId: string, enabled: boolean): Promise<void> {
     console.log(
       enabled
         ? `  Sink ${sinkId} is already enabled.`
-        : `  Sink ${sinkId} is already paused.`,
+        : `  Sink ${sinkId} is already disabled.`,
     );
     return;
   }
@@ -272,9 +264,9 @@ async function persistSinkControlChange(
 
   const runtimeUpdated = applySinkPauseControl(sinkId, !enabled);
   if (enabled) {
-    console.log(`  Sink ${sinkId} resumed.`);
+    console.log(`  Sink ${sinkId} enabled.`);
   } else {
-    console.log(`  Sink ${sinkId} paused.`);
+    console.log(`  Sink ${sinkId} disabled.`);
   }
 
   if (runtimeUpdated) {

@@ -19,6 +19,7 @@ import {
 } from "./helpers";
 
 let fakeSink = createFakeSink();
+let mockAdapters: any[] = [];
 let watcherState: any;
 let runtimeStatus: any;
 let restartCalls: any[] = [];
@@ -37,11 +38,25 @@ mock.module("../src/sinks/registry", () => ({
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => watcherState,
+  getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
+  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
+  stopDashboard: async () => {},
 }));
 
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimeStatus: () => runtimeStatus,
   getRuntimePaths: () => runtimePaths,
+  isServiceActive: () => false,
+  isServiceInstalled: () => false,
+  markRuntimeStarting: (mode: string) => {
+    runtimeStatus = {
+      ...runtimeStatus,
+      state: "starting",
+      owner: runtimeStatus.owner ?? makeOwner(mode as "daemon" | "service" | "foreground"),
+      issues: [],
+    };
+    return runtimeStatus;
+  },
   markRuntimeRunning: (mode: string, issues: any[]) => {
     markRuntimeRunningCalls.push({ mode, issues });
     runtimeStatus = {
@@ -52,6 +67,8 @@ mock.module("../src/daemon/runtime-state", () => ({
     };
     return runtimeStatus;
   },
+  clearRuntimeState: () => {},
+  runModeLabel: (mode: string) => mode,
 }));
 
 mock.module("../src/commands/start", () => ({
@@ -61,7 +78,7 @@ mock.module("../src/commands/start", () => ({
 }));
 
 mock.module("../src/adapters/registry", () => ({
-  allAdapters: () => [],
+  allAdapters: () => mockAdapters,
 }));
 
 mock.module("../src/commands/ingest", () => ({
@@ -72,6 +89,7 @@ const { defaultConfig } = await import("../src/config");
 const { encodeTeamConfig } = await import("../src/sinks/types");
 const { connectCommand } = await import("../src/commands/connect");
 const { initCommand } = await import("../src/commands/init");
+const { watchCommand } = await import("../src/commands/watch");
 const { routeAddCommand } = await import("../src/commands/route");
 const {
   sinkAddCommand,
@@ -96,6 +114,7 @@ beforeEach(() => {
   runtimeStatus = { state: "stopped", issues: [] };
   restartCalls = [];
   markRuntimeRunningCalls = [];
+  mockAdapters = [];
   fakeSink = createFakeSink();
   console_ = captureConsole();
   exitMock = mockProcessExit();
@@ -287,6 +306,30 @@ describe("config mutation and control commands", () => {
         enabled: true,
       },
     ]);
+  });
+
+  test("watch startup does not auto-enable disabled adapters or rewrite config", async () => {
+    const config = defaultConfig();
+    config.adapters["mock-adapter"] = { enabled: false };
+    await writeTestConfig(env.dir, config);
+
+    mockAdapters = [
+      {
+        id: "mock-adapter",
+        name: "Mock Adapter",
+        icon: "M",
+        detect: async () => true,
+        sessions: async () => [],
+        messages: async () => [],
+        watchPaths: () => [],
+      },
+    ];
+
+    await expect(watchCommand({ daemon: false })).rejects.toThrow();
+
+    const nextConfig = await readTestConfig(env.dir);
+    expect(nextConfig.adapters["mock-adapter"]).toEqual({ enabled: false });
+    expect(console_.logs.join("\n")).not.toContain("auto-enabled");
   });
 });
 
