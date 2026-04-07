@@ -2,7 +2,8 @@ import { existsSync, readFileSync, statSync } from "fs";
 import { configPath, loadConfig } from "../config";
 import type { JinConfig } from "../config";
 import type { RuntimeStatus } from "../contracts/lifecycle";
-import { Store } from "../store";
+import { openStoreAtPath } from "../db/store";
+import { analyzeByAdapter, getOverviewSummary } from "../db/query-surface";
 import { getAllState } from "../daemon/process-state";
 import type { ComponentState } from "../daemon/process-state";
 import {
@@ -219,17 +220,22 @@ function readStoreStats(storePath: string): {
   }
 
   try {
-    const store = new Store(storePath);
-    const sessions = store.sessionCount();
-    const messages = store.messageCount();
-    const byAdapter = store.analyzeByAdapter();
+    const store = openStoreAtPath(storePath);
+    const overview = getOverviewSummary(store.database);
+    const byAdapter = analyzeByAdapter(store.database);
     const adapters = Object.keys(byAdapter);
     let totalCost = 0;
     for (const stats of Object.values(byAdapter)) {
       totalCost += stats.cost;
     }
     store.close();
-    return { sessions, messages, adapters, totalCost };
+    return {
+      // Keep status output labels stable while reading from the v2 store.
+      sessions: overview.conversations,
+      messages: overview.messages,
+      adapters,
+      totalCost,
+    };
   } catch {
     return null;
   }

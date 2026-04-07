@@ -1,16 +1,13 @@
-import { loadConfig } from "../config";
-import { LegacyStore } from "../store";
+import { loadConfig, resolveAdapterConfig, type JinConfig } from "../config";
+import type { Adapter as V2Adapter } from "../contracts/adapters";
+import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters } from "../adapters/registry";
-import { autoTagSession } from "../tagger";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
-import { writeProgress, clearProgress } from "../progress";
-import { configDir } from "../config";
-import {
-  getRuntimePaths,
-  getRuntimeStatus,
-  runModeLabel,
-} from "../daemon/runtime-state";
+import { openStoreAtPath } from "../db/store";
+import { getRuntimePaths, getRuntimeStatus, runModeLabel } from "../daemon/runtime-state";
+import { ingestAll } from "../pipeline/ingest";
+import { pushDirty } from "../pipeline/push";
+import type { PipelineLogger } from "../pipeline/types";
+import { createSink } from "../sinks/registry";
 
 export async function ingestCommand(): Promise<void> {
   const runtime = getRuntimeStatus();
@@ -25,73 +22,130 @@ export async function ingestCommand(): Promise<void> {
   }
 
   const config = await loadConfig();
-  const storePath = getRuntimePaths().storePath;
-  const rawDir = config.store?.rawDir ?? join(configDir(), "raw");
-  const store = new LegacyStore(storePath);
+  const store = openStoreAtPath(getRuntimePaths().storePath);
+  const logger = createIngestLogger();
+  const activeAdapters = await detectActiveAdapters(config);
+  const sinks = await createActiveSinks(config, logger);
 
-  if (!existsSync(rawDir)) {
-    mkdirSync(rawDir, { recursive: true });
+  if (activeAdapters.length === 0) {
+    console.log("  No supported coding tools detected.");
+    await closeSinks(sinks);
+    store.close();
+    return;
   }
 
-  const adapters = allAdapters();
-  let totalSessions = 0;
-  let totalMessages = 0;
-  let totalArtifacts = 0;
+  try {
+    const ingestSummary = await ingestAll(
+      activeAdapters,
+      store,
+      { kind: "startup-scan" },
+      { logger },
+    );
+
+    let pushSummary = {
+      sinkAttempts: 0,
+      pushedConversations: 0,
+      failedConversations: 0,
+    };
+    if (sinks.length > 0 && ingestSummary.anyChanged) {
+      pushSummary = await pushDirty(store, sinks, config.routes, { logger });
+    }
+
+    console.log(
+      `  Done. scanned ${ingestSummary.scannedRefCount} refs, loaded ${ingestSummary.loadedConversationCount} conversations, changed ${ingestSummary.changedConversationIds.length}.`,
+    );
+    if (sinks.length > 0) {
+      console.log(
+        `  Push attempts: ${pushSummary.sinkAttempts}, pushed: ${pushSummary.pushedConversations}, failed: ${pushSummary.failedConversations}.`,
+      );
+    }
+  } finally {
+    await closeSinks(sinks);
+    store.close();
+  }
+}
+
+async function detectActiveAdapters(config: JinConfig): Promise<V2Adapter[]> {
+  const adapters = allAdapters(config.adapters);
+  const activeAdapters: V2Adapter[] = [];
 
   for (const adapter of adapters) {
-    if (!config.adapters[adapter.id]?.enabled) continue;
+    if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) {
+      continue;
+    }
     try {
-      if (!(await adapter.detect())) continue;
-    } catch { continue; }
+      if (await adapter.detect()) {
+        activeAdapters.push(adapter as unknown as V2Adapter);
+      }
+    } catch {}
+  }
 
-    console.log(`  Ingesting ${adapter.name}...`);
+  return activeAdapters;
+}
 
+async function createActiveSinks(
+  config: JinConfig,
+  logger: PipelineLogger,
+): Promise<V2Sink[]> {
+  const sinks: V2Sink[] = [];
+
+  for (let index = 0; index < (config.sinks || []).length; index += 1) {
+    const sinkConfig = config.sinks[index];
     try {
-      const sessions = await adapter.sessions();
-      const startedAt = Date.now();
-      for (let i = 0; i < sessions.length; i++) {
-        const session = sessions[i];
-        writeProgress({ adapter: adapter.name, current: i + 1, total: sessions.length, startedAt });
-        store.upsertSession(session);
-        totalSessions++;
+      const sink = createSink(
+        sinkConfig,
+        index,
+      ) as unknown as V2Sink & { enabled?: boolean };
+      sink.enabled = sinkConfig.enabled !== false;
 
-        try {
-          const messages = await adapter.messages(session.id, session.sourcePath);
-          if (messages.length > 0) {
-            store.upsertMessages(session.id, messages);
-            totalMessages += messages.length;
-
-            // Auto-tag: derive project, tags, tool usage stats
-            autoTagSession(store, session, messages);
-          }
-        } catch { /* skip message errors */ }
-
-        // Backpressure: yield between batches so GC can reclaim file buffers
-        if ((i + 1) % 20 === 0) {
-          Bun.gc(false);
-          await Bun.sleep(0);
-        }
+      if (sink.enabled === false) {
+        sinks.push(sink);
+        logger.info(`Skipping disabled sink ${sink.name}`);
+        continue;
       }
 
-      // Collect context artifacts (memory, configs, rules, etc.)
-      if (adapter.artifacts) {
-        try {
-          const artifacts = await adapter.artifacts();
-          for (const artifact of artifacts) {
-            store.upsertArtifact(artifact);
-            totalArtifacts++;
-          }
-        } catch { /* skip artifact errors */ }
+      const health = await sink.healthCheck();
+      if (health.ok) {
+        sinks.push(sink);
+      } else {
+        logger.warn(`Sink ${sink.name} failed health check: ${health.error}`);
       }
-    } catch (err) {
-      console.error(`    Error: ${err}`);
+    } catch (error) {
+      logger.error("Sink initialization failed", error);
     }
   }
 
-  // Refresh project aggregate stats
-  store.refreshProjectStats();
+  return sinks;
+}
 
-  clearProgress();
-  console.log(`\n  Done. ${totalSessions} conversations, ${totalMessages} messages, ${totalArtifacts} artifacts ingested.`);
-  store.close();
+async function closeSinks(sinks: ReadonlyArray<V2Sink>): Promise<void> {
+  await Promise.allSettled(
+    sinks.map(async (sink) => {
+      try {
+        await sink.close();
+      } catch {}
+    }),
+  );
+}
+
+function createIngestLogger(): PipelineLogger {
+  return {
+    info(message: string) {
+      console.log(`  ${message}`);
+    },
+    warn(message: string) {
+      console.log(`  WARNING: ${message}`);
+    },
+    error(message: string, error?: unknown) {
+      if (error === undefined) {
+        console.error(`  ERROR: ${message}`);
+        return;
+      }
+      if (error instanceof Error) {
+        console.error(`  ERROR: ${message} — ${error.message}`);
+        return;
+      }
+      console.error(`  ERROR: ${message} — ${String(error)}`);
+    },
+  };
 }

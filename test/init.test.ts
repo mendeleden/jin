@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { join } from "path";
 import { createFakeSink, makeSession } from "./helpers";
 import type { Adapter, Session, Message } from "../src/adapters/types";
+import type { ConversationBundle } from "../src/contracts/conversations";
 
 // ── Module Mocks (hoisted by bun) ────────────────────────────────────────
 
@@ -55,7 +56,8 @@ import {
   type TestEnv,
 } from "./helpers";
 import { defaultConfig } from "../src/config";
-import { Store } from "../src/store";
+import { openStoreAtPath } from "../src/db/store";
+import { listConversations } from "../src/db/query-surface";
 import { readProgress, clearProgress } from "../src/progress";
 import { statusCommand } from "../src/commands/status";
 
@@ -154,11 +156,63 @@ describe("jin init --team", () => {
 
 describe("jin init auto-ingest", () => {
   function createMockAdapter(sessions: Session[]): Adapter {
+    const bundles = new Map<string, ConversationBundle>();
+    for (const session of sessions) {
+      const sourcePath = session.sourcePath || `/tmp/${session.id}.jsonl`;
+      bundles.set(session.id, {
+        conversation: {
+          id: session.id,
+          traceId: session.id,
+          parentId: "",
+          relationship: "root",
+          forkPoint: -1,
+          adapterId: session.adapterId,
+          name: session.name,
+          cwd: String((session.metadata as { cwd?: string }).cwd || ""),
+          gitRemote: "",
+          branch: "",
+          model: "",
+          startedAt: session.createdAt,
+          endedAt: session.updatedAt,
+          sourcePath,
+          sourceFormat: "jsonl",
+        },
+        messages: [
+          {
+            id: `${session.id}-m1`,
+            role: "user",
+            content: "hello",
+            recordType: "message",
+            model: "",
+            sequence: 1,
+            turn: 1,
+            isSidechain: false,
+            parentMessageId: "",
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            thinkingContent: "",
+            thinkingTokens: 0,
+            timestamp: session.createdAt,
+            toolUses: [],
+          },
+        ],
+      });
+    }
+
     return {
       id: "claude-code",
       name: "Claude Code",
       icon: "C",
       detect: async () => true,
+      findChanged: async () =>
+        [...bundles.values()].map((bundle) => ({
+          id: bundle.conversation.id,
+          sourcePath: bundle.conversation.sourcePath,
+          adapterId: bundle.conversation.adapterId,
+        })),
+      loadConversation: async (ref) => bundles.get(ref.id) ?? null,
       sessions: async () => sessions,
       messages: async () => [],
       watchPaths: () => [],
@@ -176,11 +230,11 @@ describe("jin init auto-ingest", () => {
     await initCommand();
 
     // Verify ingest ran — session should be in the store
-    const store = new Store(env.store.db.filename as string);
-    const sessions = store.listSessions();
+    const store = openStoreAtPath(env.store.db.filename as string);
+    const sessions = listConversations(store.database);
     store.close();
     expect(sessions.length).toBeGreaterThanOrEqual(1);
-    expect(sessions.some((s: any) => s.id === "test-session-001")).toBe(true);
+    expect(sessions.some((s) => s.id === "test-session-001")).toBe(true);
   });
 
   test("--json includes projects after auto-ingest", async () => {
@@ -230,11 +284,11 @@ describe("jin init auto-ingest", () => {
 
     await initCommand();
 
-    const store = new Store(env.store.db.filename as string);
-    const sessions = store.listSessions();
+    const store = openStoreAtPath(env.store.db.filename as string);
+    const sessions = listConversations(store.database);
     store.close();
 
-    expect(sessions.some((entry: any) => entry.id === session.id)).toBe(false);
+    expect(sessions.some((entry) => entry.id === session.id)).toBe(false);
     expect(console_.logs.join("\n")).toContain("skipping one-shot ingest");
   });
 

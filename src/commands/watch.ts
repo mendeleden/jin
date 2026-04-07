@@ -1,29 +1,22 @@
-import { loadConfig, configDir, configPath, resolveAdapterConfig } from "../config";
-import type { JinConfig } from "../config";
-import { LegacyStore } from "../store";
 import {
-  allAdapters,
-  protectedSourceStartupNotices,
-  startupProbeBlocked,
-} from "../adapters/registry";
-import { createSink } from "../sinks/registry";
+  configDir,
+  configPath,
+  loadConfig,
+  resolveAdapterConfig,
+  type JinConfig,
+} from "../config";
+import type { Adapter as V2Adapter } from "../contracts/adapters";
+import type { Sink as V2Sink } from "../contracts/sinks";
+import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
+import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
-import { FileWatcher } from "../pipeline/file-watcher";
-import { autoTagSession } from "../tagger";
-import { sinksForConversation } from "../routing";
-import type { LegacyAdapter as Adapter, WatchEvent } from "../adapters/types";
-import type { Sink, PushPayload } from "../sinks/types";
-import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, appendFileSync, statSync } from "fs";
-import { join, basename } from "path";
-import { writeProgress, clearProgress } from "../progress";
+import { runPipeline } from "../pipeline/loop";
+import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
+import { createSink } from "../sinks/registry";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
 
-const PID_FILE = join(configDir(), "jin.pid");
-const LOG_FILE = join(configDir(), "jin.log");
-
-// Per-file cooldown to prevent re-ingesting the same file too frequently
-// during streaming writes (e.g. Claude Code appends every ~200ms during responses)
-const FILE_COOLDOWN_MS = 5_000;
-const fileLastIngestedAt = new Map<string, number>();
+type RuntimeLog = (message: string) => void;
 
 export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const {
@@ -33,70 +26,207 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   } = await import("../daemon/runtime-state");
 
   // Block if OS service is running — but not if WE are the service
-  // JIN_LAUNCHED_BY_SERVICE is set in both the systemd unit and launchd plist
-  const launchedByService = !!(process.env.JIN_LAUNCHED_BY_SERVICE || process.env.INVOCATION_ID || process.env.JOURNAL_STREAM);
+  // JIN_LAUNCHED_BY_SERVICE is set in both the systemd unit and launchd plist.
+  const launchedByService = !!(
+    process.env.JIN_LAUNCHED_BY_SERVICE ||
+    process.env.INVOCATION_ID ||
+    process.env.JOURNAL_STREAM
+  );
   if (!launchedByService && isServiceActive()) {
-    console.log(`  jin is already running as an OS service.`);
-    console.log(`  Use \`jin service uninstall\` to remove it first, or \`jin service status\` for details.`);
+    console.log("  jin is already running as an OS service.");
+    console.log("  Use `jin service uninstall` to remove it first, or `jin service status` for details.");
     process.exit(1);
   }
 
-  // Daemon mode: fork to background (used internally by startCommand)
+  // Daemon mode: fork to background (used internally by startCommand).
   if (opts.daemon) {
-    // Internal call from startCommand
     if (isRunning()) {
-      const pid = readFileSync(PID_FILE, "utf-8").trim();
+      const pid = readFileSync(pidFilePath(), "utf-8").trim();
       console.log(`  Watcher already running (PID ${pid}).`);
       return;
     }
     if (isServiceInstalled()) {
-      console.log(`  Note: OS service is installed but not active.`);
-      console.log(`  Consider \`jin start --service\` instead.\n`);
+      console.log("  Note: OS service is installed but not active.");
+      console.log("  Consider `jin start --service` instead.\n");
     }
     return daemonize();
   }
 
-  // Foreground mode: error if daemon is already running
-  // Skip check if we ARE the daemon (spawned by daemonize() which already wrote our PID)
+  // Foreground mode: error if daemon is already running.
+  // Skip check if we ARE the daemon (spawned by daemonize() which already wrote our PID).
   if (!process.env.JIN_DAEMON && isRunning()) {
-    const pid = readFileSync(PID_FILE, "utf-8").trim();
+    const pid = readFileSync(pidFilePath(), "utf-8").trim();
     console.log(`  jin is already running (PID ${pid}). Stop it first with \`jin stop\`.`);
     process.exit(1);
   }
 
   const config = await loadConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
-  const runtimePaths = getRuntimePaths();
-  const rawDir = config.store?.rawDir ?? join(configDir(), "raw");
-  const store = new LegacyStore(runtimePaths.storePath);
+  const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
+  const sinks = await createActiveSinks(config, log);
+  const activeAdapters = await detectActiveAdapters(config);
 
-  if (!existsSync(rawDir)) {
-    mkdirSync(rawDir, { recursive: true });
+  if (activeAdapters.length === 0) {
+    log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
+    logProtectedSourceStartupNotices(log, protectedSourceNotices);
+    await closeSinks(sinks);
+    cleanup();
+    process.exit(1);
   }
 
-  // Write PID file
-  writeFileSync(PID_FILE, String(process.pid));
+  logProtectedSourceStartupNotices(log, protectedSourceNotices);
 
-  // When daemonized, stdout is already redirected to LOG_FILE by daemonize().
-  // Only use appendFileSync in foreground mode where stdout goes to terminal.
-  const isDaemon = !!process.env.JIN_DAEMON;
-  const log = (msg: string) => {
-    const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
-    const line = `[${ts}] ${msg}`;
-    if (isDaemon) {
-      console.log(line);
-    } else {
-      console.log(`  ${line}`);
-      try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
+  // Non-blocking update check on startup.
+  import("../updater")
+    .then(({ checkForUpdate }) =>
+      checkForUpdate().then((update) => {
+        if (update?.available) {
+          log(
+            `Update available: ${update.current} -> ${update.latest}. Run \`jin update\` to upgrade.`,
+          );
+        }
+      }),
+    )
+    .catch(() => {});
+
+  const runtimePaths = getRuntimePaths();
+  const store = openStoreAtPath(runtimePaths.storePath);
+  writeFileSync(pidFilePath(), String(process.pid));
+
+  console.log(
+    `jin start --foreground — local daemon monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`,
+  );
+  for (const adapter of activeAdapters) {
+    console.log(`  [~] ${adapter.name}`);
+  }
+  if (sinks.length > 0) {
+    for (const sink of sinks) {
+      console.log(`  [>] ${sink.name}`);
     }
+  }
+  console.log("");
+
+  const pipelineHandle = await startPipeline(config, store, sinks, log);
+  await runUntilShutdown(pipelineHandle, store, log);
+}
+
+async function startPipeline(
+  config: JinConfig,
+  store: SqliteConversationStore,
+  sinks: V2Sink[],
+  log: RuntimeLog,
+): Promise<PipelineHandle> {
+  try {
+    return await runPipeline({
+      adapterSource: () => detectActiveAdapters(config),
+      store,
+      sinks,
+      routes: config.routes,
+      scanIntervalMs: config.watch.pollIntervalMs,
+      watchDebounceMs: config.watch.debounceMs,
+      logger: toPipelineLogger(log),
+    });
+  } catch (error) {
+    await closeSinks(sinks);
+    store.close();
+    cleanup();
+    throw error;
+  }
+}
+
+async function runUntilShutdown(
+  pipelineHandle: PipelineHandle,
+  store: SqliteConversationStore,
+  log: RuntimeLog,
+): Promise<void> {
+  let shuttingDown = false;
+  let complete = false;
+  let resolveStopped: () => void = () => {};
+  let rejectStopped: (error: unknown) => void = () => {};
+  const stopped = new Promise<void>((resolve, reject) => {
+    resolveStopped = resolve;
+    rejectStopped = reject;
+  });
+
+  const onSigint = () => {
+    void shutdown("SIGINT");
+  };
+  const onSigterm = () => {
+    void shutdown("SIGTERM");
   };
 
-  // Set up sinks
-  const sinks: Sink[] = [];
-  for (let i = 0; i < (config.sinks || []).length; i++) {
-    const sinkConfig = config.sinks[i];
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+
+  async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+
+    log(`Shutting down (${signal})...`);
     try {
-      const sink = createSink(sinkConfig, i);
+      const result = await pipelineHandle.shutdown();
+      store.close();
+      cleanup();
+
+      if (result.timedOut) {
+        log("Shutdown budget exceeded — abandoning in-flight work.");
+        finishWithExit(1);
+        return;
+      }
+      finishWithExit(0);
+      return;
+    } catch (error) {
+      store.close();
+      cleanup();
+      log(`Shutdown failed: ${formatError(error)}`);
+      finishWithExit(1, error);
+      return;
+    }
+  }
+
+  await stopped;
+
+  function finishWithExit(code: number, fallbackError?: unknown): void {
+    if (complete) {
+      return;
+    }
+    complete = true;
+
+    try {
+      process.exit(code);
+      resolveStopped();
+    } catch (error) {
+      rejectStopped(fallbackError ?? error);
+    }
+  }
+}
+
+async function createActiveSinks(
+  config: JinConfig,
+  log: RuntimeLog,
+): Promise<V2Sink[]> {
+  const sinks: V2Sink[] = [];
+
+  for (let index = 0; index < (config.sinks || []).length; index += 1) {
+    const sinkConfig = config.sinks[index];
+    try {
+      const sink = createSink(
+        sinkConfig,
+        index,
+      ) as unknown as V2Sink & { enabled?: boolean };
+
+      sink.enabled = sinkConfig.enabled !== false;
+
+      if (sink.enabled === false) {
+        sinks.push(sink);
+        log(`Sink disabled: ${sink.name}`);
+        continue;
+      }
+
       const health = await sink.healthCheck();
       if (health.ok) {
         sinks.push(sink);
@@ -104,198 +234,72 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       } else {
         log(`Sink failed: ${sink.name} — ${health.error}`);
       }
-    } catch (err) {
-      log(`Sink error: ${err}`);
+    } catch (error) {
+      log(`Sink error: ${formatError(error)}`);
     }
   }
 
-  // Detect adapters
+  return sinks;
+}
+
+async function detectActiveAdapters(config: JinConfig): Promise<V2Adapter[]> {
   const adapters = allAdapters(config.adapters);
-  const activeAdapters: Adapter[] = [];
+  const activeAdapters: V2Adapter[] = [];
 
   for (const adapter of adapters) {
-    if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) continue;
-    if (startupProbeBlocked(adapter.id, config.adapters)) continue;
+    if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) {
+      continue;
+    }
+    if (startupProbeBlocked(adapter.id, config.adapters)) {
+      continue;
+    }
+
     try {
       if (await adapter.detect()) {
-        activeAdapters.push(adapter);
+        activeAdapters.push(adapter as unknown as V2Adapter);
       }
     } catch {}
   }
 
-  if (activeAdapters.length === 0) {
-    log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
-    logProtectedSourceStartupNotices(log, protectedSourceNotices);
-    cleanup();
-    process.exit(1);
-  }
+  return activeAdapters;
+}
 
-  logProtectedSourceStartupNotices(log, protectedSourceNotices);
-
-  // Non-blocking update check on daemon start
-  import("../updater").then(({ checkForUpdate }) =>
-    checkForUpdate().then((u) => {
-      if (u?.available) {
-        log(`Update available: ${u.current} -> ${u.latest}. Run \`jin update\` to upgrade.`);
-      }
-    })
-  ).catch(() => {});
-
-  console.log(`jin start --foreground — local daemon monitoring ${activeAdapters.length} tool(s), ${sinks.length} sink(s)\n`);
-  for (const a of activeAdapters) {
-    console.log(`  [~] ${a.name}`);
-  }
-  if (sinks.length > 0) {
-    for (const s of sinks) {
-      console.log(`  [>] ${s.name}`);
+function createRuntimeLogger(isDaemon: boolean): RuntimeLog {
+  return (message: string) => {
+    const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const line = `[${timestamp}] ${message}`;
+    if (isDaemon) {
+      console.log(line);
+      return;
     }
-  }
-  console.log("");
 
-  // Initial ingest + push
-  log("Initial ingest...");
-  const changedSessions = new Set<string>();
-  for (const adapter of activeAdapters) {
-    const ingested = await ingestAdapter(adapter, store, rawDir);
-    for (const id of ingested) changedSessions.add(id);
-  }
-  clearProgress();
-  log(`Ingested ${store.sessionCount()} conversations, ${store.messageCount()} messages.`);
-
-  // Initial push
-  if (sinks.length > 0 && changedSessions.size > 0) {
-    await pushToSinks(store, sinks, changedSessions, config, log);
-  }
-
-  log("Watching for changes... (Ctrl+C to stop)");
-  console.log("");
-
-  // Debounced sink push — batch changes over a window before pushing
-  let pushTimer: Timer | null = null;
-  const pendingPush = new Set<string>();
-  const PUSH_DEBOUNCE_MS = config.watch.debounceMs * 5 || 1000;
-
-  const schedulePush = () => {
-    if (sinks.length === 0) return;
-    if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(async () => {
-      pushTimer = null;
-      if (pendingPush.size === 0) return;
-      const ids = new Set(pendingPush);
-      pendingPush.clear();
-      await pushToSinks(store, sinks, ids, config, log);
-    }, PUSH_DEBOUNCE_MS);
+    console.log(`  ${line}`);
+    try {
+      appendFileSync(logFilePath(), `${line}\n`);
+    } catch {}
   };
+}
 
-  // Self-observation filter: exclude jin's own output files to prevent feedback loops.
-  // Only excludes paths jin writes to (config dir: log, store.db, raw, benchmarks).
-  // Does NOT exclude Claude Code sessions in the same project — that was a bug.
-  const { shouldExcludeEvent } = await import("../self-observation");
-  const jinOutputPaths = {
-    logFile: LOG_FILE,
-    dbPath: runtimePaths.storePath,
-    rawDir,
-  };
-
-  // Set up file watcher
-  const watcher = new FileWatcher({
-    debounceMs: config.watch.debounceMs,
-    onChange: async (event: WatchEvent) => {
-      const adapter = activeAdapters.find((a) => a.id === event.adapterId);
-      if (!adapter) return;
-
-      // Skip events from jin's own output files to prevent feedback loop:
-      // file change → ingest → push → log → repeat
-      if (shouldExcludeEvent(event.path, jinOutputPaths)) return;
-
-      // Per-file cooldown: skip if this file was ingested within the last 5 seconds
-      const now = Date.now();
-      const lastIngested = fileLastIngestedAt.get(event.path) || 0;
-      if (now - lastIngested < FILE_COOLDOWN_MS) return;
-
-      log(`${event.type} — ${adapter.name}: ${basename(event.path)}`);
-
-      // Targeted single-file ingest: only process the changed file, not all files
-      const ingested = await ingestSingleFile(adapter, store, event.path);
-      if (ingested) {
-        pendingPush.add(ingested);
-        fileLastIngestedAt.set(event.path, Date.now());
-      }
-
-      // Schedule batched push to sinks
-      schedulePush();
+function toPipelineLogger(log: RuntimeLog): PipelineLogger {
+  return {
+    info(message: string) {
+      log(message);
     },
-  });
-
-  for (const adapter of activeAdapters) {
-    for (const path of adapter.watchPaths()) {
-      watcher.addPath(path, adapter.id);
-    }
-  }
-
-  // RSS kill switch: self-terminate if memory exceeds safe limit
-  const RSS_WARN_MB = 200;
-  const RSS_MAX_MB = 256;
-  const checkMemory = () => {
-    const rssMB = process.memoryUsage.rss() / (1024 * 1024);
-    if (rssMB > RSS_MAX_MB) {
-      log(`CRITICAL: RSS ${Math.round(rssMB)} MB exceeds ${RSS_MAX_MB} MB limit — exiting`);
-      store.close();
-      cleanup();
-      process.exit(1);
-    } else if (rssMB > RSS_WARN_MB) {
-      log(`WARNING: RSS ${Math.round(rssMB)} MB approaching ${RSS_MAX_MB} MB limit`);
-    }
-  };
-
-  // Periodic sync for sinks (catch anything the watcher missed)
-  const periodicInterval = config.watch.pollIntervalMs || 30_000;
-  const periodicTimer = setInterval(async () => {
-    checkMemory();
-    if (sinks.length === 0) return;
-    for (const adapter of activeAdapters) {
-      const ingested = await ingestAdapter(adapter, store, rawDir);
-      for (const id of ingested) pendingPush.add(id);
-    }
-    clearProgress();
-    if (pendingPush.size > 0) schedulePush();
-  }, periodicInterval);
-
-  // Graceful shutdown — flush pending sink data before exit
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return; // prevent re-entry from second signal
-    shuttingDown = true;
-    log("Shutting down...");
-    if (pushTimer) clearTimeout(pushTimer);
-    clearInterval(periodicTimer);
-    watcher.close();
-
-    // Flush any pending sink pushes before closing
-    if (sinks.length > 0 && pendingPush.size > 0) {
-      const ids = new Set(pendingPush);
-      pendingPush.clear();
-      try {
-        await pushToSinks(store, sinks, ids, config, log);
-      } catch (err) {
-        log(`Flush error during shutdown: ${err}`);
+    warn(message: string) {
+      log(`WARNING: ${message}`);
+    },
+    error(message: string, error?: unknown) {
+      if (error === undefined) {
+        log(`ERROR: ${message}`);
+        return;
       }
-    }
-
-    await Promise.all(sinks.map(s => s.close().catch(() => {})));
-    store.close();
-    cleanup();
-    process.exit(0);
+      log(`ERROR: ${message} — ${formatError(error)}`);
+    },
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  // Keep alive
-  await new Promise(() => {});
 }
 
 function logProtectedSourceStartupNotices(
-  log: (message: string) => void,
+  log: RuntimeLog,
   notices: Array<{ summary: string }>,
 ): void {
   if (notices.length === 0) {
@@ -311,238 +315,49 @@ function logProtectedSourceStartupNotices(
   );
 }
 
-// Backpressure: push sessions in batches to avoid loading all messages into memory at once.
-const PUSH_BATCH_SIZE = 20;
-
-/** Push changed sessions to sinks, respecting per-project routing.
- *  Uses push_log to skip sessions that haven't changed since last successful push. */
-async function pushToSinks(
-  store: Store,
-  sinks: Sink[],
-  sessionIds: Set<string>,
-  config: JinConfig,
-  log: (msg: string) => void
-): Promise<void> {
-  // Pre-compute which sessions actually need pushing per sink
-  const needsPush = new Map<string, Set<string>>();
-  for (const sink of sinks) {
-    needsPush.set(sink.id, store.sessionsNeedingPush(sink.id));
-  }
-
-  // Build a lightweight routing plan (session + target sinks) without loading messages yet
-  const pushPlan: Array<{ id: string; sinks: Sink[] }> = [];
-  for (const id of sessionIds) {
-    const session = store.getSession(id);
-    if (!session) continue;
-    const targetSinks = sinksForConversation(session, config.routes, sinks);
-    const filteredSinks = targetSinks.filter(sink => {
-      const sinkNeeds = needsPush.get(sink.id);
-      return !sinkNeeds || sinkNeeds.has(id);
-    });
-    if (filteredSinks.length > 0) {
-      pushPlan.push({ id, sinks: filteredSinks });
-    }
-  }
-
-  // Process in batches — load messages only for the current batch
-  for (let batchStart = 0; batchStart < pushPlan.length; batchStart += PUSH_BATCH_SIZE) {
-    const batch = pushPlan.slice(batchStart, batchStart + PUSH_BATCH_SIZE);
-    const sinkPayloads = new Map<Sink, PushPayload[]>();
-
-    for (const entry of batch) {
-      const session = store.getSession(entry.id);
-      if (!session) continue;
-      const allMessages = store.getMessages(entry.id);
-
-      for (const sink of entry.sinks) {
-        if (!sinkPayloads.has(sink)) sinkPayloads.set(sink, []);
-        // Delta push: only for sinks that support merge semantics (e.g. Postgres ON CONFLICT).
-        // Sinks like S3 (last-write-wins) must always receive ALL messages.
-        let messages = allMessages;
-        if (sink.supportsDelta) {
-          const lastCount = store.lastPushedMessageCount(entry.id, sink.id);
-          if (lastCount > 0 && lastCount < allMessages.length) {
-            messages = allMessages.slice(lastCount);
-          }
-        }
-        sinkPayloads.get(sink)!.push({ session, messages });
-      }
-    }
-
-    for (const [sink, payloads] of sinkPayloads) {
-      if (payloads.length === 0) continue;
+async function closeSinks(sinks: ReadonlyArray<V2Sink>): Promise<void> {
+  await Promise.allSettled(
+    sinks.map(async (sink) => {
       try {
-        const result = await sink.push(payloads);
-        log(`Pushed ${result.pushed} to ${sink.name}${result.failed ? `, ${result.failed} failed` : ""}`);
-
-        // Log successful pushes — use message count already known from payload
-        for (const { session, messages } of payloads) {
-          const totalMsgCount = store.messageCountForSession(session.id);
-          store.logPush(session.id, sink.id, 200, "ok", totalMsgCount);
-        }
-
-        if (result.errors.length > 0) {
-          for (const e of result.errors.slice(0, 3)) log(`  Error: ${e}`);
-        }
-      } catch (err) {
-        log(`Push error (${sink.name}): ${err}`);
-      }
-    }
-
-    // Yield between push batches so GC can reclaim message arrays
-    if (batchStart + PUSH_BATCH_SIZE < pushPlan.length) {
-      await Bun.sleep(0);
-    }
-  }
-}
-
-// Track file stat to skip re-reading unchanged files during periodic ingest.
-// Key: filePath, Value: { size, mtimeMs } from last successful ingest.
-const ingestStatCache = new Map<string, { size: number; mtimeMs: number }>();
-
-// Backpressure: process sessions in batches to cap peak RSS during cold ingest.
-// Between batches, yield to the event loop so the GC can reclaim parsed file buffers.
-const INGEST_BATCH_SIZE = 20;
-
-/** Ingest adapter, return list of session IDs that were ingested */
-export async function ingestAdapter(adapter: Adapter, store: Store, rawDir: string): Promise<string[]> {
-  const ingested: string[] = [];
-  try {
-    const sessions = await adapter.sessions();
-    const startedAt = Date.now();
-    for (let i = 0; i < sessions.length; i++) {
-      const session = sessions[i];
-      writeProgress({ adapter: adapter.name, current: i + 1, total: sessions.length, startedAt });
-      store.upsertSession(session);
-
-      // Skip if the source file hasn't changed (stat-based)
-      if (session.sourcePath && existsSync(session.sourcePath)) {
-        const stat = statSync(session.sourcePath);
-        const cached = ingestStatCache.get(session.sourcePath);
-        if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-          continue;
-        }
-
-        // File changed (or first time)
-        ingested.push(session.id);
-
-        // Insert only NEW messages (delta), not all messages
-        try {
-          const existingCount = store.messageCountForSession(session.id);
-          if (existingCount > 0 && 'newMessages' in adapter) {
-            // Adapter supports delta — only parse and insert new messages
-            const newMsgs = await (adapter as any).newMessages(session.id, session.sourcePath, existingCount);
-            if (newMsgs.length > 0) {
-              store.insertMessages(session.id, newMsgs);
-              // Re-tag with all messages only if needed
-              const allMsgs = store.getMessages(session.id);
-              autoTagSession(store, session, allMsgs);
-            }
-          } else {
-            // Fallback: full message parse (first ingest or non-supporting adapter)
-            const messages = await adapter.messages(session.id, session.sourcePath);
-            if (messages.length > 0) {
-              store.upsertMessages(session.id, messages);
-              autoTagSession(store, session, messages);
-            }
-          }
-        } catch {}
-
-        ingestStatCache.set(session.sourcePath, { size: stat.size, mtimeMs: stat.mtimeMs });
-      } else {
-        ingested.push(session.id);
-        try {
-          const messages = await adapter.messages(session.id, session.sourcePath);
-          if (messages.length > 0) {
-            store.upsertMessages(session.id, messages);
-            autoTagSession(store, session, messages);
-          }
-        } catch {}
-      }
-
-      // Backpressure: yield between batches so GC can reclaim file buffers
-      if ((i + 1) % INGEST_BATCH_SIZE === 0) {
-        Bun.gc(false);
-        await Bun.sleep(0);
-      }
-    }
-  } catch {}
-  clearProgress();
-  return ingested;
-}
-
-/**
- * Ingest a single changed file instead of scanning all adapter files.
- * Used by the watcher onChange handler for targeted, low-cost ingest.
- * Returns the session ID if ingested, null if skipped.
- */
-async function ingestSingleFile(adapter: Adapter, store: Store, filePath: string): Promise<string | null> {
-  try {
-    if (!existsSync(filePath)) return null;
-    const stat = statSync(filePath);
-
-    // Check ingest stat cache — skip if unchanged
-    const cached = ingestStatCache.get(filePath);
-    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-      return null;
-    }
-
-    // Targeted single-file parse: skip the full directory scan
-    let session;
-    if ('sessionForFile' in adapter) {
-      session = await (adapter as any).sessionForFile(filePath);
-    } else {
-      // Fallback for adapters without single-file support
-      const sessions = await adapter.sessions();
-      session = sessions.find(s => s.sourcePath === filePath);
-    }
-    if (!session) return null;
-
-    store.upsertSession(session);
-
-    // Delta message insert
-    const existingCount = store.messageCountForSession(session.id);
-    if (existingCount > 0 && 'newMessages' in adapter) {
-      const newMsgs = await (adapter as any).newMessages(session.id, session.sourcePath, existingCount);
-      if (newMsgs.length > 0) {
-        store.insertMessages(session.id, newMsgs);
-        const allMsgs = store.getMessages(session.id);
-        autoTagSession(store, session, allMsgs);
-      }
-    } else {
-      const messages = await adapter.messages(session.id, session.sourcePath);
-      if (messages.length > 0) {
-        store.upsertMessages(session.id, messages);
-        autoTagSession(store, session, messages);
-      }
-    }
-
-    ingestStatCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs });
-    return session.id;
-  } catch {
-    return null;
-  }
-}
-
-function getExt(path: string): string {
-  const name = basename(path);
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 ? name.slice(dot) : "";
+        await sink.close();
+      } catch {}
+    }),
+  );
 }
 
 function isRunning(): boolean {
-  if (!existsSync(PID_FILE)) return false;
+  const pidPath = pidFilePath();
+  if (!existsSync(pidPath)) {
+    return false;
+  }
+
   try {
-    const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim());
-    process.kill(pid, 0); // signal 0 = check if alive
+    const pid = Number.parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    process.kill(pid, 0);
     return true;
   } catch {
-    // PID file exists but process is dead — clean up
     cleanup();
     return false;
   }
 }
 
 function cleanup(): void {
-  try { unlinkSync(PID_FILE); } catch {}
+  try {
+    unlinkSync(pidFilePath());
+  } catch {}
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function pidFilePath(): string {
+  return join(configDir(), "jin.pid");
+}
+
+function logFilePath(): string {
+  return join(configDir(), "jin.log");
 }
