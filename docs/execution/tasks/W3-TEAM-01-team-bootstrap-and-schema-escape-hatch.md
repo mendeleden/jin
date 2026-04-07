@@ -8,14 +8,15 @@ Claude Code worker packet.
 
 Define and, where coherent inside this repo, implement the first explicit local
 CLI surface for Team/bootstrap work so the product is no longer limited to a
-sink-shaped onboarding code plus compatibility flags.
+sink-shaped onboarding code plus compatibility flags, without pulling normal
+developer onboarding into the operator namespace.
 
 This packet should answer the concrete gap now visible in the repo:
 - what `jin team` should own locally
 - what remote Postgres/bootstrap path exists for self-hosted or operator-driven
   setups
-- whether `jin schema apply` belongs as the operator escape hatch inside this
-  repo, without turning it into the main onboarding story
+- how to keep `jin connect --team=<code>` as the developer path while moving
+  operator-only actions under `jin team`
 
 ## Depends On
 
@@ -32,16 +33,18 @@ This packet should answer the concrete gap now visible in the repo:
 1. `docs/execution/00-global-rules.md`
 2. `docs/blueprint/BP-Product-Strategy.md`
 3. `docs/blueprint/BP-01-module-map.md`
-4. `docs/blueprint/BP-05-store-and-migration.md`
-5. `docs/blueprint/BP-06-sink-contract.md`
-6. `docs/blueprint/BP-08-routing-and-config.md`
+4. `docs/blueprint/BP-09-cli-split.md`
+5. `docs/blueprint/BP-05-store-and-migration.md`
+6. `docs/blueprint/BP-06-sink-contract.md`
+7. `docs/blueprint/BP-08-routing-and-config.md`
 7. Current code:
-   - `src/index.ts`
-   - `src/commands/team-config.ts`
-   - `src/commands/connect.ts`
-   - `src/commands/init.ts`
-   - `src/sinks/postgres.ts`
-   - any existing tests covering team/config/bootstrap surfaces under `test/`
+- `src/index.ts`
+- `src/commands/team-config.ts`
+- `src/commands/connect.ts`
+- `src/commands/init.ts`
+- optional new `src/commands/team.ts`
+- `src/sinks/postgres.ts`
+- any existing tests covering team/config/bootstrap surfaces under `test/`
 
 ## Owned Files
 
@@ -49,6 +52,7 @@ This packet should answer the concrete gap now visible in the repo:
 - `src/commands/team-config.ts`
 - `src/commands/connect.ts`
 - `src/commands/init.ts`
+- optional new `src/commands/team.ts`
 - optional new command entrypoints under `src/commands/` for explicit team or
   schema/admin surfaces
 - focused team/bootstrap tests under `test/`
@@ -66,19 +70,24 @@ This packet should answer the concrete gap now visible in the repo:
 
 - Team is a product plane, not a sink flavor
 - generic sinks remain integrations
-- `jin schema apply` may be an operator/admin escape hatch, not the core
-  onboarding path
+- the operator schema escape hatch belongs under `jin team schema ...`, not as
+  a top-level developer command
 - current BP-06 sink push semantics and runtime ownership rules remain frozen
 
 ## Deliverables
 
 - explicit inventory of the current team/bootstrap gap in the local CLI
-- coherent command-surface proposal or implementation for `jin team` and/or
-  `jin schema apply`
+- coherent command-surface proposal or implementation for:
+  - `jin connect --team=<code>` as the developer onboarding path
+  - `jin team bridge` as the operator onboarding-code path
+  - `jin team schema ...` as the operator schema escape hatch
 - if implementation is viable inside repo scope:
   - command dispatch in `src/index.ts`
   - command help text
   - focused tests
+- do not introduce `jin team connect` as the primary developer path
+- do not introduce `jin team status` / `jin team disconnect` unless explicitly
+  deferred and left out of the live help surface
 - if implementation is not yet viable without wider product/backend policy:
   - a concrete split recommendation with exact next packet boundaries
 
@@ -88,15 +97,19 @@ This packet should answer the concrete gap now visible in the repo:
 - implementing a remote API server
 - changing BP-06 sink delivery semantics
 - conflating Team bootstrap with generic sink creation
+- inventing workspace identity heuristics and then treating them as a stable
+  Team control plane
 
 ## BP Acceptance Matrix
 
 | Requirement | Blueprint | Expected evidence |
 |-------------|-----------|-------------------|
 | Team remains a distinct product plane in the local CLI surface, not a renamed Postgres sink flow | BP-Product | `src/index.ts`, team-related command files, focused help/tests |
-| Any remote Postgres bootstrap path is explicit operator/admin surface, not the default onboarding story | BP-Product, BP-01 | command/help text, optional `schema` or `team` command files, focused tests |
+| Developer onboarding stays at top-level `jin connect --team=<code>` rather than moving under `jin team` | BP-09, BP-Product | `src/index.ts`, `src/commands/connect.ts`, focused help/tests |
+| Any remote Postgres bootstrap path is explicit operator/admin surface under `jin team schema ...`, not the default onboarding story | BP-09, BP-Product, BP-01 | command/help text, optional `team`/`schema` command files, focused tests |
 | Existing workspace onboarding (`team-config`, `connect --team`, `init --team`) does not regress | BP-08, BP-Product | `src/commands/team-config.ts`, `src/commands/connect.ts`, `src/commands/init.ts`, focused tests |
 | Generic sink wiring stays separate from Team/product framing | BP-08, BP-Product | command/help text, focused tests |
+| `jin team init` / `jin team status` remain deferred unless workspace identity is real and non-heuristic | BP-09, BP-Product | explicit defer in help/tests/packet notes |
 
 Every row must be resolved in the completion report as:
 - implemented, with code + test citation
@@ -107,13 +120,17 @@ Every row must be resolved in the completion report as:
 
 - compare the current compatibility team/bootstrap path (`team-config`,
   `connect --team`, `init --team`) against any new explicit Team/admin surface
-- record whether `jin schema apply` stays absent, appears as an operator escape
-  hatch, or is deferred again
+- record whether the schema escape hatch is implemented under `jin team schema`
+  or deferred again
 
 ## Acceptance Checks
 
 - the repo has a clearer local CLI story for Team/bootstrap than the current
   sink-shaped onboarding-code flow alone
+- developer onboarding still reads as `jin connect --team=<code>`, not
+  `jin team connect`
+- any schema bootstrap command lives under `jin team schema ...`, not top-level
+  `jin schema`
 - any new command/help surface keeps Team distinct from generic sink wiring
 - focused tests cover command dispatch/help and preserve existing onboarding
   behavior where retained
@@ -157,4 +174,3 @@ Risks / follow-ups:
 Blocked / needs Codex:
 - ...
 ```
-

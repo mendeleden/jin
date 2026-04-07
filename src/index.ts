@@ -278,15 +278,32 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin route add --adapter=cursor --sink=analytics
     $ jin route remove --remote="github.com/acme/*" --sink=team-postgres
 `,
+  team: `
+  jin team — workspace bootstrap and operator tools
+
+  Bootstrap:
+    bridge --type=<sink> ...             Generate a developer onboarding code
+
+  Schema (operator escape hatch):
+    schema apply <connection>            Apply jin tables to a Postgres database
+    schema check <connection>            Check schema version compatibility
+    schema version                       Print expected schema version
+
+  Future (deferred until workspace identity is real):
+    init                                 Reserved for guided workspace setup
+    status                               Reserved until workspace identity is real
+
+  These commands are for workspace operators, not everyday developers.
+  Developers join a workspace with: jin connect --team=<code>
+`,
   "team-config": `
-  Generate a workspace onboarding bridge code
+  Deprecated: use jin team bridge instead.
 
   USAGE
-    jin team-config --type=<sink-type> [flags]
+    jin team bridge --type=<sink-type> [flags]
 
   EXAMPLES
-    $ jin team-config --type=webhook --url=https://workspace.example/jin --name=workspace-main
-    $ jin team-config --type=postgres --connection-string=postgres://... --name=workspace-main
+    $ jin team bridge --type=webhook --url=https://workspace.example/jin --name=workspace-main
 `,
   ingest: `
   Run a one-shot local ingest without starting the daemon
@@ -315,26 +332,29 @@ function usage(): void {
     show <id> [--trace|--tree|--json]    Show a conversation, trace, or tree
     export [--format=json|md]            Export local conversations
 
-  Workspace:
-    connect --team=<code>                Add a workspace destination
-    connect <repo> --sink=<id>           Route a local repo to a destination
-    connections                          Show current repo routing and destinations
-    disconnect <repo>                    Remove repo routing
-    team-config --type=<sink>            Generate a workspace onboarding code
+  Connect:
+    connect --team=<code>                Join a workspace
+    connect <repo> --sink=<id>           Route a repo to a destination
+    connections                          Show current routing
+    disconnect <repo>                    Remove routing
 
   Integrations:
-    sink add <type> ...                  Add a generic integration destination
+    sink add <type> ...                  Add an integration destination
     sink remove <id>                     Remove a destination
     sink disable|enable <id>             Durable destination control
     route add ... --sink=<id>            Add routing rules
     route remove ...                     Remove routing rules
 
-  Compatibility / Admin:
-    init [--team=<code>] [--skills]      Compatibility bootstrap helper
+  Workspace (operator):
+    team <subcommand>                    Workspace bootstrap, schema, bridge
+                                         Run 'jin team help' for details
+
+  Utility:
     ingest                               One-shot local ingest
-    benchmark [--json]                   Measure local daemon and ingest budgets
-    service install|uninstall|status     OS service (systemd/launchd)
+    benchmark [--json]                   Measure ingest budgets
+    service install|uninstall|status     OS service management
     ui [--port=4000]                     Local dashboard
+    init [--team=<code>] [--skills]      Compatibility bootstrap helper
     update [--quiet|--rollback]          Self-update or rollback
     version                              Show version
 
@@ -655,6 +675,75 @@ async function main(): Promise<void> {
       break;
     }
 
+    // ── Team (operator) ─────────────────────────────────────────────
+    case "team": {
+      const teamAction = args[1];
+      const teamFlags = parseFlags(args.slice(2));
+
+      switch (teamAction) {
+        case "bridge": {
+          const { teamConfigCommand } = await import("./commands/team-config");
+          await teamConfigCommand({
+            name: teamFlags.name as string | undefined,
+            type: teamFlags.type as string | undefined,
+            url: teamFlags.url as string | undefined,
+            connectionString: (teamFlags["connection-string"] || teamFlags.connectionString) as string | undefined,
+            bucket: teamFlags.bucket as string | undefined,
+            region: teamFlags.region as string | undefined,
+            endpoint: teamFlags.endpoint as string | undefined,
+            accessKeyId: (teamFlags["access-key-id"] || teamFlags.accessKeyId) as string | undefined,
+            secretAccessKey: (teamFlags["secret-access-key"] || teamFlags.secretAccessKey) as string | undefined,
+            prefix: teamFlags.prefix as string | undefined,
+            teamId: (teamFlags["team-id"] || teamFlags.teamId) as string | undefined,
+            headers: teamFlags.headers as string | undefined,
+          });
+          break;
+        }
+        case "schema": {
+          const schemaAction = args[2];
+          const schemaFlags = parseFlags(args.slice(3));
+          switch (schemaAction) {
+            case "apply": {
+              const { schemaApplyCommand } = await import("./commands/schema");
+              await schemaApplyCommand({
+                connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+                dryRun: !!schemaFlags["dry-run"] || !!schemaFlags.dryRun,
+              });
+              break;
+            }
+            case "check": {
+              const { schemaCheckCommand } = await import("./commands/schema");
+              await schemaCheckCommand({
+                connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+              });
+              break;
+            }
+            case "version": {
+              const { schemaVersionCommand } = await import("./commands/schema");
+              schemaVersionCommand();
+              break;
+            }
+            default:
+              console.log(`
+  jin team schema — operator escape hatch for Postgres integrations
+
+  USAGE
+    jin team schema apply --connection-string="postgres://..."  [--dry-run]
+    jin team schema check --connection-string="postgres://..."
+    jin team schema version
+`);
+              break;
+          }
+          break;
+        }
+        case "help":
+        default:
+          console.log(COMMAND_HELP.team);
+          break;
+      }
+      break;
+    }
+
     // ── Admin ──────────────────────────────────────────────────────────
     case "service": {
       const { serviceCommand } = await import("./commands/service");
@@ -663,6 +752,7 @@ async function main(): Promise<void> {
       break;
     }
     case "team-config": {
+      console.log("  Note: jin team-config is deprecated. Use jin team bridge instead.\n");
       const { teamConfigCommand } = await import("./commands/team-config");
       await teamConfigCommand({
         name: flags.name as string | undefined,

@@ -32,6 +32,7 @@ Before coding, create or update your heartbeat at
 Only then read the exact BP docs and code files named in the packet:
 - `docs/blueprint/BP-Product-Strategy.md`
 - `docs/blueprint/BP-01-module-map.md`
+- `docs/blueprint/BP-09-cli-split.md`
 - `docs/blueprint/BP-05-store-and-migration.md`
 - `docs/blueprint/BP-06-sink-contract.md`
 - `docs/blueprint/BP-08-routing-and-config.md`
@@ -39,6 +40,7 @@ Only then read the exact BP docs and code files named in the packet:
 - `src/commands/team-config.ts`
 - `src/commands/connect.ts`
 - `src/commands/init.ts`
+- optional `src/commands/team.ts`
 - `src/sinks/postgres.ts`
 - focused team/bootstrap tests under `test/`
 
@@ -48,17 +50,24 @@ Current program context:
 - there is no current `jin team` command group
 - current team/bootstrap behavior is mostly a compatibility/onboarding-code path
 - BP-Product says Team is a product plane, not a sink flavor
-- BP-Product also says `jin schema apply` may remain an operator escape hatch,
-  but must not become the main user story
+- BP-09 is now the CLI split authority for this lane:
+  - developer onboarding stays at top-level `jin connect --team=<code>`
+  - operator schema/bootstrap actions live under `jin team ...`
+  - do not introduce `jin team connect` as the primary path
+  - do not ship top-level `jin schema apply`
+  - `jin team init` and `jin team status` are deferred unless workspace identity
+    is real and non-heuristic
 
 Constraints:
 - only edit packet-owned command/help files and focused tests
 - do not edit `src/contracts/**`, `src/db/**`, `src/pipeline/**`,
   `src/adapters/**`, or sink internals beyond read-only consumption of current
   Postgres readiness behavior
+- if the current workspace already contains partial `jin team connect`,
+  `jin team status`, `jin team disconnect`, or top-level `jin schema apply`
+  work, revise it in place to match BP-09 rather than preserving it
 - if the right answer requires backend/team API implementation beyond this
   repo, stop and escalate to Codex with a narrow split recommendation
 
 Return the completion report in the exact format from
 `docs/execution/00-global-rules.md`.
-

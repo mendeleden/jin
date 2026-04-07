@@ -1,6 +1,10 @@
 import { encodeTeamConfig, type SinkConfig } from "../sinks/types";
 import { availableSinks } from "../sinks/registry";
 
+// ── jin team bridge (was team-config) ───────────────────────────────────
+// Generates a base64 onboarding bridge code. This is an operator command.
+// Developers consume the code via: jin connect --team=<code>
+
 export async function teamConfigCommand(opts: {
   type?: string;
   name?: string;
@@ -18,12 +22,12 @@ export async function teamConfigCommand(opts: {
   const sinkType = opts.type;
   if (!sinkType) {
     console.log(`
-  jin team-config — generate a workspace onboarding code
+  jin team bridge — generate a developer onboarding code (operator command)
 
   Usage:
-    jin team-config --type=webhook --url=https://your-api.com/jin --name=team-prod
-    jin team-config --type=postgres --connection-string=postgres://... --name=team-prod
-    jin team-config --type=s3 --bucket=my-jin-data --region=us-east-1 --name=team-prod
+    jin team bridge --type=webhook --url=https://your-api.com/jin --name=team-prod
+    jin team bridge --type=postgres --connection-string=postgres://... --name=team-prod
+    jin team bridge --type=s3 --bucket=my-jin-data --region=us-east-1 --name=team-prod
 
   Options:
     --name=<label>         Human-readable sink name (e.g. "team-prod", "acme-db")
@@ -31,11 +35,11 @@ export async function teamConfigCommand(opts: {
 
   Available sink types: ${availableSinks().join(", ")}
 
-  The output is a base64 workspace code for:
+  The output is a base64 bridge code for developers to run:
     jin connect --team=<code>
 
-  Compatibility helper:
-    jin init --team=<code>
+  Deprecated alias:
+    jin team-config
 `);
     return;
   }
@@ -63,21 +67,13 @@ export async function teamConfigCommand(opts: {
   const encoded = encodeTeamConfig(clean);
 
   console.log(`
-  Workspace onboarding bridge generated.
+  Workspace bridge code generated.
 
-  --- Share this with your workspace users ---
+  --- Share this with your developers ---
 
-  Local-first bootstrap:
-
-    jin start
-
-  Workspace routing:
+  Developer onboarding:
 
     jin connect --team=${encoded}
-
-  Compatibility helper:
-
-    jin init --team=${encoded}
 
   Low-level BYO integration config stays separate:
 

@@ -121,16 +121,33 @@ legacy leftovers).
 ## Operator/Workspace Commands (`jin team`)
 
 These are workspace-oriented, deployment-oriented, or require operator-level
-access. They appear in the `jin team` subcommand group, not in the main
-help text.
+access. They appear in the `jin team` subcommand group, not in the developer's
+primary path.
 
-### Workspace Bootstrap
+### Initial Operator Surface
+
+The first `jin team` implementation should stay narrow. It owns:
+
+| Command | Purpose |
+|---------|---------|
+| `jin team bridge` | Generate an onboarding bridge code for developers |
+| `jin team schema apply <connection>` | Apply jin tables to an existing Postgres database |
+| `jin team schema check <connection>` | Read-only version compatibility check |
+| `jin team schema version` | Print expected local schema version |
+
+### Reserved (Future, Not Initial Implementation)
+
+These remain future-facing until workspace identity is real and no longer
+heuristic in the local config:
 
 | Command | Purpose |
 |---------|---------|
 | `jin team init` | Guided interactive workspace setup |
-| `jin team bridge` | Generate an onboarding bridge code for developers |
 | `jin team status` | Workspace health, connected developers, push state |
+| `jin team disconnect` | Remove workspace identity/binding cleanly |
+| `jin team invite <email>` | When auth/identity exists |
+| `jin team members` | When identity exists |
+| `jin team config` | Workspace-level settings once a real Team plane exists |
 
 ### Schema Management (Operator Escape Hatch)
 
@@ -139,16 +156,6 @@ help text.
 | `jin team schema apply <connection>` | Apply jin tables to an existing Postgres database |
 | `jin team schema check <connection>` | Read-only version compatibility check |
 | `jin team schema version` | Print expected local schema version |
-
-### Reserved (Future)
-
-| Command | Purpose |
-|---------|---------|
-| `jin team invite <email>` | When auth/identity exists |
-| `jin team members` | When identity exists |
-| `jin team config` | Workspace-level settings |
-
----
 
 ## Command Rename: `team-config` to `jin team bridge`
 
@@ -314,14 +321,16 @@ Help:          jin help <command>
 jin team — workspace bootstrap and operator tools
 
 Bootstrap:
-  init                                 Guided workspace setup
   bridge --type=<sink> ...             Generate a developer onboarding code
-  status                               Workspace health and push state
 
 Schema (operator escape hatch):
   schema apply <connection>            Apply jin tables to a Postgres database
   schema check <connection>            Check schema version compatibility
   schema version                       Print expected schema version
+
+Future:
+  init                                 Reserved for guided workspace setup
+  status                               Reserved until workspace identity is real
 
 These commands are for workspace operators, not everyday developers.
 Developers join a workspace with: jin connect --team=<code>
@@ -338,9 +347,15 @@ src/commands/
   team.ts              # jin team dispatch (routes to sub-commands)
   team-bridge.ts       # jin team bridge (was team-config.ts)
   team-schema.ts       # jin team schema apply|check|version
-  team-status.ts       # jin team status
-  team-init.ts         # jin team init (interactive workspace setup)
   team-config.ts       # deprecated alias → team-bridge.ts
+
+Future:
+
+```
+src/commands/
+  team-status.ts       # when workspace identity is real
+  team-init.ts         # interactive workspace setup
+```
 ```
 
 The `team.ts` dispatcher is a thin router, similar to how `sink` and
@@ -440,10 +455,10 @@ sinks remain first-class.
 | 1 | Add `jin team` subcommand dispatch in `index.ts` | No |
 | 2 | Add `jin team bridge` with current `teamConfigCommand` logic | No |
 | 3 | Add `jin team schema apply`, `check`, `version` | No |
-| 4 | Add `jin team init` (interactive workspace setup) | No |
-| 5 | Add `jin team status` | No |
-| 6 | Deprecate `jin team-config` in help text, keep as hidden alias | Soft |
-| 7 | Move bare `jin init` guidance to `jin start` | Soft |
+| 4 | Deprecate `jin team-config` in help text, keep as hidden alias | Soft |
+| 5 | Move bare `jin init` guidance to `jin start` | Soft |
+| 6 | Add `jin team init` once workspace identity/product behavior exists | No |
+| 7 | Add `jin team status` once workspace identity is no longer heuristic | No |
 | 8 | Remove `team-config` alias in a future release | Breaking (with warning) |
 
 Every change adds a new path before removing an old one.
