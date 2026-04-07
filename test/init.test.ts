@@ -23,6 +23,12 @@ mock.module("../src/sinks/registry", () => ({
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
   detectAdapters: async () => [],
+  protectedSourceStartupNotices: (adapterConfigs: Record<string, any> = {}) =>
+    buildProtectedSourceNotices(adapterConfigs),
+  startupProbeBlocked: (
+    adapterId: string,
+    adapterConfigs: Record<string, any> = {},
+  ) => isStartupProbeBlocked(adapterId, adapterConfigs),
 }));
 
 mock.module("../src/daemon/process-state", () => ({
@@ -149,9 +155,9 @@ describe("jin init --team", () => {
 describe("jin init auto-ingest", () => {
   function createMockAdapter(sessions: Session[]): Adapter {
     return {
-      id: "mock-adapter",
-      name: "Mock Adapter",
-      icon: "M",
+      id: "claude-code",
+      name: "Claude Code",
+      icon: "C",
       detect: async () => true,
       sessions: async () => sessions,
       messages: async () => [],
@@ -161,8 +167,8 @@ describe("jin init auto-ingest", () => {
 
   test("auto-ingests when adapters detected", async () => {
     const session = makeSession("test-session-001", {
-      adapterId: "mock-adapter",
-      adapterName: "Mock Adapter",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
       metadata: { cwd: "/home/dev/projects/alpha" },
     });
     mockAdapters = [createMockAdapter([session])];
@@ -179,8 +185,8 @@ describe("jin init auto-ingest", () => {
 
   test("--json includes projects after auto-ingest", async () => {
     const session = makeSession("test-session-002", {
-      adapterId: "mock-adapter",
-      adapterName: "Mock Adapter",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
       metadata: { cwd: "/home/dev/projects/beta" },
     });
     mockAdapters = [createMockAdapter([session])];
@@ -192,14 +198,14 @@ describe("jin init auto-ingest", () => {
     expect(parsed).toHaveProperty("projects");
     expect(parsed).toHaveProperty("detected");
     expect(parsed.detected).toHaveLength(1);
-    expect(parsed.detected[0].id).toBe("mock-adapter");
+    expect(parsed.detected[0].id).toBe("claude-code");
   });
 
   test("progress is cleared after ingest completes", async () => {
     const sessions = Array.from({ length: 5 }, (_, i) =>
       makeSession(`progress-session-${i}`, {
-        adapterId: "mock-adapter",
-        adapterName: "Mock Adapter",
+        adapterId: "claude-code",
+        adapterName: "Claude Code",
       })
     );
     mockAdapters = [createMockAdapter(sessions)];
@@ -212,8 +218,8 @@ describe("jin init auto-ingest", () => {
 
   test("skips compatibility ingest when a long-lived runtime is already active", async () => {
     const session = makeSession("test-session-running-runtime", {
-      adapterId: "mock-adapter",
-      adapterName: "Mock Adapter",
+      adapterId: "claude-code",
+      adapterName: "Claude Code",
     });
     mockAdapters = [createMockAdapter([session])];
     runtimeStatus = {
@@ -230,6 +236,125 @@ describe("jin init auto-ingest", () => {
 
     expect(sessions.some((entry: any) => entry.id === session.id)).toBe(false);
     expect(console_.logs.join("\n")).toContain("skipping one-shot ingest");
+  });
+
+  test("reports protected-source adapters separately instead of probing them by default", async () => {
+    let detectCalls = 0;
+    mockAdapters = [
+      {
+        id: "kiro",
+        name: "Kiro",
+        icon: "K",
+        detect: async () => {
+          detectCalls += 1;
+          return true;
+        },
+        sessions: async () => [makeSession("kiro-session-001", {
+          adapterId: "kiro",
+          adapterName: "Kiro",
+        })],
+        messages: async () => [],
+        watchPaths: () => [],
+      },
+    ];
+
+    await initCommand({ json: true });
+
+    expect(detectCalls).toBe(0);
+    const parsed = JSON.parse(console_.logs.join("\n"));
+    expect(parsed.detected).toEqual([]);
+    expect(parsed.notFound).toEqual([]);
+    expect(parsed.protectedSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "kiro",
+          mode: "opt-in-only",
+        }),
+      ]),
+    );
+  });
+
+  test("human output explains how to opt into protected startup sources", async () => {
+    await initCommand();
+
+    const output = console_.logs.join("\n");
+    expect(output).toContain("Protected/app-private startup sources were not probed by default");
+    expect(output).toContain("allowProtectedSource");
+    expect(output).toContain("dataDir");
+    expect(output).toContain("config.json");
+  });
+
+  test("allowProtectedSource explicitly opts protected adapters into startup probing", async () => {
+    const config = defaultConfig();
+    config.adapters.kiro = { enabled: true, allowProtectedSource: true };
+    await writeTestConfig(env.dir, config);
+
+    let detectCalls = 0;
+    mockAdapters = [
+      {
+        id: "kiro",
+        name: "Kiro",
+        icon: "K",
+        detect: async () => {
+          detectCalls += 1;
+          return true;
+        },
+        sessions: async () => [makeSession("kiro-session-002", {
+          adapterId: "kiro",
+          adapterName: "Kiro",
+        })],
+        messages: async () => [],
+        watchPaths: () => [],
+      },
+    ];
+
+    await initCommand({ json: true });
+
+    expect(detectCalls).toBe(2);
+    const parsed = JSON.parse(console_.logs.join("\n"));
+    expect(parsed.detected).toEqual([
+      expect.objectContaining({
+        id: "kiro",
+      }),
+    ]);
+  });
+
+  test("dataDir also counts as explicit opt-in for protected adapters", async () => {
+    const config = defaultConfig();
+    config.adapters.warp = {
+      enabled: true,
+      dataDir: "/tmp/custom-warp.sqlite",
+    };
+    await writeTestConfig(env.dir, config);
+
+    let detectCalls = 0;
+    mockAdapters = [
+      {
+        id: "warp",
+        name: "Warp Terminal",
+        icon: "W",
+        detect: async () => {
+          detectCalls += 1;
+          return true;
+        },
+        sessions: async () => [makeSession("warp-session-001", {
+          adapterId: "warp",
+          adapterName: "Warp Terminal",
+        })],
+        messages: async () => [],
+        watchPaths: () => [],
+      },
+    ];
+
+    await initCommand({ json: true });
+
+    expect(detectCalls).toBe(2);
+    const parsed = JSON.parse(console_.logs.join("\n"));
+    expect(parsed.detected).toEqual([
+      expect.objectContaining({
+        id: "warp",
+      }),
+    ]);
   });
 });
 
@@ -326,4 +451,53 @@ function makeOwner(mode: "daemon" | "service" | "foreground", pid = 321) {
     storePath: runtimePaths.storePath,
     logPath: runtimePaths.logPath,
   };
+}
+
+function isOptedIn(config: Record<string, any> | undefined): boolean {
+  return config?.allowProtectedSource === true || typeof config?.dataDir === "string";
+}
+
+function isStartupProbeBlocked(
+  adapterId: string,
+  adapterConfigs: Record<string, any>,
+): boolean {
+  if (!["kiro", "opencode", "warp"].includes(adapterId)) {
+    return false;
+  }
+
+  const config = adapterConfigs[adapterId];
+  return config?.enabled !== false && !isOptedIn(config);
+}
+
+function buildProtectedSourceNotices(
+  adapterConfigs: Record<string, any>,
+) {
+  const notices: Array<{ adapterId: string; adapterName: string; mode: string; summary: string }> = [];
+
+  if (adapterConfigs.cursor?.enabled !== false && !isOptedIn(adapterConfigs.cursor)) {
+    notices.push({
+      adapterId: "cursor",
+      adapterName: "Cursor",
+      mode: "mixed-default",
+      summary:
+        "Cursor startup skips app-private globalStorage by default; only safe startup sources are auto-detected until you opt in.",
+    });
+  }
+
+  for (const [adapterId, adapterName] of [
+    ["kiro", "Kiro"],
+    ["opencode", "OpenCode"],
+    ["warp", "Warp Terminal"],
+  ] as const) {
+    if (isStartupProbeBlocked(adapterId, adapterConfigs)) {
+      notices.push({
+        adapterId,
+        adapterName,
+        mode: "opt-in-only",
+        summary: `${adapterName} startup does not probe protected/app-private stores unless you opt in.`,
+      });
+    }
+  }
+
+  return notices;
 }

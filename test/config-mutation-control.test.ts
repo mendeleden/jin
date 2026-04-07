@@ -79,6 +79,12 @@ mock.module("../src/commands/start", () => ({
 
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
+  protectedSourceStartupNotices: (adapterConfigs: Record<string, any> = {}) =>
+    buildProtectedSourceNotices(adapterConfigs),
+  startupProbeBlocked: (
+    adapterId: string,
+    adapterConfigs: Record<string, any> = {},
+  ) => isStartupProbeBlocked(adapterId, adapterConfigs),
 }));
 
 mock.module("../src/commands/ingest", () => ({
@@ -331,6 +337,31 @@ describe("config mutation and control commands", () => {
     expect(nextConfig.adapters["mock-adapter"]).toEqual({ enabled: false });
     expect(console_.logs.join("\n")).not.toContain("auto-enabled");
   });
+
+  test("watch startup skips opt-in-only protected adapters until the user opts in", async () => {
+    const config = defaultConfig();
+    await writeTestConfig(env.dir, config);
+
+    let detectCalls = 0;
+    mockAdapters = [
+      {
+        id: "kiro",
+        name: "Kiro",
+        icon: "K",
+        detect: async () => {
+          detectCalls += 1;
+          return true;
+        },
+        sessions: async () => [],
+        messages: async () => [],
+        watchPaths: () => [],
+      },
+    ];
+
+    await expect(watchCommand({ daemon: false })).rejects.toThrow();
+
+    expect(detectCalls).toBe(0);
+  });
 });
 
 function makeOwner(
@@ -345,4 +376,53 @@ function makeOwner(
     storePath: runtimePaths.storePath,
     logPath: runtimePaths.logPath,
   };
+}
+
+function isOptedIn(config: Record<string, any> | undefined): boolean {
+  return config?.allowProtectedSource === true || typeof config?.dataDir === "string";
+}
+
+function isStartupProbeBlocked(
+  adapterId: string,
+  adapterConfigs: Record<string, any>,
+): boolean {
+  if (!["kiro", "opencode", "warp"].includes(adapterId)) {
+    return false;
+  }
+
+  const config = adapterConfigs[adapterId];
+  return config?.enabled !== false && !isOptedIn(config);
+}
+
+function buildProtectedSourceNotices(
+  adapterConfigs: Record<string, any>,
+) {
+  const notices: Array<{ adapterId: string; adapterName: string; mode: string; summary: string }> = [];
+
+  if (adapterConfigs.cursor?.enabled !== false && !isOptedIn(adapterConfigs.cursor)) {
+    notices.push({
+      adapterId: "cursor",
+      adapterName: "Cursor",
+      mode: "mixed-default",
+      summary:
+        "Cursor startup skips app-private globalStorage by default; only safe startup sources are auto-detected until you opt in.",
+    });
+  }
+
+  for (const [adapterId, adapterName] of [
+    ["kiro", "Kiro"],
+    ["opencode", "OpenCode"],
+    ["warp", "Warp Terminal"],
+  ] as const) {
+    if (isStartupProbeBlocked(adapterId, adapterConfigs)) {
+      notices.push({
+        adapterId,
+        adapterName,
+        mode: "opt-in-only",
+        summary: `${adapterName} startup does not probe protected/app-private stores unless you opt in.`,
+      });
+    }
+  }
+
+  return notices;
 }

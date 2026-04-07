@@ -1,6 +1,16 @@
-import { loadConfig, saveConfig, configPath, ensureConfigDir } from "../config";
+import {
+  loadConfig,
+  saveConfig,
+  configPath,
+  ensureConfigDir,
+  resolveAdapterConfig,
+} from "../config";
 import { LegacyStore } from "../store";
-import { allAdapters } from "../adapters/registry";
+import {
+  allAdapters,
+  protectedSourceStartupNotices,
+  startupProbeBlocked,
+} from "../adapters/registry";
 import { decodeTeamConfig } from "../sinks/types";
 import { createSink } from "../sinks/registry";
 import { ingestCommand } from "./ingest";
@@ -41,19 +51,26 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   }
 
   // Detect adapters
-  const adapters = allAdapters();
+  const adapters = allAdapters(config.adapters);
   const detected: { id: string; name: string; sessionCount: number }[] = [];
   const notFound: string[] = [];
+  const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
 
   for (const adapter of adapters) {
+    if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) {
+      continue;
+    }
+
+    if (startupProbeBlocked(adapter.id, config.adapters)) {
+      continue;
+    }
+
     try {
       if (await adapter.detect()) {
         const sessions = await adapter.sessions();
         detected.push({ id: adapter.id, name: adapter.name, sessionCount: sessions.length });
-        config.adapters[adapter.id] = { enabled: true };
       } else {
         notFound.push(adapter.name);
-        config.adapters[adapter.id] = { enabled: false };
       }
     } catch {
       notFound.push(adapter.name);
@@ -101,6 +118,12 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
         conversations: d.sessionCount,
       })),
       notFound,
+      protectedSources: protectedSourceNotices.map((notice) => ({
+        id: notice.adapterId,
+        name: notice.adapterName,
+        mode: notice.mode,
+        summary: notice.summary,
+      })),
       sinks: config.sinks.map(s => ({ id: s.id, type: s.type, enabled: s.enabled !== false })),
       projects,
       config: configPath(),
@@ -115,6 +138,17 @@ export async function initCommand(opts?: { team?: string; json?: boolean; skills
   }
   if (notFound.length > 0) {
     console.log(`  \x1b[2m- ${notFound.join(", ")}\x1b[0m`);
+  }
+
+  if (protectedSourceNotices.length > 0) {
+    console.log("");
+    console.log("  Protected/app-private startup sources were not probed by default:");
+    for (const notice of protectedSourceNotices) {
+      console.log(`  \x1b[2m- ${notice.summary}\x1b[0m`);
+    }
+    console.log(
+      `  \x1b[2mOpt in via ${configPath()}: set adapters.<id>.allowProtectedSource = true or adapters.<id>.dataDir to a user-provided path.\x1b[0m`,
+    );
   }
 
   if (config.sinks.length > 0) {

@@ -1,7 +1,11 @@
-import { loadConfig, configDir } from "../config";
+import { loadConfig, configDir, configPath, resolveAdapterConfig } from "../config";
 import type { JinConfig } from "../config";
 import { LegacyStore } from "../store";
-import { allAdapters } from "../adapters/registry";
+import {
+  allAdapters,
+  protectedSourceStartupNotices,
+  startupProbeBlocked,
+} from "../adapters/registry";
 import { createSink } from "../sinks/registry";
 import { daemonize } from "../daemon/daemonize";
 import { FileWatcher } from "../pipeline/file-watcher";
@@ -61,6 +65,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
 
   const config = await loadConfig();
+  const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const runtimePaths = getRuntimePaths();
   const rawDir = config.store?.rawDir ?? join(configDir(), "raw");
   const store = new LegacyStore(runtimePaths.storePath);
@@ -105,11 +110,12 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
 
   // Detect adapters
-  const adapters = allAdapters();
+  const adapters = allAdapters(config.adapters);
   const activeAdapters: Adapter[] = [];
 
   for (const adapter of adapters) {
-    if (!config.adapters[adapter.id]?.enabled) continue;
+    if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) continue;
+    if (startupProbeBlocked(adapter.id, config.adapters)) continue;
     try {
       if (await adapter.detect()) {
         activeAdapters.push(adapter);
@@ -119,9 +125,12 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   if (activeAdapters.length === 0) {
     log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
+    logProtectedSourceStartupNotices(log, protectedSourceNotices);
     cleanup();
     process.exit(1);
   }
+
+  logProtectedSourceStartupNotices(log, protectedSourceNotices);
 
   // Non-blocking update check on daemon start
   import("../updater").then(({ checkForUpdate }) =>
@@ -283,6 +292,23 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   // Keep alive
   await new Promise(() => {});
+}
+
+function logProtectedSourceStartupNotices(
+  log: (message: string) => void,
+  notices: Array<{ summary: string }>,
+): void {
+  if (notices.length === 0) {
+    return;
+  }
+
+  log("Protected/app-private startup sources were not probed without explicit opt-in.");
+  for (const notice of notices) {
+    log(notice.summary);
+  }
+  log(
+    `Opt in via ${configPath()}: set adapters.<id>.allowProtectedSource = true or adapters.<id>.dataDir to a user-provided path.`,
+  );
 }
 
 // Backpressure: push sessions in batches to avoid loading all messages into memory at once.

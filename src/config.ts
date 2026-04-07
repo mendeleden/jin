@@ -41,7 +41,20 @@ export type {
   WebhookSinkConfig as V2WebhookSinkConfig,
 } from "./contracts/config";
 
-export type AdapterConfig = ContractAdapterConfig;
+const PROTECTED_SOURCE_ADAPTER_IDS = [
+  "cursor",
+  "kiro",
+  "opencode",
+  "warp",
+] as const;
+
+const PROTECTED_SOURCE_ADAPTER_ID_SET = new Set<string>(
+  PROTECTED_SOURCE_ADAPTER_IDS,
+);
+
+export interface AdapterConfig extends ContractAdapterConfig {
+  allowProtectedSource?: boolean;
+}
 
 export interface TeamConfig {
   teamId: string;
@@ -125,6 +138,41 @@ const DEFAULT_ADAPTER_IDS = [
   "piagent",
 ] as const;
 
+export function isProtectedSourceAdapter(adapterId: string): boolean {
+  return PROTECTED_SOURCE_ADAPTER_ID_SET.has(adapterId);
+}
+
+export function defaultAdapterConfig(adapterId: string): AdapterConfig {
+  if (isProtectedSourceAdapter(adapterId)) {
+    return {
+      enabled: true,
+      allowProtectedSource: false,
+    };
+  }
+
+  return {
+    enabled: true,
+  };
+}
+
+export function resolveAdapterConfig(
+  adapters: Record<string, AdapterConfig> | undefined,
+  adapterId: string,
+): AdapterConfig {
+  return {
+    ...defaultAdapterConfig(adapterId),
+    ...(adapters?.[adapterId] ?? {}),
+  };
+}
+
+export function isProtectedSourceOptedIn(config: AdapterConfig | undefined): boolean {
+  if (!config) {
+    return false;
+  }
+
+  return config.allowProtectedSource === true || Boolean(config.dataDir);
+}
+
 export function configDir(): string {
   if (process.env.JIN_CONFIG_DIR) return process.env.JIN_CONFIG_DIR;
   if (process.platform === "win32") {
@@ -190,7 +238,7 @@ export async function saveConfig(config: JinConfig): Promise<void> {
 
 function defaultAdapters(): Record<string, AdapterConfig> {
   return Object.fromEntries(
-    DEFAULT_ADAPTER_IDS.map((adapterId) => [adapterId, { enabled: true }]),
+    DEFAULT_ADAPTER_IDS.map((adapterId) => [adapterId, defaultAdapterConfig(adapterId)]),
   );
 }
 
@@ -205,10 +253,15 @@ function normalizeAdapters(
     return cloneAdapters(fallback);
   }
 
+  const adapterIds = new Set<string>([
+    ...Object.keys(fallback),
+    ...Object.keys(raw),
+  ]);
+
   return Object.fromEntries(
-    Object.entries(raw).map(([adapterId, value]) => [
+    Array.from(adapterIds).map((adapterId) => [
       adapterId,
-      normalizeAdapterConfig(value),
+      normalizeAdapterConfig(adapterId, raw[adapterId]),
     ]),
   );
 }
@@ -224,14 +277,27 @@ function cloneAdapters(
   );
 }
 
-function normalizeAdapterConfig(raw: unknown): AdapterConfig {
+function normalizeAdapterConfig(
+  adapterId: string,
+  raw: unknown,
+): AdapterConfig {
+  const fallback = defaultAdapterConfig(adapterId);
+
   if (!isRecord(raw)) {
-    return { enabled: true };
+    return fallback;
   }
 
   const dataDir = asString(raw.dataDir);
+  const allowProtectedSource = asBoolean(raw.allowProtectedSource);
   return {
-    enabled: asBoolean(raw.enabled) ?? true,
+    enabled: asBoolean(raw.enabled) ?? fallback.enabled,
+    ...(fallback.allowProtectedSource !== undefined ||
+    allowProtectedSource !== undefined
+      ? {
+          allowProtectedSource:
+            allowProtectedSource ?? fallback.allowProtectedSource,
+        }
+      : {}),
     ...(dataDir ? { dataDir } : {}),
   };
 }
