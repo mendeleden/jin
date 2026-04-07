@@ -2,6 +2,11 @@
 
 This file explains how to launch work for a fresh-context agent.
 
+For concrete `codex exec`, `claude -p`, `tmux`, session-id, and log-path
+examples, see:
+
+- `docs/execution/prompts/agent-launch-cookbook.md`
+
 ## What To Send
 
 Every dispatch should include exactly five things:

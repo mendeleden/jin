@@ -43,7 +43,7 @@ The control plane tells you what is happening right now.
 - `templates/`
   - templates for initializing the live control plane
 - `prompts/`
-  - reusable launch prompts for the first Codex and Cursor sessions
+  - reusable launch prompts and the operator cookbook for Codex/Claude worker launches
 - `tasks/`
   - concrete execution packets
 
@@ -53,15 +53,16 @@ The control plane tells you what is happening right now.
 2. Read `01-dispatch-protocol.md`.
 3. Read `03-blueprint-task-map.md`.
 4. Read `05-live-control-plane.md`.
-5. Initialize the shared control plane at `.execution/` or another chosen
+5. Read `prompts/agent-launch-cookbook.md` before launching detached workers.
+6. Initialize the shared control plane at `.execution/` or another chosen
    control directory.
-6. Execute `tasks/W0-CODEX-01-contract-freeze.md`.
-7. Start `tasks/W0-CURSOR-01-drift-audit.md` and keep it running as the
+7. Execute `tasks/W0-CODEX-01-contract-freeze.md`.
+8. Start `tasks/W0-CURSOR-01-drift-audit.md` and keep it running as the
    audit lane.
-8. After contract freeze, dispatch Wave 1 worker packets in parallel.
-9. Use Wave 2 and Wave 3 packets to finish blueprint coverage and surface
+9. After contract freeze, dispatch Wave 1 worker packets in parallel.
+10. Use Wave 2 and Wave 3 packets to finish blueprint coverage and surface
    cleanup.
-10. Let Codex perform the integration pass for any glue that packets
+11. Let Codex perform the integration pass for any glue that packets
    intentionally forbid.
 
 ## Core Roles
