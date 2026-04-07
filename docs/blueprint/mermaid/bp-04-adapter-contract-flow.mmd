@@ -1,0 +1,28 @@
+%% Source: docs/blueprint/BP-04-adapter-contract.md
+%% Diagram: Adapter Contract Flow
+
+sequenceDiagram
+    participant Coordinator as Pipeline coordinator
+    participant Adapter
+    participant Watcher as File watcher
+    participant Store
+
+    Coordinator->>Adapter: detect()
+    Adapter-->>Coordinator: boolean
+    Coordinator->>Adapter: watchPaths()
+    Adapter-->>Coordinator: string[]
+    Coordinator->>Watcher: register adapter paths
+
+    Note over Adapter: Adapter owns change detection, deterministic IDs,<br/>compaction splitting, sub-agent detection,<br/>git resolution, tool-call extraction, thinking extraction
+
+    Watcher->>Coordinator: startup-scan | fs-change | periodic-scan
+    Coordinator->>Adapter: findChanged(hint?)
+    Adapter-->>Coordinator: ConversationRef[]
+
+    loop each changed ref
+        Coordinator->>Adapter: loadConversation(ref)
+        Adapter-->>Coordinator: ConversationBundle | null
+        Coordinator->>Store: writeBundle(bundle)
+    end
+
+    Note over Coordinator,Store: Pipeline owns watching, store writes, routing, push scheduling, and sink delivery

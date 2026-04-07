@@ -1,0 +1,13 @@
+%% Source: docs/blueprint/BP-Product-Strategy.md
+%% Diagram: Product Boundaries
+
+flowchart LR
+    Developer["Developer"] --> Desktop["Jin Desktop<br/>surface over daemon"]
+    Developer --> Daemon["Jin Daemon<br/>local runtime and store"]
+
+    Desktop -->|"stable daemon boundary"| Daemon
+    Daemon -->|"product API / workspace sync"| Team["Jin Team<br/>remote workspace product"]
+    Daemon -->|"generic integration delivery"| Integrations["Integration sinks<br/>Postgres, S3, webhook, OTLP"]
+
+    Rule["Team is a product plane,<br/>not a sink flavor"] -. separates .-> Team
+    Rule -. separates .-> Integrations

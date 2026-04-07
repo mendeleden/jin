@@ -1,0 +1,15 @@
+%% Source: docs/blueprint/BP-08-routing-and-config.md
+%% Diagram: Route Selection
+
+flowchart LR
+    Conversation["Conversation<br/>git_remote, adapter_id, branch, name"] --> Evaluate["Evaluate every route"]
+    Routes["Route list<br/>glob match per field<br/>AND semantics within a route"] --> Evaluate
+    Evaluate --> Matches["Collect all matching routes"]
+    Matches --> Union["Union sink IDs from all matches"]
+    Union --> Any{"any matches?"}
+
+    Any -->|No| LocalOnly["No push<br/>safe zero-state"]
+    Any -->|Yes| Targets["Return matching sinks"]
+
+    Wildcard["Explicit wildcard route<br/>{ match: {}, sinks: [...] }"] -. if you want catch-all .-> Routes
+    NoDefault["No defaultSinks"] -. safety rule .-> LocalOnly

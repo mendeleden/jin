@@ -1,0 +1,21 @@
+%% Source: docs/blueprint/BP-03-conversation-model.md
+%% Diagram: Trace Relationships
+
+flowchart TD
+    subgraph Trace["One trace: all conversations share trace_id = root-id"]
+        Root["Root conversation<br/>relationship = root<br/>trace_id = id<br/>parent_id = empty"]
+        C1["Compacted continuation<br/>relationship = compacted<br/>trace_id = root-id<br/>parent_id = root"]
+        C2["Compacted continuation<br/>relationship = compacted<br/>trace_id = root-id<br/>parent_id = compacted-1"]
+        S1["Spawned child<br/>relationship = spawned<br/>trace_id = root-id<br/>parent_id = root<br/>fork_point = 12"]
+        S2["Spawned child<br/>relationship = spawned<br/>trace_id = root-id<br/>parent_id = compacted-1<br/>fork_point = 55"]
+        F1["Forked branch<br/>relationship = forked<br/>trace_id = root-id<br/>parent_id = root-or-segment<br/>fork_point = N"]
+
+        Root -->|"parent_id"| C1 -->|"parent_id"| C2
+        Root -->|"spawned at turn 12"| S1
+        C1 -->|"spawned at turn 55"| S2
+        Root -->|"fork at turn N"| F1
+    end
+
+    Query["Trace query<br/>WHERE trace_id = root-id"] -. returns all conversations .-> Trace
+    Messages["messages table<br/>one row per message"] -. linked by conversation_id .-> Trace
+    ToolCalls["tool_calls table<br/>one row per tool invocation"] -. extracted from messages .-> Messages

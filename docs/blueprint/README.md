@@ -33,6 +33,9 @@ BP-05 (Store)    BP-06 (Sinks)    BP-07 (Lifecycle)    BP-08 (Routing)
 
 BP-01 and BP-04 come first — everything else references them.
 
+Preview-friendly standalone Mermaid diagrams derived from these blueprint docs
+live under `docs/blueprint/mermaid/`.
+
 ## How to Use
 
 1. **Read before implementing** — code follows blueprints

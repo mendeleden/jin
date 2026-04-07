@@ -6,21 +6,23 @@ Codex-owned integration packet.
 
 ## Goal
 
-Close the immediate same-day release-prep loop before running the persona E2E
-validation.
+Close the immediate same-day release-prep loop after the runtime/team/startup
+lanes are settled enough to make a binary and run persona E2E.
 
 This packet is not the true runtime/store cutover. It is the practical
-pre-E2E/pre-preview checkpoint that makes the repo ready for a local end-to-end
-validation pass and an honest experimental-preview decision.
+pre-E2E/pre-preview checkpoint that turns the current packet stack into one
+operator-usable sequence and one explicit go/no-go decision.
 
 ## Depends On
 
 - `W3-TEAM-01-team-bootstrap-and-schema-escape-hatch.md`
+- `W3-STARTUP-01-protected-source-opt-in.md`
+- `W3-RUNTIME-01-live-runtime-store-cutover.md`
 - `W3-E2E-01-persona-cuj-local-postgres.md`
 
 ## Unblocks
 
-- clean `W3-TEAM-01` approval + commit
+- local binary rebuild/install and smoke test
 - local Docker/Postgres persona E2E run
 - experimental preview go/no-go with explicit caveats
 
@@ -32,12 +34,15 @@ validation pass and an honest experimental-preview decision.
 4. `.execution/program.md`
 5. `.execution/blueprints.md`
 6. `.execution/packets/W3-TEAM-01.md`
-7. `.execution/reviews/2026-04-06-W3-TEAM-01-codex.md`
-8. `.execution/reviews/2026-04-06-W3-TEAM-01-codex-recheck.md` if present
-9. `docs/execution/tasks/W3-E2E-01-persona-cuj-local-postgres.md`
-10. `package.json`
-11. `test/docker-compose.integration.yml`
-12. `test/integration.test.ts`
+7. `.execution/packets/W3-RUNTIME-01.md`
+8. `.execution/reviews/2026-04-06-W3-TEAM-01-codex.md`
+9. `.execution/reviews/2026-04-06-W3-TEAM-01-codex-recheck.md` if present
+10. `.execution/reviews/2026-04-07-W3-RUNTIME-01-codex.md`
+11. `.execution/reviews/2026-04-07-W3-RUNTIME-01-codex-recheck.md`
+12. `docs/execution/tasks/W3-E2E-01-persona-cuj-local-postgres.md`
+13. `package.json`
+14. `test/docker-compose.integration.yml`
+15. `test/integration.test.ts`
 
 ## Owned Files
 
@@ -57,7 +62,8 @@ be used for broad product edits.
 ## Deliverables
 
 - explicit same-day final-steps checklist covering:
-  - `W3-TEAM-01` reconcile / approve / commit
+  - the already-completed `W3-RUNTIME-01` approval/commit checkpoint in
+    `45529f8`
   - local Docker/Postgres E2E prerequisites
   - binary rebuild/install prerequisite
   - preview release caveats
@@ -68,9 +74,19 @@ be used for broad product edits.
 
 ## Acceptance Checks
 
-- the packet gives one concrete sequence from `W3-TEAM-01` review to local E2E
-- the packet makes the runtime/store cutover caveat explicit
-- the packet does not pretend the v2 pipeline/store is already the live runtime
+- the packet gives one concrete sequence from the approved `W3-RUNTIME-01`
+  state to local E2E
+- the packet makes the runtime/store cutover state explicit and current instead
+  of assuming a stale pre-approval state
+- the packet distinguishes local binary smoke testing from the Docker/Postgres persona E2E gate
+
+## 2026-04-07 Execution Output
+
+- concrete same-day checklist and readiness split:
+  `docs/execution/audits/2026-04-07-W3-V2-01-final-steps.md`
+- first checkpoint is the already-completed `W3-RUNTIME-01` approval/commit in
+  `45529f8`; move directly to binary rebuild/install and persona E2E without a
+  runtime re-review/commit loop
 
 ## Completion Report
 

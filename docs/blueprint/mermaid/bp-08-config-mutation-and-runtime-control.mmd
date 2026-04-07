@@ -1,0 +1,14 @@
+%% Source: docs/blueprint/BP-08-routing-and-config.md
+%% Diagram: Config Mutation and Runtime Control
+
+flowchart TD
+    Mutate["jin sink add/remove<br/>jin route add/remove<br/>jin adapter enable/disable"] --> Validate["validate + write config.json"]
+    Validate --> RestartChoice{"apply immediately?"}
+    RestartChoice -->|No| Prompt["print restart instruction"]
+    RestartChoice -->|Yes or --yes| Restart["controlled restart<br/>stop runtime -> reload config -> start runtime"]
+
+    Disable["jin sink disable <id>"] --> Durable["set sink.enabled = false in durable config"]
+    Durable --> Signal["signal runtime immediately"]
+    Signal --> Skip["pushDirty() skips that sink<br/>no full restart required"]
+
+    Stop["jin stop"] --> Shutdown["emergency stop<br/>preempt queue, close watchers/timers,<br/>final bounded flush, exit"]

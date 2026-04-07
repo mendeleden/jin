@@ -14,8 +14,10 @@ Read the shared control plane first:
 - `.execution/program.md`
 - `.execution/blueprints.md`
 - `.execution/packets/W3-TEAM-01.md`
+- `.execution/packets/W3-RUNTIME-01.md`
 - `.execution/reviews/2026-04-06-W3-TEAM-01-codex.md`
 - `.execution/reviews/2026-04-06-W3-TEAM-01-codex-recheck.md` if present
+- `.execution/reviews/2026-04-07-W3-RUNTIME-01-codex.md`
 - `docs/execution/tasks/W3-E2E-01-persona-cuj-local-postgres.md`
 
 Then read the local E2E assets:
@@ -35,6 +37,10 @@ Goals:
   - what must land before an experimental preview binary
   - what is still deferred until the real runtime/store cutover
 
+Guardrail:
+- if `W3-RUNTIME-01` is still unresolved, make that the first blocking item in
+  the output instead of writing around it
+
 Constraints:
 - do not claim the v2 pipeline/store is already the live runtime path
 - do not widen into the full runtime/store cutover
@@ -43,7 +49,7 @@ Constraints:
 Required output:
 - concise completion report in the `00-global-rules.md` format
 - an ordered checklist for:
-  - `W3-TEAM-01` finalize
+  - `W3-RUNTIME-01` finalize
   - local Docker/Postgres E2E
   - rebuild/install current binary
   - experimental preview decision

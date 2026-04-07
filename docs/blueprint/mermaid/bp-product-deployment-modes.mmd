@@ -1,0 +1,24 @@
+%% Source: docs/blueprint/BP-Product-Strategy.md
+%% Diagram: Deployment Modes
+
+flowchart TD
+    subgraph Personal["Personal mode"]
+        PDaemon["Jin Daemon"]
+        PDesktop["Jin Desktop"]
+        PDesktop --> PDaemon
+    end
+
+    subgraph Workspace["Workspace mode"]
+        WDaemon["Jin Daemon"]
+        WDesktop["Jin Desktop"]
+        WTeam["Jin Team"]
+        WDesktop --> WDaemon --> WTeam
+    end
+
+    subgraph BYO["BYO integration mode"]
+        BDaemon["Jin Daemon"]
+        BDesktop["Desktop (optional)"]
+        BSinks["Integration sinks"]
+        BDesktop -. optional .-> BDaemon
+        BDaemon --> BSinks
+    end
