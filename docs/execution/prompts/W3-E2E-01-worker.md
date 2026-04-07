@@ -19,6 +19,10 @@ Read the shared control plane first:
 - `.execution/blueprints.md`
 - `.execution/packets/W3-STARTUP-01.md`
 - `.execution/packets/W3-TEAM-01.md`
+- `.execution/packets/W3-RUNTIME-01.md`
+- `.execution/packets/W3-V2-01.md`
+- `.execution/reviews/2026-04-07-W3-RUNTIME-01-codex-recheck.md`
+- `.execution/reviews/2026-04-07-W3-V2-01-codex-recheck.md`
 
 Before coding, create or update your heartbeat at
 `.execution/agents/codex-WORKER-persona-e2e-local-postgres.md` with:
@@ -47,7 +51,9 @@ Only then read the exact BP docs and code files named in the packet:
 
 Current program context:
 - `W3-STARTUP-01` and `W3-PRODUCT-01` are approved
-- `W3-TEAM-01` must define the operator/bootstrap surface this packet exercises
+- `W3-TEAM-01` defines the operator/bootstrap surface this packet exercises
+- `W3-RUNTIME-01` is approved and committed in `45529f8`
+- `W3-V2-01` is approved and defines the current release-prep sequence
 - this lane is for persona-driven E2E validation, not a general product rewrite
 
 Constraints:
