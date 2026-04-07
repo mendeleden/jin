@@ -16,6 +16,7 @@ not the other way around.
 | [BP-06](BP-06-sink-contract.md) | Sink Contract | **reviewed** | What is the timeless contract for integration sinks? |
 | [BP-07](BP-07-process-lifecycle.md) | Process Lifecycle | **reviewed** | How does one runtime behave across foreground, daemon, service, and Desktop boundary modes? |
 | [BP-08](BP-08-routing-and-config.md) | Routing & Configuration | **reviewed** | How do conversations match to sinks? How does config mutation work? |
+| [BP-09](BP-09-cli-split.md) | CLI Split — jin vs jin team | **draft** | Which commands belong to the developer? Which to the operator? |
 | [BP-Product-Strategy](BP-Product-Strategy.md) | Product Strategy | **draft** | What are the enduring product boundaries for Daemon, Desktop, Team, and integrations? |
 
 ## Dependency Order
