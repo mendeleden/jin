@@ -109,6 +109,31 @@ rolls back entirely. Push never sees partial data.
 | Pipeline | Adapter | `ConversationRef` | Pipeline calls `loadConversation(ref)`. Adapter returns `ConversationBundle \| null`. |
 | Pipeline | Store | `ConversationBundle` | Pipeline writes bundle within a transaction. Store handles upsert/replace. Derived fields recomputed after writes. |
 
+### Adapter Memory Contract
+
+The ingest loop assumes the discover/load split is also a **memory contract**.
+Batching, yielding, RSS warnings, and the hard limit only work if adapters keep
+discovery bounded.
+
+**Required adapter behavior:**
+- `findChanged()` returns `ConversationRef[]`, not retained `ConversationBundle`s
+- adapter-side checkpoint state may live in memory, but it must stay small
+  (stats, offsets, signatures, source-local ref IDs, parent maps)
+- if discovery must inspect source content to derive stable ref IDs or
+  compaction boundaries, it must do so one source unit at a time and release
+  that temporary parse before scanning the next source
+- if one source can fan out to many refs, the reclamation point is the source
+  boundary, not the end of the whole adapter cycle
+- `loadConversation()` is where full bundle materialization belongs; any reuse
+  of a parsed source must be bounded to one source or another explicit
+  eviction policy
+
+**Out of contract:**
+- parsing and caching full bundles for many sources during `findChanged()`
+- treating the pipeline RSS hard limit as the primary reclamation mechanism
+- timeout helpers or caches that pin successful large results after the call no
+  longer needs them
+
 ### Backpressure
 
 Ingest processes refs in batches. Between batches, yield to the event loop
@@ -116,6 +141,11 @@ so the GC can reclaim parsed file buffers. This caps RSS during cold ingest
 (loading hundreds of conversations at once).
 
 Batch size is configurable but defaults to 20 conversations per yield.
+
+Backpressure is therefore a **shared responsibility**:
+- the pipeline limits how many refs are loaded before yielding
+- the adapter keeps discovery memory bounded so the runtime is yielding between
+  small ref-producing steps, not after retaining many fully parsed sources
 
 ### Watcher Debounce (Not Pipeline Cooldown)
 

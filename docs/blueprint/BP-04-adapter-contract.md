@@ -100,11 +100,14 @@ type ChangeHint = {
 
 ### Why This Shape
 
-**Two-phase discover/load.** `findChanged()` is cheap — it checks file stats,
-byte offsets, or timestamps. `loadConversation()` is expensive — it parses
-files, extracts tool calls, resolves git info. Separating them lets the
-pipeline apply backpressure between items: discover 65 refs, load 20, yield,
-load 20 more.
+**Two-phase discover/load.** `findChanged()` is lightweight and bounded.
+Preferred discovery work is metadata/index-based (file stats, byte offsets,
+timestamps, shared-DB headers). Some adapters may need a bounded structural
+scan of one source unit to derive stable ref IDs or compaction boundaries when
+the source offers no cheaper index. `loadConversation()` is the heavy step: it
+materializes the full bundle, extracts tool calls, and resolves git info.
+Separating them lets the pipeline apply backpressure between items: discover 65
+refs, load 20, yield, load 20 more.
 
 **Bundle eliminates temporal coupling.** The previous `conversations()` +
 `messages(conversationId)` pattern required shared-database adapters to hold
@@ -114,6 +117,49 @@ one conversation in one call — no cross-call state, no transaction lifecycle.
 **Hint is advisory, not structural.** Simple adapters ignore it. Complex
 adapters (Claude Code) can use `changedPaths` to re-read only the changed
 file instead of scanning all files.
+
+### Discover / Load Memory Contract
+
+The discover/load split is a **memory contract**, not just an API shape.
+
+`findChanged()`:
+- MUST return lightweight refs, not retained full bundles
+- MAY keep small in-memory checkpoint state across calls: stats, offsets,
+  signatures, source-local ref IDs, parent/child indexes
+- MAY do a bounded structural scan of one source unit when needed to derive
+  deterministic ref IDs, compaction boundaries, or spawned refs
+- MUST make any large temporary parse reclaimable before moving on to the next
+  source unit
+- MUST NOT parse and cache full bundles for many sources so `loadConversation()`
+  becomes a cache lookup
+
+`loadConversation()`:
+- MAY fully parse the source material needed for the requested ref
+- MAY reuse a parsed source when sibling refs share that same source
+- any such reuse MUST be explicitly bounded: one-source cache, size limit, or
+  another eviction rule that makes large results reclaimable promptly
+
+**Allowed simple-adapter exception:** if one source unit maps to exactly one
+root conversation and the source offers no cheaper stable ID/index, discovery
+MAY parse that source to derive the ref ID and `loadConversation()` MAY reparse
+it. This is only acceptable when:
+- the parse is local to one source per returned ref
+- no full bundles are cached across multiple sources
+- one source does not fan out to many refs
+
+### Memory Review Questions
+
+Every rich adapter review must answer:
+1. Is `findChanged()` metadata/index-only, or does it perform a bounded
+   structural scan?
+2. If discovery scans source content, where is the reclamation point before the
+   next source is scanned?
+3. Does `loadConversation()` reparse source already consumed by discovery, and
+   if so is that duplicate work bounded and intentional?
+4. Can one source unit emit many refs, and if so how is sibling-ref reuse
+   bounded?
+5. Do helper caches or timeout wrappers retain successful large results longer
+   than the adapter/store boundary needs them?
 
 **What's NOT on the interface:**
 - No `conversations()` / `messages()` split — replaced by bundle
@@ -173,6 +219,11 @@ adapter to return only what needs re-ingesting.
 **Why the adapter owns this:** A file-level cache breaks for shared-database
 adapters where one SQLite file contains dozens of conversations. Only the
 adapter knows how to detect per-conversation changes within a shared database.
+
+**Memory consequence:** change detection is allowed to remember only enough to
+decide which refs changed. If an adapter needs full parsed bundles to answer
+that question, it must either bound that state to one source at a time or be
+treated as a follow-on hardening target.
 
 ### Checkpoint Persistence
 
