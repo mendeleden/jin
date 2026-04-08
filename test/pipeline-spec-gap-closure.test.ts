@@ -106,6 +106,45 @@ describe("pipeline spec gap closure", () => {
     );
   });
 
+  test("BP-02 matrix row: Codex ingest narrows batch cadence to bound peak RSS", async () => {
+    const store = new InMemoryConversationStore();
+    const processedRefs: number[] = [];
+    const adapter = new TestAdapter("codex", {
+      async findChanged() {
+        return [
+          makeRef("codex-1", "codex"),
+          makeRef("codex-2", "codex"),
+          makeRef("codex-3", "codex"),
+        ];
+      },
+      async loadConversation(ref) {
+        return makeBundle(ref.id, "codex");
+      },
+    });
+
+    const result = await ingestOne(
+      adapter,
+      store,
+      { kind: "startup-scan" },
+      {
+        batchSize: 20,
+        onBatchProcessed: ({ processedRefs: count }) => {
+          processedRefs.push(count);
+        },
+      },
+    );
+
+    expect(result.scannedRefCount).toBe(3);
+    expect(result.loadedConversationCount).toBe(3);
+    expect(result.anyChanged).toBe(true);
+    expect(adapter.loadConversationRefs).toEqual([
+      "codex-1",
+      "codex-2",
+      "codex-3",
+    ]);
+    expect(processedRefs).toEqual([1, 2]);
+  });
+
   test("BP-08 matrix row: pushDirty skips disabled sinks without affecting enabled sinks", async () => {
     const store = new InMemoryConversationStore();
     const logger = createLogger();

@@ -1,8 +1,9 @@
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
+import { createInterface } from "readline";
 import { estimateCost } from "../pricing";
 import type {
   Adapter,
@@ -32,6 +33,12 @@ type JsonObject = Record<string, unknown>;
 interface FileSnapshot {
   size: number;
   mtimeMs: number;
+}
+
+interface CachedFileIndex {
+  snapshot: FileSnapshot;
+  sessionId: string;
+  refIds: string[];
 }
 
 interface TokenUsage {
@@ -74,6 +81,13 @@ interface ResolvedBase {
   forkPoint: number;
 }
 
+interface LoadedFileModel {
+  snapshot: FileSnapshot;
+  model: LocalFileModel;
+  base: ResolvedBase;
+  git: GitInfo;
+}
+
 export class CodexAdapter implements Adapter, V2Adapter {
   id = "codex";
   name = "Codex";
@@ -83,7 +97,14 @@ export class CodexAdapter implements Adapter, V2Adapter {
   private readonly sessionsDir: string;
   private readonly archivedSessionsDir: string;
   private readonly statCache = new Map<string, FileSnapshot>();
+  private readonly fileIndexCache = new Map<string, CachedFileIndex>();
   private readonly gitCache = new Map<string, GitInfo>();
+  private loadedFileCache:
+    | {
+        filePath: string;
+        entry: LoadedFileModel;
+      }
+    | null = null;
 
   constructor(codexHome = process.env.CODEX_HOME || DEFAULT_CODEX_HOME) {
     this.codexHome = codexHome;
@@ -102,6 +123,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
     for (const cachedPath of this.statCache.keys()) {
       if (!currentFiles.has(cachedPath)) {
         this.statCache.delete(cachedPath);
+        this.fileIndexCache.delete(cachedPath);
+        if (this.loadedFileCache?.filePath === cachedPath) {
+          this.loadedFileCache = null;
+        }
       }
     }
 
@@ -114,8 +139,14 @@ export class CodexAdapter implements Adapter, V2Adapter {
 
     const refs: ConversationRef[] = [];
     for (const filePath of targetFiles) {
-      this.updateSnapshot(filePath);
-      refs.push(...this.refsForFile(filePath));
+      const snapshot = this.readSnapshot(filePath);
+      if (!snapshot) {
+        continue;
+      }
+
+      this.statCache.set(filePath, snapshot);
+      refs.push(...this.refsForFile(filePath, snapshot));
+      await this.reclaimScanMemory();
     }
 
     return refs;
@@ -126,16 +157,24 @@ export class CodexAdapter implements Adapter, V2Adapter {
       return null;
     }
 
-    const model = this.buildFileModel(ref.sourcePath);
-    if (!model) {
+    const loaded = await this.loadFileModel(ref.sourcePath);
+    if (!loaded) {
       return null;
     }
 
-    const base = this.resolveBase(model);
-    const git = this.resolveConversationGit(model);
-    const bundles = this.buildBundles(model, base, git);
+    const segmentIndex = loaded.model.segments.findIndex(
+      (segment) => segment.id === ref.id,
+    );
+    if (segmentIndex < 0) {
+      return null;
+    }
 
-    return bundles.find((bundle) => bundle.conversation.id === ref.id) ?? null;
+    return this.buildBundle(
+      loaded.model,
+      loaded.base,
+      loaded.git,
+      segmentIndex,
+    );
   }
 
   async sessions(): Promise<Session[]> {
@@ -214,14 +253,17 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }
   }
 
-  private refsForFile(filePath: string): ConversationRef[] {
-    const model = this.buildFileModel(filePath);
-    if (!model) {
+  private refsForFile(
+    filePath: string,
+    snapshot?: FileSnapshot,
+  ): ConversationRef[] {
+    const index = this.getFileIndex(filePath, snapshot);
+    if (!index) {
       return [];
     }
 
-    return model.segments.map((segment) => ({
-      id: segment.id,
+    return index.refIds.map((refId) => ({
+      id: refId,
       sourcePath: filePath,
       adapterId: this.id,
     }));
@@ -238,30 +280,30 @@ export class CodexAdapter implements Adapter, V2Adapter {
   }
 
   private findRefInFile(sessionId: string, sourcePath: string): ConversationRef | null {
-    return this.refsForFile(sourcePath).find((ref) => ref.id === sessionId) ?? null;
+    const index = this.getFileIndex(sourcePath);
+    if (!index || !index.refIds.includes(sessionId)) {
+      return null;
+    }
+
+    return {
+      id: sessionId,
+      sourcePath,
+      adapterId: this.id,
+    };
   }
 
   private hasFileChanged(filePath: string): boolean {
-    try {
-      const stats = statSync(filePath);
-      const previous = this.statCache.get(filePath);
-      if (!previous) {
-        return true;
-      }
-      return previous.size !== stats.size || previous.mtimeMs !== stats.mtimeMs;
-    } catch (error) {
-      console.warn(`[codex adapter] failed to stat ${filePath}:`, error);
+    const snapshot = this.readSnapshot(filePath);
+    if (!snapshot) {
       return false;
     }
-  }
 
-  private updateSnapshot(filePath: string): void {
-    try {
-      const stats = statSync(filePath);
-      this.statCache.set(filePath, { size: stats.size, mtimeMs: stats.mtimeMs });
-    } catch (error) {
-      console.warn(`[codex adapter] failed to stat ${filePath}:`, error);
+    const previous = this.statCache.get(filePath);
+    if (!previous) {
+      return true;
     }
+
+    return previous.size !== snapshot.size || previous.mtimeMs !== snapshot.mtimeMs;
   }
 
   private matchesChangedPaths(filePath: string, changedPaths: string[]): boolean {
@@ -272,12 +314,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
     );
   }
 
-  private buildFileModel(filePath: string): LocalFileModel | null {
-    const lines = this.readJsonlLines(filePath);
-    if (lines.length === 0) {
-      return null;
-    }
-
+  private async buildFileModel(filePath: string): Promise<LocalFileModel | null> {
     const fileTimestamp = this.fileTimestamp(filePath);
     let sessionId = this.defaultSessionId(filePath);
     let sessionIdLocked = false;
@@ -299,6 +336,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
     let pendingUsage: TokenUsage = { ...EMPTY_USAGE };
     let pendingAssistantTimestamp = "";
     let pendingAssistantModel = "";
+    let sawLine = false;
 
     const ensureSegment = (timestamp: string): LocalSegment => {
       if (!currentSegment) {
@@ -383,8 +421,8 @@ export class CodexAdapter implements Adapter, V2Adapter {
       clearPendingAssistant();
     };
 
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
+    await this.scanJsonlFile(filePath, (line, index) => {
+      sawLine = true;
       const envelopeType = asString(line.type);
       const payload = asObject(line.payload);
       const timestamp = asString(line.timestamp) || sessionTimestamp;
@@ -412,14 +450,14 @@ export class CodexAdapter implements Adapter, V2Adapter {
         const source = payload.source;
         parentThreadId = this.extractParentThreadId(source) || asString(payload.forked_from_id) || parentThreadId;
         agentNickname = this.extractAgentNickname(source) || agentNickname;
-        continue;
+        return;
       }
 
       if (envelopeType === "turn_context" && payload) {
         currentTurn = currentTurn < 0 ? 1 : currentTurn + 1;
         cwd = asString(payload.cwd) || cwd;
         currentModel = asString(payload.model) || currentModel;
-        continue;
+        return;
       }
 
       if (envelopeType === "event_msg" && payload) {
@@ -428,7 +466,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
           pendingAssistantTimestamp = timestamp || pendingAssistantTimestamp;
           pendingAssistantModel = currentModel || pendingAssistantModel;
         }
-        continue;
+        return;
       }
 
       if (envelopeType === "compacted" && payload) {
@@ -502,11 +540,11 @@ export class CodexAdapter implements Adapter, V2Adapter {
           }
         }
 
-        continue;
+        return;
       }
 
       if (envelopeType !== "response_item" || !payload) {
-        continue;
+        return;
       }
 
       const itemType = asString(payload.type);
@@ -516,7 +554,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
         if (role !== "assistant") {
           flushPendingAssistant(timestamp, "synthetic_assistant");
           if (!content) {
-            continue;
+            return;
           }
           addMessage(ensureSegment(timestamp), {
             id:
@@ -538,7 +576,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
             timestamp,
             toolUses: [],
           });
-          continue;
+          return;
         }
 
         const usage = this.selectUsage(payload, pendingUsage);
@@ -568,7 +606,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
           toolUses: [...pendingTools],
         });
         clearPendingAssistant();
-        continue;
+        return;
       }
 
       if (itemType === "reasoning") {
@@ -576,7 +614,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
         pendingThinkingTokens = Math.max(pendingThinkingTokens, pendingUsage.reasoningTokens);
         pendingAssistantTimestamp = timestamp || pendingAssistantTimestamp;
         pendingAssistantModel = currentModel || pendingAssistantModel;
-        continue;
+        return;
       }
 
       if (itemType === "function_call" || itemType === "custom_tool_call" || itemType === "web_search_call") {
@@ -590,7 +628,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
         }
         pendingAssistantTimestamp = timestamp || pendingAssistantTimestamp;
         pendingAssistantModel = currentModel || pendingAssistantModel;
-        continue;
+        return;
       }
 
       if (itemType === "function_call_output" || itemType === "custom_tool_call_output") {
@@ -604,6 +642,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
         }
         pendingAssistantTimestamp = timestamp || pendingAssistantTimestamp;
       }
+    });
+
+    if (!sawLine) {
+      return null;
     }
 
     flushPendingAssistant(sessionTimestamp, "synthetic_assistant");
@@ -632,34 +674,41 @@ export class CodexAdapter implements Adapter, V2Adapter {
     };
   }
 
-  private buildBundles(model: LocalFileModel, base: ResolvedBase, git: GitInfo): ConversationBundle[] {
-    return model.segments.map((segment, index) => {
-      const conversation: ParsedConversation = {
-        id: segment.id,
-        traceId: base.traceId,
-        parentId: index === 0 ? base.parentId : model.segments[index - 1]?.id ?? "",
-        relationship: index === 0 ? base.relationship : "compacted",
-        forkPoint: index === 0 ? base.forkPoint : -1,
-        adapterId: this.id,
-        name: model.rootName,
-        cwd: model.cwd,
-        gitRemote: git.remote,
-        branch: git.branch,
-        model: mostFrequentModel(segment.modelCounts),
-        startedAt: segment.startedAt || model.sessionTimestamp,
-        endedAt: segment.endedAt || model.sessionTimestamp,
-        sourcePath: model.sourcePath,
-        sourceFormat: "jsonl",
-      };
+  private buildBundle(
+    model: LocalFileModel,
+    base: ResolvedBase,
+    git: GitInfo,
+    index: number,
+  ): ConversationBundle {
+    const segment = model.segments[index];
+    const conversation: ParsedConversation = {
+      id: segment.id,
+      traceId: base.traceId,
+      parentId: index === 0 ? base.parentId : model.segments[index - 1]?.id ?? "",
+      relationship: index === 0 ? base.relationship : "compacted",
+      forkPoint: index === 0 ? base.forkPoint : -1,
+      adapterId: this.id,
+      name: model.rootName,
+      cwd: model.cwd,
+      gitRemote: git.remote,
+      branch: git.branch,
+      model: mostFrequentModel(segment.modelCounts),
+      startedAt: segment.startedAt || model.sessionTimestamp,
+      endedAt: segment.endedAt || model.sessionTimestamp,
+      sourcePath: model.sourcePath,
+      sourceFormat: "jsonl",
+    };
 
-      return {
-        conversation,
-        messages: segment.messages,
-      };
-    });
+    return {
+      conversation,
+      messages: segment.messages,
+    };
   }
 
-  private resolveBase(model: LocalFileModel, visited = new Set<string>()): ResolvedBase {
+  private async resolveBase(
+    model: LocalFileModel,
+    visited = new Set<string>(),
+  ): Promise<ResolvedBase> {
     if (!model.parentThreadId || model.parentThreadId === model.sessionId) {
       return {
         traceId: model.segments[0]?.id ?? model.sessionId,
@@ -689,7 +738,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
       };
     }
 
-    const parentModel = this.buildFileModel(parentPath);
+    const parentModel = await this.buildFileModel(parentPath);
     if (!parentModel) {
       return {
         traceId: model.parentThreadId,
@@ -699,7 +748,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
       };
     }
 
-    const parentBase = this.resolveBase(parentModel, visited);
+    const parentBase = await this.resolveBase(parentModel, visited);
     const spawnLink = this.findSpawnLink(parentModel, model.sessionId, model.agentNickname);
 
     return {
@@ -784,46 +833,34 @@ export class CodexAdapter implements Adapter, V2Adapter {
   private buildSessionIndex(): Map<string, string> {
     const index = new Map<string, string>();
     for (const filePath of this.findAllSessionFiles()) {
-      const sessionId = this.readSessionId(filePath);
-      if (sessionId) {
-        index.set(sessionId, filePath);
+      const fileIndex = this.getFileIndex(filePath);
+      if (fileIndex?.sessionId) {
+        index.set(fileIndex.sessionId, filePath);
       }
     }
     return index;
   }
 
-  private readSessionId(filePath: string): string {
-    const lines = this.readJsonlLines(filePath);
-    for (const line of lines) {
-      if (asString(line.type) !== "session_meta") {
-        continue;
-      }
-      const payload = asObject(line.payload);
-      return asString(payload?.id) || this.defaultSessionId(filePath);
+  private getFileIndex(
+    filePath: string,
+    snapshot = this.readSnapshot(filePath),
+  ): CachedFileIndex | null {
+    if (!snapshot) {
+      return null;
     }
-    return this.defaultSessionId(filePath);
-  }
 
-  private readJsonlLines(filePath: string): JsonObject[] {
-    try {
-      const text = readFileSync(filePath, "utf8");
-      return text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .flatMap((line) => {
-          try {
-            const parsed = JSON.parse(line);
-            return isObject(parsed) ? [parsed] : [];
-          } catch (error) {
-            console.warn(`[codex adapter] failed to parse JSONL line in ${filePath}:`, error);
-            return [];
-          }
-        });
-    } catch (error) {
-      console.warn(`[codex adapter] failed to read ${filePath}:`, error);
-      return [];
+    const cached = this.fileIndexCache.get(filePath);
+    if (
+      cached &&
+      cached.snapshot.size === snapshot.size &&
+      cached.snapshot.mtimeMs === snapshot.mtimeMs
+    ) {
+      return cached;
     }
+
+    const index = this.scanFileIndex(filePath, snapshot);
+    this.fileIndexCache.set(filePath, index);
+    return index;
   }
 
   private fileTimestamp(filePath: string): string {
@@ -837,6 +874,181 @@ export class CodexAdapter implements Adapter, V2Adapter {
   private defaultSessionId(filePath: string): string {
     const name = basename(filePath, ".jsonl");
     return name.startsWith("rollout-") ? name.slice("rollout-".length) : name;
+  }
+
+  private async loadFileModel(filePath: string): Promise<LoadedFileModel | null> {
+    const snapshot = this.readSnapshot(filePath);
+    if (!snapshot) {
+      return null;
+    }
+
+    if (
+      this.loadedFileCache?.filePath === filePath &&
+      this.loadedFileCache.entry.snapshot.size === snapshot.size &&
+      this.loadedFileCache.entry.snapshot.mtimeMs === snapshot.mtimeMs
+    ) {
+      return this.loadedFileCache.entry;
+    }
+
+    const model = await this.buildFileModel(filePath);
+    if (!model) {
+      return null;
+    }
+
+    const entry: LoadedFileModel = {
+      snapshot,
+      model,
+      base: await this.resolveBase(model),
+      git: this.resolveConversationGit(model),
+    };
+    this.loadedFileCache = {
+      filePath,
+      entry,
+    };
+    return entry;
+  }
+
+  private scanFileIndex(
+    filePath: string,
+    snapshot: FileSnapshot,
+  ): CachedFileIndex {
+    let sessionId = this.defaultSessionId(filePath);
+    let sessionIdLocked = false;
+    let currentSegmentId = "";
+    let rootSegmentCreated = false;
+    const refIds: string[] = [];
+    const fallbackTimestamp = new Date(snapshot.mtimeMs).toISOString();
+    try {
+      const text = readFileSync(filePath, "utf8");
+      scanJsonlText(text, (rawLine, index) => {
+        if (rawLine.includes('"type":"session_meta"')) {
+          const line = asObject(parseJsonString(rawLine));
+          const payload = asObject(line?.payload);
+          const recordSessionId = asString(payload?.id);
+          if (recordSessionId && !sessionIdLocked) {
+            if (
+              currentSegmentId === sessionId &&
+              refIds.length === 1 &&
+              !rootSegmentCreated
+            ) {
+              refIds[0] = recordSessionId;
+              currentSegmentId = recordSessionId;
+            }
+            sessionId = recordSessionId;
+            sessionIdLocked = true;
+          }
+          return;
+        }
+
+        if (rawLine.includes('"type":"compacted"')) {
+          const line = asObject(parseJsonString(rawLine));
+          const payload = asObject(line?.payload);
+          const timestamp = asString(line?.timestamp) || fallbackTimestamp;
+          currentSegmentId = stableHash(
+            sessionId,
+            `compacted:${refIds.length}:${asString(payload?.id) || asString(payload?.turn_id) || timestamp || index}`,
+          );
+          refIds.push(currentSegmentId);
+          return;
+        }
+
+        if (rootSegmentCreated || !rawLine.includes('"type":"response_item"')) {
+          return;
+        }
+
+        const line = asObject(parseJsonString(rawLine));
+        const payload = asObject(line?.payload);
+        if (!payload) {
+          return;
+        }
+
+        const itemType = asString(payload.type);
+        if (itemType === "message") {
+          const role = normalizeRole(asString(payload.role));
+          const content = flattenMessageContent(payload.content);
+          if (role !== "assistant" && !content) {
+            return;
+          }
+        } else if (
+          itemType !== "reasoning" &&
+          itemType !== "function_call" &&
+          itemType !== "custom_tool_call" &&
+          itemType !== "web_search_call"
+        ) {
+          return;
+        }
+
+        currentSegmentId = sessionId;
+        refIds.push(currentSegmentId);
+        rootSegmentCreated = true;
+      });
+    } catch (error) {
+      console.warn(`[codex adapter] failed to read ${filePath}:`, error);
+    }
+
+    if (refIds.length === 0) {
+      refIds.push(sessionId);
+    }
+
+    return {
+      snapshot,
+      sessionId,
+      refIds,
+    };
+  }
+
+  private async scanJsonlFile(
+    filePath: string,
+    visit: (line: JsonObject, index: number) => void | Promise<void>,
+  ): Promise<void> {
+    let stream;
+    try {
+      stream = createReadStream(filePath, { encoding: "utf8" });
+      const reader = createInterface({
+        input: stream,
+        crlfDelay: Infinity,
+      });
+      let index = 0;
+
+      for await (const rawLine of reader) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
+
+        try {
+          const parsed = JSON.parse(line);
+          if (isObject(parsed)) {
+            await visit(parsed, index);
+            index += 1;
+          }
+        } catch (error) {
+          console.warn(
+            `[codex adapter] failed to parse JSONL line in ${filePath}:`,
+            error,
+          );
+        }
+      }
+    } catch (error) {
+      console.warn(`[codex adapter] failed to read ${filePath}:`, error);
+    } finally {
+      stream?.destroy();
+    }
+  }
+
+  private readSnapshot(filePath: string): FileSnapshot | null {
+    try {
+      const stats = statSync(filePath);
+      return { size: stats.size, mtimeMs: stats.mtimeMs };
+    } catch (error) {
+      console.warn(`[codex adapter] failed to stat ${filePath}:`, error);
+      return null;
+    }
+  }
+
+  private async reclaimScanMemory(): Promise<void> {
+    Bun.gc(true);
+    await Bun.sleep(0);
   }
 
   private extractParentThreadId(source: unknown): string {
@@ -1126,5 +1338,27 @@ function parseJsonString(value: string): unknown {
     return JSON.parse(value);
   } catch {
     return null;
+  }
+}
+
+function scanJsonlText(
+  text: string,
+  visit: (line: string, index: number) => void,
+): void {
+  let start = 0;
+  let index = 0;
+
+  while (start < text.length) {
+    const end = text.indexOf("\n", start);
+    const rawLine = end === -1 ? text.slice(start) : text.slice(start, end);
+    start = end === -1 ? text.length : end + 1;
+
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    visit(line, index);
+    index += 1;
   }
 }

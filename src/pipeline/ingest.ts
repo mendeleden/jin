@@ -40,10 +40,12 @@ export async function ingestOne(
   options: IngestOptions = {},
 ): Promise<IngestResult> {
   const logger = options.logger ?? NOOP_LOGGER;
-  const batchSize = normalizeBatchSize(
+  const configuredBatchSize = normalizeBatchSize(
     options.batchSize,
     DEFAULT_INGEST_BATCH_SIZE,
   );
+  const batchSize =
+    adapter.id === "codex" ? 1 : configuredBatchSize;
   const findChangedTimeoutMs = normalizeTimeoutMs(
     options.findChangedTimeoutMs,
     DEFAULT_FIND_CHANGED_TIMEOUT_MS,
@@ -119,7 +121,13 @@ export async function ingestOne(
       }
     }
 
-    if (start + batchSize < refs.length) {
+    const hasMoreRefs = start + batch.length < refs.length;
+
+    if (adapter.id === "codex") {
+      await reclaimCodexBatchMemory();
+    }
+
+    if (hasMoreRefs) {
       if (options.onBatchProcessed) {
         await options.onBatchProcessed({
           adapterId: adapter.id,
@@ -127,7 +135,10 @@ export async function ingestOne(
           totalRefs: refs.length,
         });
       }
-      await Bun.sleep(0);
+
+      if (adapter.id !== "codex") {
+        await Bun.sleep(0);
+      }
     }
   }
 
@@ -194,12 +205,22 @@ async function withTimeout<T>(
   timeoutMs: number,
   error: AdapterCallTimeoutError,
 ): Promise<T> {
-  return Promise.race([
-    work(),
-    Bun.sleep(timeoutMs).then(() => {
-      throw error;
-    }),
-  ]);
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(error);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 class AdapterCallTimeoutError extends Error {
@@ -227,4 +248,9 @@ class AdapterCallTimeoutError extends Error {
     this.ref = options.ref;
     this.timeoutMs = options.timeoutMs;
   }
+}
+
+async function reclaimCodexBatchMemory(): Promise<void> {
+  Bun.gc(true);
+  await Bun.sleep(0);
 }
