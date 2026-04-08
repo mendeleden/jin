@@ -106,10 +106,28 @@ interface FileModel {
   bundles: ConversationBundle[];
 }
 
-interface ParsedFileCacheEntry {
+interface FileIndex {
+  sessionId: string;
+  refs: ConversationRef[];
+}
+
+interface FileIndexCacheEntry {
+  size: number;
+  mtimeMs: number;
+  index: FileIndex;
+}
+
+interface LoadedFileCacheEntry {
+  path: string;
   size: number;
   mtimeMs: number;
   model: FileModel;
+}
+
+interface IndexedSegment {
+  id: string;
+  messageCount: number;
+  hasOnlySystemMessages: boolean;
 }
 
 interface GitInfo {
@@ -189,7 +207,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   private projectsDir: string;
   private claudeDir: string;
   private now: () => Date;
-  private parsedFileCache = new Map<string, ParsedFileCacheEntry>();
+  private fileIndexCache = new Map<string, FileIndexCacheEntry>();
+  private loadedFileCache: LoadedFileCacheEntry | null = null;
   private sessionIdToPath = new Map<string, string>();
   private gitCache = new Map<string, GitInfo>();
 
@@ -209,15 +228,13 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     const refs: ConversationRef[] = [];
     const seenRefs = new Set<string>();
 
-    for (const cachedPath of [...this.parsedFileCache.keys()]) {
+    for (const cachedPath of [...this.fileIndexCache.keys()]) {
       if (!discoveredSet.has(cachedPath)) {
-        this.parsedFileCache.delete(cachedPath);
-        for (const [sessionId, indexedPath] of [...this.sessionIdToPath.entries()]) {
-          if (indexedPath === cachedPath) {
-            this.sessionIdToPath.delete(sessionId);
-          }
-        }
+        this.clearCachedPath(cachedPath);
       }
+    }
+    if (this.loadedFileCache && !discoveredSet.has(this.loadedFileCache.path)) {
+      this.clearCachedPath(this.loadedFileCache.path);
     }
 
     const candidateFiles =
@@ -229,12 +246,12 @@ export class ClaudeCodeAdapter implements ContractAdapter {
 
     for (const filePath of candidateFiles) {
       if (!existsSync(filePath)) {
-        this.parsedFileCache.delete(filePath);
+        this.clearCachedPath(filePath);
         continue;
       }
 
       const stat = statSync(filePath);
-      const cached = this.parsedFileCache.get(filePath);
+      const cached = this.fileIndexCache.get(filePath);
       const changed =
         shouldReturnAll ||
         hint?.kind === "fs-change" ||
@@ -244,10 +261,10 @@ export class ClaudeCodeAdapter implements ContractAdapter {
 
       if (!changed) continue;
 
-      const model = this.getFileModel(filePath, true);
-      if (!model) continue;
+      const index = this.getFileIndex(filePath, true);
+      if (!index) continue;
 
-      for (const ref of model.refs) {
+      for (const ref of index.refs) {
         const key = `${ref.sourcePath}::${ref.id}`;
         if (seenRefs.has(key)) continue;
         seenRefs.add(key);
@@ -264,7 +281,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   async loadConversation(ref: ConversationRef): Promise<ConversationBundle | null> {
     if (ref.adapterId !== this.id) return null;
 
-    const model = this.getFileModel(ref.sourcePath);
+    const model = this.getLoadedFileModel(ref.sourcePath);
     if (!model) return null;
 
     const bundle = model.bundles.find((candidate) => candidate.conversation.id === ref.id);
@@ -288,7 +305,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   async sessions(): Promise<Session[]> {
     const sessions: Session[] = [];
     for (const filePath of this.collectSourceFiles()) {
-      const model = this.getFileModel(filePath);
+      const model = this.getLoadedFileModel(filePath);
       if (!model) continue;
       for (const bundle of model.bundles) {
         sessions.push(this.toLegacySession(bundle));
@@ -302,14 +319,14 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   }
 
   async sessionForFile(filePath: string): Promise<Session | null> {
-    const model = this.getFileModel(filePath, true);
+    const model = this.getLoadedFileModel(filePath, true);
     if (!model || model.bundles.length === 0) return null;
     return this.toLegacySession(model.bundles[0]);
   }
 
   async messages(sessionId: string, sourcePath?: string): Promise<LegacyMessage[]> {
     const bundle = sourcePath
-      ? this.getFileModel(sourcePath)?.bundles.find(
+      ? this.getLoadedFileModel(sourcePath)?.bundles.find(
           (candidate) => candidate.conversation.id === sessionId,
         )
       : this.findBundleById(sessionId);
@@ -473,7 +490,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
 
       if (!existsSync(resolvedPath)) {
         if (resolvedPath.endsWith(".jsonl")) {
-          this.parsedFileCache.delete(resolvedPath);
+          this.clearCachedPath(resolvedPath);
         }
         continue;
       }
@@ -498,18 +515,70 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     return [...files].sort();
   }
 
-  private getFileModel(filePath: string, forceReload = false): FileModel | null {
+  private clearCachedPath(filePath: string): void {
+    const resolvedPath = resolve(filePath);
+    this.fileIndexCache.delete(resolvedPath);
+    if (this.loadedFileCache?.path === resolvedPath) {
+      this.loadedFileCache = null;
+    }
+    this.clearSessionPathIndex(resolvedPath);
+  }
+
+  private clearSessionPathIndex(filePath: string): void {
+    for (const [sessionId, indexedPath] of [...this.sessionIdToPath.entries()]) {
+      if (indexedPath === filePath) {
+        this.sessionIdToPath.delete(sessionId);
+      }
+    }
+  }
+
+  private getFileIndex(filePath: string, forceReload = false): FileIndex | null {
     const resolvedPath = resolve(filePath);
     if (!existsSync(resolvedPath)) {
-      this.parsedFileCache.delete(resolvedPath);
+      this.clearCachedPath(resolvedPath);
       return null;
     }
 
     const stat = statSync(resolvedPath);
-    const cached = this.parsedFileCache.get(resolvedPath);
+    const cached = this.fileIndexCache.get(resolvedPath);
     if (
       !forceReload &&
       cached &&
+      cached.size === stat.size &&
+      cached.mtimeMs === stat.mtimeMs
+    ) {
+      return cached.index;
+    }
+
+    const index = this.buildFileIndex(resolvedPath);
+    if (!index) {
+      this.clearCachedPath(resolvedPath);
+      return null;
+    }
+
+    this.fileIndexCache.set(resolvedPath, {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      index,
+    });
+    this.clearSessionPathIndex(resolvedPath);
+    this.sessionIdToPath.set(index.sessionId, resolvedPath);
+    return index;
+  }
+
+  private getLoadedFileModel(filePath: string, forceReload = false): FileModel | null {
+    const resolvedPath = resolve(filePath);
+    if (!existsSync(resolvedPath)) {
+      this.clearCachedPath(resolvedPath);
+      return null;
+    }
+
+    const stat = statSync(resolvedPath);
+    const cached = this.loadedFileCache;
+    if (
+      !forceReload &&
+      cached &&
+      cached.path === resolvedPath &&
       cached.size === stat.size &&
       cached.mtimeMs === stat.mtimeMs
     ) {
@@ -518,17 +587,96 @@ export class ClaudeCodeAdapter implements ContractAdapter {
 
     const model = this.buildFileModel(resolvedPath);
     if (!model) {
-      this.parsedFileCache.delete(resolvedPath);
+      if (this.loadedFileCache?.path === resolvedPath) {
+        this.loadedFileCache = null;
+      }
+      this.clearSessionPathIndex(resolvedPath);
       return null;
     }
 
-    this.parsedFileCache.set(resolvedPath, {
+    this.loadedFileCache = {
+      path: resolvedPath,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       model,
-    });
+    };
+    this.clearSessionPathIndex(resolvedPath);
     this.sessionIdToPath.set(model.sessionId, resolvedPath);
     return model;
+  }
+
+  private buildFileIndex(filePath: string): FileIndex | null {
+    const records = this.readRecords(filePath);
+    if (records.length === 0) return null;
+
+    const sessionId =
+      records.find((record) => record.raw.sessionId)?.raw.sessionId ??
+      basename(filePath, ".jsonl");
+    const rootId = sessionId;
+    const segments: IndexedSegment[] = [
+      {
+        id: rootId,
+        messageCount: 0,
+        hasOnlySystemMessages: true,
+      },
+    ];
+
+    let current = segments[0];
+    let pendingCompactionSeed = "";
+
+    for (const record of records) {
+      const raw = record.raw;
+
+      if (raw.type === "system" && raw.subtype === "compact_boundary") {
+        pendingCompactionSeed = this.compactionSeed(rootId, raw, record.lineIndex);
+        if (current.messageCount > 0) {
+          current = {
+            id: this.compactedConversationId(rootId, pendingCompactionSeed),
+            messageCount: 0,
+            hasOnlySystemMessages: true,
+          };
+          segments.push(current);
+        }
+      } else if (raw.type === "summary" && raw.summary) {
+        const currentHasOnlySystemMessages =
+          current.messageCount > 0 && current.hasOnlySystemMessages;
+
+        if (current.messageCount > 0 && !currentHasOnlySystemMessages) {
+          const seed =
+            pendingCompactionSeed || this.compactionSeed(rootId, raw, record.lineIndex);
+          current = {
+            id: this.compactedConversationId(rootId, seed),
+            messageCount: 0,
+            hasOnlySystemMessages: true,
+          };
+          segments.push(current);
+        }
+        pendingCompactionSeed = "";
+      }
+
+      const role = this.recordRole(raw);
+      if (!role) continue;
+
+      current.messageCount += 1;
+      if (role !== "system") {
+        current.hasOnlySystemMessages = false;
+      }
+    }
+
+    const refs = segments
+      .filter((segment) => segment.messageCount > 0)
+      .map((segment) => ({
+        id: segment.id,
+        sourcePath: filePath,
+        adapterId: this.id,
+      }));
+
+    if (refs.length === 0) return null;
+
+    return {
+      sessionId,
+      refs,
+    };
   }
 
   private buildFileModel(filePath: string): FileModel | null {
@@ -842,6 +990,22 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     };
   }
 
+  private recordRole(raw: RawLine): ParsedMessage["role"] | null {
+    if (raw.type === "summary" && raw.summary) return "system";
+    if (raw.type === "system") return "system";
+    if ((raw.type !== "user" && raw.type !== "assistant") || !raw.message) {
+      return null;
+    }
+
+    if (raw.message.role === "assistant" || raw.type === "assistant") {
+      return "assistant";
+    }
+    if (raw.message.role === "system") {
+      return "system";
+    }
+    return "user";
+  }
+
   private finalizeBundle(
     segment: SegmentBuilder,
     sourcePath: string,
@@ -930,7 +1094,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       };
     }
 
-    const parentModel = this.getFileModel(parentPath);
+    const parentModel = this.getLoadedFileModel(parentPath);
     if (!parentModel || parentModel.bundles.length === 0) {
       return {
         relationship: "root",
@@ -1020,14 +1184,14 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   private findBundleById(conversationId: string): ConversationBundle | null {
     const indexedPath = this.sessionIdToPath.get(conversationId);
     if (indexedPath) {
-      const indexedBundle = this.getFileModel(indexedPath)?.bundles.find(
+      const indexedBundle = this.getLoadedFileModel(indexedPath)?.bundles.find(
         (bundle) => bundle.conversation.id === conversationId,
       );
       if (indexedBundle) return indexedBundle;
     }
 
     for (const filePath of this.collectSourceFiles()) {
-      const bundle = this.getFileModel(filePath)?.bundles.find(
+      const bundle = this.getLoadedFileModel(filePath)?.bundles.find(
         (candidate) => candidate.conversation.id === conversationId,
       );
       if (bundle) return bundle;

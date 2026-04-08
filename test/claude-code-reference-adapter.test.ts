@@ -150,9 +150,81 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     expect(toolMessage!.toolUses[0].input).toContain(CHILD_SESSION_ID);
     expect(toolMessage!.toolUses[0].output).toContain("Spawned child");
   });
+
+  test("discovery retains only lightweight ref indexes and load keeps one full source model", async () => {
+    const fixture = createFixture({ extraRootSessions: 3 });
+    const refs = await fixture.adapter.findChanged({ kind: "startup-scan" });
+    const caches = fixture.adapter as unknown as {
+      fileIndexCache: Map<
+        string,
+        {
+          size: number;
+          mtimeMs: number;
+          index: {
+            sessionId: string;
+            refs: Array<{
+              id: string;
+              sourcePath: string;
+              adapterId: string;
+            }>;
+          };
+        }
+      >;
+      loadedFileCache: {
+        path: string;
+        size: number;
+        mtimeMs: number;
+        model: {
+          sessionId: string;
+          sourcePath: string;
+          refs: Array<{ id: string; sourcePath: string; adapterId: string }>;
+          bundles: Array<{ conversation: { id: string } }>;
+        };
+      } | null;
+    };
+
+    expect(refs).toHaveLength(6);
+    expect(caches.fileIndexCache.size).toBe(5);
+    expect(caches.loadedFileCache).toBeNull();
+
+    for (const [sourcePath, entry] of caches.fileIndexCache.entries()) {
+      expect(entry.index.sessionId.length).toBeGreaterThan(0);
+      expect(entry.index.refs.length).toBeGreaterThan(0);
+      expect(entry.index.refs.every((ref) => ref.sourcePath === sourcePath)).toBe(true);
+      expect((entry as { model?: unknown }).model).toBeUndefined();
+      expect((entry.index as { bundles?: unknown }).bundles).toBeUndefined();
+    }
+
+    const rootRef = refs.find((ref) => ref.id === PARENT_SESSION_ID);
+    const compactedRef = refs.find(
+      (ref) => ref.sourcePath === fixture.parentPath && ref.id !== PARENT_SESSION_ID,
+    );
+    const childRef = refs.find((ref) => ref.sourcePath === fixture.childPath);
+
+    expect(rootRef).toBeDefined();
+    expect(compactedRef).toBeDefined();
+    expect(childRef).toBeDefined();
+
+    await fixture.adapter.loadConversation(rootRef!);
+    expect(caches.loadedFileCache?.path).toBe(fixture.parentPath);
+    expect(caches.loadedFileCache?.model.bundles.map((bundle) => bundle.conversation.id)).toEqual(
+      expect.arrayContaining([PARENT_SESSION_ID, compactedRef!.id]),
+    );
+
+    await fixture.adapter.loadConversation(compactedRef!);
+    expect(caches.loadedFileCache?.path).toBe(fixture.parentPath);
+
+    await fixture.adapter.loadConversation(childRef!);
+    expect(caches.loadedFileCache?.path).toBe(fixture.childPath);
+    expect(caches.loadedFileCache?.model.bundles).toHaveLength(1);
+
+    for (const entry of caches.fileIndexCache.values()) {
+      expect((entry.index as { bundles?: unknown }).bundles).toBeUndefined();
+    }
+  });
 });
 
-function createFixture() {
+function createFixture(options: { extraRootSessions?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), "jin-claude-reference-"));
   createdRoots.push(root);
 
@@ -166,6 +238,7 @@ function createFixture() {
     "subagents",
     `agent-${CHILD_SESSION_ID}.jsonl`,
   );
+  const extraRootSessionPaths: string[] = [];
 
   writeJsonl(parentPath, [
     {
@@ -374,11 +447,60 @@ function createFixture() {
     },
   ]);
 
+  for (let index = 0; index < (options.extraRootSessions ?? 0); index += 1) {
+    const extraSessionId = `33333333-3333-3333-3333-${String(index + 1).padStart(12, "0")}`;
+    const extraPath = join(projectDir, `${extraSessionId}.jsonl`);
+    extraRootSessionPaths.push(extraPath);
+    writeJsonl(extraPath, [
+      {
+        parentUuid: null,
+        isSidechain: false,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: extraSessionId,
+        gitBranch: "",
+        type: "user",
+        message: {
+          role: "user",
+          content: `Extra session ${index + 1}: gather one more result.`,
+        },
+        uuid: `extra-user-${index + 1}`,
+        timestamp: `2026-02-08T17:5${index}:00.000Z`,
+      },
+      {
+        parentUuid: `extra-user-${index + 1}`,
+        isSidechain: false,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: extraSessionId,
+        gitBranch: "",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5-20251101",
+          content: [
+            {
+              type: "text",
+              text: `Extra session ${index + 1} completed.`,
+            },
+          ],
+          usage: {
+            input_tokens: 4,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+        uuid: `extra-assistant-${index + 1}`,
+        timestamp: `2026-02-08T17:5${index}:30.000Z`,
+      },
+    ]);
+  }
+
   return {
     adapter: new ClaudeCodeAdapter({ projectsDir, claudeDir }),
     projectsDir,
     parentPath,
     childPath,
+    extraRootSessionPaths,
   };
 }
 
