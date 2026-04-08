@@ -25,6 +25,12 @@ import { runMigrations } from "./schema";
 import { getToolCalls } from "./tool-calls";
 
 const STORE_FILENAME = "store.db";
+const POISONED_LOCAL_STORE_SIGNATURES = [
+  "readonly database",
+  "unable to open database file",
+  "sqlite_readonly",
+  "sqlite_cantopen",
+];
 const storeCache = new Map<string, SqliteConversationStore>();
 
 export class SqliteConversationStore implements ConversationStore {
@@ -125,4 +131,96 @@ export function getStore(configDir: string): SqliteConversationStore {
   const store = new SqliteConversationStore(dbPath);
   storeCache.set(dbPath, store);
   return store;
+}
+
+export function isPoisonedLocalStoreError(error: unknown): boolean {
+  return collectErrorTexts(error).some((text) => {
+    const normalized = text.toLowerCase();
+    return POISONED_LOCAL_STORE_SIGNATURES.some((signature) =>
+      normalized.includes(signature),
+    );
+  });
+}
+
+export function formatPoisonedLocalStoreResetGuidance(
+  configDir: string,
+): string[] {
+  const displayPath = formatCliPath(configDir);
+  return [
+    "Experimental v2 local state is unrecoverable after the previous shutdown.",
+    `Run \`jin stop || true\`, remove ${displayPath}, and restart jin.`,
+    "Jin will not repair or delete the SQLite files automatically.",
+  ];
+}
+
+export function printPoisonedLocalStoreResetGuidance(configDir: string): void {
+  for (const line of formatPoisonedLocalStoreResetGuidance(configDir)) {
+    console.error(`  ${line}`);
+  }
+}
+
+function collectErrorTexts(error: unknown, seen = new Set<unknown>()): string[] {
+  if (error === null || error === undefined) {
+    return [];
+  }
+
+  if (typeof error === "string") {
+    return [error];
+  }
+
+  if (typeof error !== "object") {
+    return [String(error)];
+  }
+
+  if (seen.has(error)) {
+    return [];
+  }
+  seen.add(error);
+
+  const texts: string[] = [];
+  const maybeError = error as {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+    cause?: unknown;
+    errors?: unknown;
+  };
+
+  for (const value of [maybeError.name, maybeError.message, maybeError.code]) {
+    if (typeof value === "string" || typeof value === "number") {
+      texts.push(String(value));
+    }
+  }
+
+  if (Array.isArray(maybeError.errors)) {
+    for (const nested of maybeError.errors) {
+      texts.push(...collectErrorTexts(nested, seen));
+    }
+  }
+
+  if (maybeError.cause !== undefined) {
+    texts.push(...collectErrorTexts(maybeError.cause, seen));
+  }
+
+  return texts;
+}
+
+function formatCliPath(pathValue: string): string {
+  const resolvedPath = resolve(pathValue);
+  const home = process.env.HOME;
+
+  if (!home) {
+    return resolvedPath;
+  }
+
+  const resolvedHome = resolve(home);
+  if (resolvedPath === resolvedHome) {
+    return "~";
+  }
+
+  if (resolvedPath.startsWith(`${resolvedHome}/`)) {
+    return `~${resolvedPath.slice(resolvedHome.length)}`;
+  }
+
+  return resolvedPath;
 }

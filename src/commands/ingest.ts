@@ -2,7 +2,11 @@ import { loadConfig, resolveAdapterConfig, type JinConfig } from "../config";
 import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters } from "../adapters/registry";
-import { openStoreAtPath } from "../db/store";
+import {
+  isPoisonedLocalStoreError,
+  openStoreAtPath,
+  printPoisonedLocalStoreResetGuidance,
+} from "../db/store";
 import { getRuntimePaths, getRuntimeStatus, runModeLabel } from "../daemon/runtime-state";
 import { ingestAll } from "../pipeline/ingest";
 import { pushDirty } from "../pipeline/push";
@@ -21,20 +25,22 @@ export async function ingestCommand(): Promise<void> {
     process.exit(1);
   }
 
+  const runtimePaths = getRuntimePaths();
   const config = await loadConfig();
-  const store = openStoreAtPath(getRuntimePaths().storePath);
   const logger = createIngestLogger();
   const activeAdapters = await detectActiveAdapters(config);
-  const sinks = await createActiveSinks(config, logger);
+  let store: ReturnType<typeof openStoreAtPath> | null = null;
+  let sinks: V2Sink[] = [];
 
   if (activeAdapters.length === 0) {
     console.log("  No supported coding tools detected.");
-    await closeSinks(sinks);
-    store.close();
     return;
   }
 
   try {
+    store = openStoreAtPath(runtimePaths.storePath);
+    sinks = await createActiveSinks(config, logger);
+
     const ingestSummary = await ingestAll(
       activeAdapters,
       store,
@@ -59,9 +65,15 @@ export async function ingestCommand(): Promise<void> {
         `  Push attempts: ${pushSummary.sinkAttempts}, pushed: ${pushSummary.pushedConversations}, failed: ${pushSummary.failedConversations}.`,
       );
     }
+  } catch (error) {
+    if (isPoisonedLocalStoreError(error)) {
+      printPoisonedLocalStoreResetGuidance(runtimePaths.configDir);
+      process.exit(1);
+    }
+    throw error;
   } finally {
     await closeSinks(sinks);
-    store.close();
+    store?.close();
   }
 }
 

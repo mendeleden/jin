@@ -7,10 +7,15 @@ import {
 } from "../daemon/process-state";
 import {
   clearRuntimeState,
+  getRuntimePaths,
   isServiceInstalled,
   markRuntimeRunning,
   markRuntimeStarting,
 } from "../daemon/runtime-state";
+import {
+  isPoisonedLocalStoreError,
+  printPoisonedLocalStoreResetGuidance,
+} from "../db/store";
 
 export async function startCommand(opts: {
   service?: boolean;
@@ -20,6 +25,7 @@ export async function startCommand(opts: {
 }): Promise<void> {
   const watcherState = getWatcherState();
   const dashboardState = getDashboardState();
+  const runtimePaths = getRuntimePaths();
 
   // --service: install as OS service
   if (opts.service) {
@@ -88,6 +94,10 @@ export async function startCommand(opts: {
       markRuntimeRunning("daemon");
     } catch (error) {
       clearRuntimeState();
+      if (isPoisonedLocalStoreError(error)) {
+        printPoisonedLocalStoreResetGuidance(runtimePaths.configDir);
+        process.exit(1);
+      }
       throw error;
     }
   }

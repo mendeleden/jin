@@ -7,8 +7,23 @@ current repo binary, and let `jin` rebuild from source. Experimental v2 does
 not promise backward-compatible local DB migration for these pre-cutover
 stores.
 
+If the local runtime hit an RSS hard shutdown and later commands start failing
+with SQLite errors such as `attempt to write a readonly database` or `unable to
+open database file`, treat that local store as unrecoverable experimental
+state. Do a hard reset instead of attempting to repair the SQLite files in
+place.
+
 This is intentionally a shell-command runbook. We are not adding
 `jin reset-local`. If this flow stabilizes, a wrapper script can come later.
+
+When the runtime detects this poisoned-store signature on `jin start` or
+`jin ingest`, it should print reset guidance instead of the raw SQLite stack:
+
+```text
+Experimental v2 local state is unrecoverable after the previous shutdown.
+Run `jin stop || true`, remove ~/.config/jin, and restart jin.
+Jin will not repair or delete the SQLite files automatically.
+```
 
 ## Local Versus Team State
 
