@@ -16,7 +16,6 @@ export const migrations: Migration[] = [
   {
     version: 1,
     up(db) {
-      prepareLegacyStoreForV2(db);
       db.exec(`
         CREATE TABLE IF NOT EXISTS conversations (
           id TEXT PRIMARY KEY,
@@ -158,62 +157,4 @@ export function runMigrations(db: Database): void {
 
     applyMigration();
   }
-}
-
-const LEGACY_MESSAGES_TABLE = "_jin_v1_messages";
-
-function prepareLegacyStoreForV2(db: Database): void {
-  if (!tableExists(db, "messages")) {
-    return;
-  }
-
-  const columns = getTableColumns(db, "messages");
-  if (columns.has("conversation_id")) {
-    return;
-  }
-
-  // Legacy v1 store uses messages.session_id. Preserve the table for
-  // compatibility/debugging and free the canonical messages table name for v2.
-  if (columns.has("session_id")) {
-    safeExec(db, "DROP TRIGGER IF EXISTS messages_fts_insert");
-    safeExec(db, "DROP TRIGGER IF EXISTS messages_fts_delete");
-    safeExec(db, "DROP TRIGGER IF EXISTS messages_fts_update");
-    safeExec(db, "DROP TABLE IF EXISTS messages_fts");
-
-    if (tableExists(db, LEGACY_MESSAGES_TABLE)) {
-      safeExec(db, `DROP TABLE ${LEGACY_MESSAGES_TABLE}`);
-    }
-
-    db.exec(`ALTER TABLE messages RENAME TO ${LEGACY_MESSAGES_TABLE}`);
-  }
-}
-
-function tableExists(db: Database, tableName: string): boolean {
-  const row = db
-    .prepare(
-      `SELECT name
-       FROM sqlite_master
-       WHERE type = 'table' AND name = ?`,
-    )
-    .get(tableName) as { name?: string } | null;
-
-  return !!row?.name;
-}
-
-function getTableColumns(db: Database, tableName: string): Set<string> {
-  const rows = db
-    .prepare(`PRAGMA table_info(${tableName})`)
-    .all() as Array<{ name?: string }>;
-
-  return new Set(
-    rows
-      .map((row) => row.name)
-      .filter((name): name is string => typeof name === "string"),
-  );
-}
-
-function safeExec(db: Database, statement: string): void {
-  try {
-    db.exec(statement);
-  } catch {}
 }

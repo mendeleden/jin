@@ -23,11 +23,10 @@ export type LocalControlHealthStatus =
   | "stopping";
 
 export interface LocalControlComponentDto {
-  name: "watcher" | "dashboard";
+  name: "watcher";
   status: "running" | "stopped";
   pid?: number;
   mode?: RuntimeOwnershipRecord["mode"];
-  port?: number;
   uptime?: string;
   lifecycleState?: RuntimeState;
   issues?: RuntimeIssue[];

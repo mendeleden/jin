@@ -6,15 +6,16 @@ import {
   mock,
   test,
 } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
+import type { ConversationBundle } from "../src/contracts/conversations";
+import { openStoreAtPath } from "../src/db/store";
 import {
   captureConsole,
   createFakeSink,
-  createTestEnv,
   mockProcessExit,
   readTestConfig,
-  seedStore,
-  type TestEnv,
   writeTestConfig,
 } from "./helpers";
 
@@ -94,7 +95,6 @@ mock.module("../src/commands/ingest", () => ({
 const { defaultConfig } = await import("../src/config");
 const { encodeTeamConfig } = await import("../src/sinks/types");
 const { connectCommand } = await import("../src/commands/connect");
-const { initCommand } = await import("../src/commands/init");
 const { watchCommand } = await import("../src/commands/watch");
 const { routeAddCommand } = await import("../src/commands/route");
 const {
@@ -103,18 +103,18 @@ const {
   sinkEnableCommand,
 } = await import("../src/commands/sink");
 
-let env: TestEnv;
+let tempDir = "";
 let console_: ReturnType<typeof captureConsole>;
 let exitMock: ReturnType<typeof mockProcessExit>;
 
 beforeEach(() => {
-  env = createTestEnv();
-  seedStore(env.store);
+  tempDir = mkdtempSync(join(tmpdir(), "jin-config-mutation-"));
+  process.env.JIN_CONFIG_DIR = tempDir;
   runtimePaths = {
-    configDir: env.dir,
-    configPath: join(env.dir, "config.json"),
-    storePath: join(env.dir, "store.db"),
-    logPath: join(env.dir, "jin.log"),
+    configDir: tempDir,
+    configPath: join(tempDir, "config.json"),
+    storePath: join(tempDir, "store.db"),
+    logPath: join(tempDir, "jin.log"),
   };
   watcherState = { name: "watcher", status: "stopped", lifecycleState: "stopped" };
   runtimeStatus = { state: "stopped", issues: [] };
@@ -124,12 +124,14 @@ beforeEach(() => {
   fakeSink = createFakeSink();
   console_ = captureConsole();
   exitMock = mockProcessExit();
+  seedRepo("alpha", "github.com/org/alpha");
 });
 
 afterEach(() => {
   console_.restore();
   exitMock.restore();
-  env.cleanup();
+  delete process.env.JIN_CONFIG_DIR;
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 describe("config mutation and control commands", () => {
@@ -152,7 +154,7 @@ describe("config mutation and control commands", () => {
       connectionString: "postgresql://localhost:5432/jin",
     });
 
-    const config = await readTestConfig(env.dir);
+    const config = await readTestConfig(tempDir);
     expect(config.sinks).toEqual([
       {
         id: "postgres-team",
@@ -175,7 +177,7 @@ describe("config mutation and control commands", () => {
         connectionString: "postgresql://localhost:5432/jin",
       },
     ];
-    await writeTestConfig(env.dir, config);
+    await writeTestConfig(tempDir, config);
 
     watcherState = {
       name: "watcher",
@@ -196,7 +198,7 @@ describe("config mutation and control commands", () => {
       yes: true,
     });
 
-    const nextConfig = await readTestConfig(env.dir);
+    const nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.routes).toEqual([
       {
         match: { remote: "github.com/org/alpha" },
@@ -216,7 +218,7 @@ describe("config mutation and control commands", () => {
         connectionString: "postgresql://localhost:5432/jin",
       },
     ];
-    await writeTestConfig(env.dir, config);
+    await writeTestConfig(tempDir, config);
 
     watcherState = {
       name: "watcher",
@@ -233,7 +235,7 @@ describe("config mutation and control commands", () => {
 
     await sinkDisableCommand("postgres-team");
 
-    let nextConfig = await readTestConfig(env.dir);
+    let nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(false);
     expect(restartCalls).toHaveLength(0);
     expect(markRuntimeRunningCalls[0]?.issues).toEqual([
@@ -246,7 +248,7 @@ describe("config mutation and control commands", () => {
 
     await sinkEnableCommand("postgres-team");
 
-    nextConfig = await readTestConfig(env.dir);
+    nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(true);
     expect(markRuntimeRunningCalls.at(-1)?.issues).toEqual([]);
     expect(restartCalls).toHaveLength(0);
@@ -263,7 +265,7 @@ describe("config mutation and control commands", () => {
 
     await connectCommand("alpha", { team: teamCode });
 
-    const config = await readTestConfig(env.dir);
+    const config = await readTestConfig(tempDir);
     expect(config).not.toHaveProperty("team");
     expect(config.sinks[0]).toEqual({
       id: "workspace-postgres",
@@ -281,43 +283,10 @@ describe("config mutation and control commands", () => {
     expect(config.routes[0].match).not.toHaveProperty("directory");
   });
 
-  test("init --team keeps generic config separate from workspace metadata", async () => {
-    const teamCode = encodeTeamConfig({
-      id: "workspace-webhook",
-      type: "webhook",
-      url: "https://workspace.example.test/jin",
-      teamId: "workspace-1",
-      developerId: "dev-11",
-    });
-
-    await initCommand({ team: teamCode, json: true });
-
-    const config = await readTestConfig(env.dir);
-    expect(config).not.toHaveProperty("team");
-    expect(config.sinks).toEqual([
-      {
-        id: "workspace-webhook",
-        type: "webhook",
-        enabled: true,
-        url: "https://workspace.example.test/jin",
-        timeoutMs: 30000,
-      },
-    ]);
-
-    const parsed = JSON.parse(console_.logs.at(-1)!);
-    expect(parsed.sinks).toEqual([
-      {
-        id: "workspace-webhook",
-        type: "webhook",
-        enabled: true,
-      },
-    ]);
-  });
-
   test("watch startup does not auto-enable disabled adapters or rewrite config", async () => {
     const config = defaultConfig();
     config.adapters["mock-adapter"] = { enabled: false };
-    await writeTestConfig(env.dir, config);
+    await writeTestConfig(tempDir, config);
 
     mockAdapters = [
       {
@@ -333,14 +302,14 @@ describe("config mutation and control commands", () => {
 
     await expect(watchCommand({ daemon: false })).rejects.toThrow();
 
-    const nextConfig = await readTestConfig(env.dir);
+    const nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.adapters["mock-adapter"]).toEqual({ enabled: false });
     expect(console_.logs.join("\n")).not.toContain("auto-enabled");
   });
 
   test("watch startup skips opt-in-only protected adapters until the user opts in", async () => {
     const config = defaultConfig();
-    await writeTestConfig(env.dir, config);
+    await writeTestConfig(tempDir, config);
 
     let detectCalls = 0;
     mockAdapters = [
@@ -363,6 +332,58 @@ describe("config mutation and control commands", () => {
     expect(detectCalls).toBe(0);
   });
 });
+
+function seedRepo(name: string, gitRemote: string): void {
+  const store = openStoreAtPath(runtimePaths.storePath);
+  try {
+    store.writeBundle(makeBundle(name, gitRemote));
+  } finally {
+    store.close();
+  }
+}
+
+function makeBundle(name: string, gitRemote: string): ConversationBundle {
+  return {
+    conversation: {
+      id: `${name}-conversation`,
+      traceId: `${name}-conversation`,
+      parentId: "",
+      relationship: "root",
+      forkPoint: -1,
+      adapterId: "mock-adapter",
+      name: `${name} conversation`,
+      cwd: "/tmp",
+      gitRemote,
+      branch: "main",
+      model: "mock-model",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      endedAt: "2026-04-01T00:01:00.000Z",
+      sourcePath: `/tmp/${name}.jsonl`,
+      sourceFormat: "jsonl",
+    },
+    messages: [
+      {
+        id: `${name}-m1`,
+        role: "user",
+        content: "hello",
+        recordType: "message",
+        model: "mock-model",
+        sequence: 1,
+        turn: 1,
+        isSidechain: false,
+        parentMessageId: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinkingContent: "",
+        thinkingTokens: 0,
+        timestamp: "2026-04-01T00:00:00.000Z",
+        toolUses: [],
+      },
+    ],
+  };
+}
 
 function makeOwner(
   mode: "daemon" | "service" | "foreground",

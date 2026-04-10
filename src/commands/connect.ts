@@ -21,26 +21,15 @@ import {
 import { persistConfigChange } from "./config-control";
 import { normalizeRemote, sinkIdsForConversation } from "../routing";
 import { decodeTeamConfig, type SinkConfig as TeamSinkConfig } from "../sinks/types";
-import { LegacyStore } from "../store";
 import { getRuntimePaths } from "../daemon/runtime-state";
+import { openStoreAtPath } from "../db/store";
+import { listProjectsByRemote } from "../db/query-surface";
 
 interface ConnectOptions {
-  postgres?: string;
-  s3?: string;
-  webhook?: string;
   sink?: string;
   team?: string;
   id?: string;
-  name?: string;
-  "team-id"?: string;
   teamId?: string;
-  region?: string;
-  endpoint?: string;
-  "access-key-id"?: string;
-  accessKeyId?: string;
-  "secret-access-key"?: string;
-  secretAccessKey?: string;
-  prefix?: string;
   remote?: string;
   json?: boolean;
   yes?: boolean;
@@ -68,7 +57,13 @@ export async function connectCommand(
   project: string,
   opts: ConnectOptions,
 ): Promise<void> {
-  const legacySinkShortcut = usesLegacySinkShortcut(opts);
+  if (usesLegacySinkShortcut(opts)) {
+    fail("`jin connect` no longer creates sinks directly", [
+      "  Removed flags: --postgres, --s3, --webhook",
+      "  Use `jin sink add ...` to configure a destination first.",
+      "  Then run `jin connect <repo> --sink=<id>` or `jin route add ...`.",
+    ]);
+  }
 
   if (!project && !opts.remote) {
     if (opts.team) {
@@ -84,7 +79,7 @@ export async function connectCommand(
       return interactiveConnect({ json: opts.json, sinkId: sinkResult.sinkId });
     }
 
-    const hasSinkOpts = !!(opts.postgres || opts.s3 || opts.webhook || opts.sink);
+    const hasSinkOpts = !!(opts.team || opts.sink);
     if (!hasSinkOpts) {
       return interactiveConnect({ json: opts.json });
     }
@@ -100,9 +95,6 @@ export async function connectCommand(
         "  Low-level integration wiring:",
         "    jin sink add <type> ...",
         '    jin route add --remote="github.com/org/repo" --sink=<id>',
-        "",
-        "  Compatibility shortcut:",
-        '    jin connect <repo> --postgres="..."',
       ],
     );
   }
@@ -110,11 +102,6 @@ export async function connectCommand(
   ensureConfigDir();
   const config = await loadConfig();
   const sinkResult = await resolveOrCreateSink(config, opts);
-  if (legacySinkShortcut && !opts.json) {
-    console.log(
-      "  Compatibility bridge: prefer `jin sink add ...` plus `jin route add ...` for generic integrations.",
-    );
-  }
   const routeTarget = resolveConnectTarget(project, opts);
   const routeResult = upsertRoute(config, routeTarget.match, [sinkResult.sinkId]);
 
@@ -403,11 +390,16 @@ function resolveProjectSelection(
 
 function loadProjects(): ProjectRow[] {
   const storePath = getRuntimePaths().storePath;
-  let store: Store | null = null;
+  let store: ReturnType<typeof openStoreAtPath> | null = null;
 
   try {
-    store = new LegacyStore(storePath);
-    return store.listProjects() as ProjectRow[];
+    store = openStoreAtPath(storePath);
+    return listProjectsByRemote(store.database).map((project) => ({
+      name: remoteRepoName(project.gitRemote),
+      session_count: project.conversationCount,
+      tools: project.tools,
+      git_remote: project.gitRemote,
+    }));
   } catch {
     return [];
   } finally {
@@ -485,42 +477,13 @@ async function resolveOrCreateSink(
     return ensureSinkConfigured(config, toSinkCandidate(decoded, opts));
   }
 
-  if (opts.postgres) {
-    return ensureSinkConfigured(config, {
-      type: "postgres",
-      id: opts.id,
-      connectionString: opts.postgres,
-    });
-  }
-
-  if (opts.webhook) {
-    return ensureSinkConfigured(config, {
-      type: "webhook",
-      id: opts.id,
-      url: opts.webhook,
-    });
-  }
-
-  if (opts.s3) {
-    return ensureSinkConfigured(config, {
-      type: "s3",
-      id: opts.id,
-      bucket: opts.s3,
-      region: opts.region,
-      endpoint: opts.endpoint,
-      accessKeyId: (opts["access-key-id"] || opts.accessKeyId) as string | undefined,
-      secretAccessKey: (opts["secret-access-key"] ||
-        opts.secretAccessKey) as string | undefined,
-      prefix: opts.prefix,
-    });
-  }
-
   fail("specify a sink type or existing sink", [
-    '    --postgres="postgresql://..."',
-    '    --webhook="https://..."',
-    '    --s3="my-bucket" --region=us-east-1',
     "    --sink=<existing-sink-id>",
     "    --team=<workspace-code>",
+    "",
+    "  Low-level BYO integration:",
+    "    jin sink add <type> ...",
+    '    jin route add --remote="github.com/org/repo" --sink=<id>',
   ]);
 }
 
@@ -621,5 +584,16 @@ function fail(message: string, details: string[] = []): never {
 }
 
 function usesLegacySinkShortcut(opts: ConnectOptions): boolean {
-  return !!(opts.postgres || opts.s3 || opts.webhook);
+  const legacy = opts as ConnectOptions & {
+    postgres?: string;
+    s3?: string;
+    webhook?: string;
+  };
+  return !!(legacy.postgres || legacy.s3 || legacy.webhook);
+}
+
+function remoteRepoName(remote: string): string {
+  const trimmed = remote.replace(/\/+$/, "");
+  const lastPathSegment = trimmed.split(/[/:]/).pop() || trimmed;
+  return lastPathSegment.replace(/\.git$/, "") || trimmed;
 }

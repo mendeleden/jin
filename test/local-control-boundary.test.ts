@@ -12,9 +12,7 @@ const fakeQueryStore = {
 mock.module("../src/daemon/process-state", () => ({
   getAllState: () => components,
   getWatcherState: () => components.find((component) => component.name === "watcher") ?? { status: "stopped" },
-  getDashboardState: () => components.find((component) => component.name === "dashboard") ?? { status: "stopped" },
   stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
-  stopDashboard: async () => {},
 }));
 
 mock.module("../src/daemon/runtime-state", () => ({
@@ -54,7 +52,6 @@ beforeEach(() => {
   runtimeStatus = { state: "stopped", issues: [] };
   components = [
     { name: "watcher", status: "stopped", lifecycleState: "stopped" },
-    { name: "dashboard", status: "stopped" },
   ];
 });
 
@@ -85,12 +82,6 @@ describe("local control boundary", () => {
         uptime: "5m",
         lifecycleState: "running",
       },
-      {
-        name: "dashboard",
-        status: "running",
-        pid: 616,
-        port: 4000,
-      },
     ];
 
     const status = getLocalControlStatus();
@@ -99,7 +90,7 @@ describe("local control boundary", () => {
     expect(status.runtime.owner?.mode).toBe("daemon");
     expect(status.health.status).toBe("healthy");
     expect(status.health.issueCount).toBe(0);
-    expect(status.health.components.running).toBe(2);
+    expect(status.health.components.running).toBe(1);
   });
 
   test("reports degraded runtime health with subsystem detail", () => {
@@ -123,7 +114,6 @@ describe("local control boundary", () => {
         lifecycleState: "degraded",
         issues: runtimeStatus.issues,
       },
-      { name: "dashboard", status: "stopped" },
     ];
 
     const status = getLocalControlStatus();
@@ -154,7 +144,7 @@ describe("local control boundary", () => {
             paused: false,
             ingest: "healthy",
             push: "healthy",
-            components: { running: 1, stopped: 1 },
+            components: { running: 1, stopped: 0 },
           },
           components: [
             {
@@ -164,7 +154,6 @@ describe("local control boundary", () => {
               mode: "service",
               lifecycleState: "running",
             },
-            { name: "dashboard", status: "stopped" },
           ],
           paths: {
             configDir: runtimePaths.configDir,

@@ -1,11 +1,9 @@
 import { encodeTeamConfig, type SinkConfig } from "../sinks/types";
 import { availableSinks } from "../sinks/registry";
 
-// ── jin team bridge (was team-config) ───────────────────────────────────
 // Generates a base64 onboarding bridge code. This is an operator command.
 // Developers consume the code via: jin connect --team=<code>
-
-export async function teamConfigCommand(opts: {
+export async function teamBridgeCommand(opts: {
   type?: string;
   name?: string;
   url?: string;
@@ -17,7 +15,7 @@ export async function teamConfigCommand(opts: {
   secretAccessKey?: string;
   prefix?: string;
   teamId?: string;
-  headers?: string; // JSON string
+  headers?: string;
 }): Promise<void> {
   const sinkType = opts.type;
   if (!sinkType) {
@@ -37,9 +35,6 @@ export async function teamConfigCommand(opts: {
 
   The output is a base64 bridge code for developers to run:
     jin connect --team=<code>
-
-  Deprecated alias:
-    jin team-config
 `);
     return;
   }
@@ -59,9 +54,8 @@ export async function teamConfigCommand(opts: {
     headers: opts.headers ? JSON.parse(opts.headers) : undefined,
   };
 
-  // Remove undefined keys
   const clean = Object.fromEntries(
-    Object.entries(config).filter(([_, v]) => v !== undefined)
+    Object.entries(config).filter(([, value]) => value !== undefined),
   ) as SinkConfig;
 
   const encoded = encodeTeamConfig(clean);

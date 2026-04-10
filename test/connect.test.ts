@@ -1,8 +1,19 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
-import { createFakeSink } from "./helpers";
-
-// ── Module Mocks (hoisted by bun) ────────────────────────────────────────
+import { defaultConfig } from "../src/config";
+import { openStoreAtPath } from "../src/db/store";
+import type { ConversationBundle } from "../src/contracts/conversations";
+import { encodeTeamConfig } from "../src/sinks/types";
+import {
+  captureConsole,
+  createFakeSink,
+  mockProcessExit,
+  readTestConfig,
+  writeTestConfig,
+  ExitError,
+} from "./helpers";
 
 let fakeSink = createFakeSink();
 let runtimePaths = {
@@ -17,14 +28,6 @@ mock.module("../src/sinks/registry", () => ({
   availableSinks: () => ["postgres", "webhook", "s3"],
 }));
 
-mock.module("../src/daemon/process-state", () => ({
-  getWatcherState: () => ({ name: "watcher", status: "stopped", lifecycleState: "stopped" }),
-  getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
-  getAllState: () => [],
-  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
-  stopDashboard: async () => {},
-}));
-
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => ({ state: "stopped", issues: [] }),
@@ -35,115 +38,67 @@ mock.module("../src/daemon/runtime-state", () => ({
   runModeLabel: (mode: string) => mode,
 }));
 
-// ── Imports (after mocks) ────────────────────────────────────────────────
-
 import {
   connectCommand,
-  disconnectCommand,
   connectionsCommand,
+  disconnectCommand,
   interactiveConnect,
 } from "../src/commands/connect";
-import { encodeTeamConfig } from "../src/sinks/types";
-import {
-  createTestEnv,
-  seedStore,
-  writeTestConfig,
-  readTestConfig,
-  captureConsole,
-  mockProcessExit,
-  ExitError,
-  type TestEnv,
-} from "./helpers";
 
-// ── Test Suite ───────────────────────────────────────────────────────────
-
-let env: TestEnv;
+let tempDir = "";
 let console_: ReturnType<typeof captureConsole>;
 let exitMock: ReturnType<typeof mockProcessExit>;
 
 beforeEach(() => {
-  env = createTestEnv();
-  seedStore(env.store);
+  tempDir = mkdtempSync(join(tmpdir(), "jin-connect-"));
+  process.env.JIN_CONFIG_DIR = tempDir;
   runtimePaths = {
-    configDir: env.dir,
-    configPath: join(env.dir, "config.json"),
-    storePath: join(env.dir, "store.db"),
-    logPath: join(env.dir, "jin.log"),
+    configDir: tempDir,
+    configPath: join(tempDir, "config.json"),
+    storePath: join(tempDir, "store.db"),
+    logPath: join(tempDir, "jin.log"),
   };
   console_ = captureConsole();
   exitMock = mockProcessExit();
   fakeSink = createFakeSink();
+  seedRepos();
 });
 
 afterEach(() => {
   console_.restore();
   exitMock.restore();
-  env.cleanup();
+  delete process.env.JIN_CONFIG_DIR;
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
-// ── jin connect ──────────────────────────────────────────────────────────
-
 describe("jin connect", () => {
-  test("connect with --postgres creates sink + route", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
+  test("connect with --sink routes to an existing destination", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-main",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
 
-    const config = await readTestConfig(env.dir);
-    expect(config.sinks).toHaveLength(1);
-    expect(config.sinks[0].type).toBe("postgres");
-    expect(config.sinks[0].connectionString).toBe("postgresql://localhost:5432/jin");
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
-    expect(config.routes[0].sinks).toContain("postgres-0");
+    await connectCommand("alpha", { sink: "postgres-main" });
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toHaveLength(1);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["postgres-main"],
+      },
+    ]);
   });
 
-  test("connect same project again is idempotent (updates, not duplicates)", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin_v2",
-    });
-
-    const config = await readTestConfig(env.dir);
-    // Second sink created because different connection string
-    expect(config.sinks).toHaveLength(2);
-    // But only 1 route for alpha — updated, not duplicated
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
-  });
-
-  test("connect with --sink routes to existing sink (no new sink)", async () => {
-    // Create a sink first
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
-
-    const configBefore = await readTestConfig(env.dir);
-    const sinkCount = configBefore.sinks.length;
-
-    // Route another project to the same sink
-    await connectCommand("beta", { sink: "postgres-0" });
-
-    const config = await readTestConfig(env.dir);
-    expect(config.sinks).toHaveLength(sinkCount); // no new sink
-    expect(config.routes).toHaveLength(2);
-    expect(config.routes[1].match.remote).toBe("github.com/org/beta");
-    expect(config.routes[1].sinks).toContain("postgres-0");
-  });
-
-  test("connect with --sink fails if sink ID doesn't exist", async () => {
-    await expect(
-      connectCommand("alpha", { sink: "nonexistent-99" })
-    ).rejects.toThrow(ExitError);
-
-    const output = console_.errors.join("\n");
-    expect(output).toContain("not found");
-  });
-
-  test("connect with --team decodes base64 and creates sink + route", async () => {
+  test("connect with --team creates a sink and routes the selected repo", async () => {
     const teamCode = encodeTeamConfig({
+      id: "workspace-postgres",
       type: "postgres",
       connectionString: "postgresql://team-db:5432/shared",
       teamId: "team-42",
@@ -151,205 +106,198 @@ describe("jin connect", () => {
 
     await connectCommand("alpha", { team: teamCode });
 
-    const config = await readTestConfig(env.dir);
-    expect(config.sinks).toHaveLength(1);
-    expect(config.sinks[0].connectionString).toBe("postgresql://team-db:5432/shared");
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
+    const config = await readTestConfig(tempDir);
+    expect(config.sinks).toEqual([
+      {
+        id: "workspace-postgres",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://team-db:5432/shared",
+      },
+    ]);
+    expect(config.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["workspace-postgres"],
+      },
+    ]);
   });
 
-  test("connect with --remote creates remote-based route", async () => {
+  test("connect with --remote writes a remote-based route", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "analytics-webhook",
+        type: "webhook",
+        enabled: true,
+        url: "https://example.test/jin",
+        timeoutMs: 30000,
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
     await connectCommand("", {
-      remote: "github.com/org/alpha",
-      postgres: "postgresql://localhost:5432/jin",
+      remote: "https://github.com/org/alpha.git",
+      sink: "analytics-webhook",
     });
 
-    const config = await readTestConfig(env.dir);
-    expect(config.routes).toHaveLength(1);
-    expect(config.routes[0].match.remote).toBe("github.com/org/alpha");
-    expect(config.routes[0].match.project).toBeUndefined();
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["analytics-webhook"],
+      },
+    ]);
   });
 
-  test("connect with no args calls interactiveConnect", async () => {
-    // With no project, no remote, no directory, and no sink opts → interactiveConnect
-    // Use json mode so it doesn't try to open a readline interface
+  test("connect json mode lists repos from the v2 query surface", async () => {
     await connectCommand("", { json: true });
 
-    const output = console_.logs.join("\n");
-    const parsed = JSON.parse(output);
-    expect(parsed).toHaveProperty("projects");
-    expect(parsed).toHaveProperty("connected");
-    expect(parsed).toHaveProperty("unrouted");
+    const parsed = JSON.parse(console_.logs.join("\n"));
+    expect(parsed.projects).toEqual(["alpha", "beta"]);
+    expect(parsed.connected).toEqual([]);
+    expect(parsed.unrouted).toEqual(["alpha", "beta"]);
   });
 
-  test("connect with no sink type shows usage", async () => {
+  test("connect rejects removed one-step sink creation flags", async () => {
     await expect(
-      connectCommand("alpha", {})
-    ).rejects.toThrow(ExitError);
-
-    const output = console_.errors.join("\n");
-    expect(output).toContain("specify a sink type or existing sink");
-  });
-
-  test("duplicate connection string reuses existing sink", async () => {
-    const connStr = "postgresql://localhost:5432/jin";
-    await connectCommand("alpha", { postgres: connStr });
-    await connectCommand("beta", { postgres: connStr });
-
-    const config = await readTestConfig(env.dir);
-    // Same connection string → same sink reused
-    expect(config.sinks).toHaveLength(1);
-    expect(config.routes).toHaveLength(2);
-    // Both routes point to the same sink
-    expect(config.routes[0].sinks[0]).toBe(config.routes[1].sinks[0]);
-  });
-
-  test("connect with sink opts but no match target shows error", async () => {
-    await expect(
-      connectCommand("", { postgres: "postgresql://localhost:5432/jin" })
-    ).rejects.toThrow(ExitError);
-
-    const output = console_.errors.join("\n");
-    expect(output).toContain("specify a local repo");
-  });
-
-  test("connect no longer supports the legacy --directory bridge", async () => {
-    await expect(
-      connectCommand("", {
-        // @ts-expect-error legacy bridge intentionally unsupported
-        directory: "/home/dev/projects/alpha",
+      connectCommand("alpha", {
+        // @ts-expect-error packet removes this compatibility shortcut
         postgres: "postgresql://localhost:5432/jin",
-      })
+      }),
     ).rejects.toThrow(ExitError);
 
-    const output = console_.errors.join("\n");
-    expect(output).toContain("specify a local repo or --remote");
+    expect(console_.errors.join("\n")).toContain("no longer creates sinks directly");
+    expect(console_.errors.join("\n")).toContain("--postgres");
   });
 });
-
-// ── jin interactiveConnect ──────────────────────────────────────────────
 
 describe("jin interactiveConnect", () => {
-  test("json mode returns projects/connected/unrouted", async () => {
+  test("json mode reports repos and routing summary", async () => {
     await interactiveConnect({ json: true });
 
-    const output = console_.logs.join("\n");
-    const parsed = JSON.parse(output);
-    expect(parsed).toHaveProperty("projects");
-    expect(Array.isArray(parsed.projects)).toBe(true);
-    expect(parsed).toHaveProperty("connected");
-    expect(parsed).toHaveProperty("unrouted");
+    const parsed = JSON.parse(console_.logs.join("\n"));
+    expect(parsed.projects).toEqual(["alpha", "beta"]);
+    expect(parsed.connected).toEqual([]);
+    expect(parsed.unrouted).toEqual(["alpha", "beta"]);
   });
 });
-
-// ── jin disconnect ───────────────────────────────────────────────────────
 
 describe("jin disconnect", () => {
-  test("disconnect removes route, keeps sink", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
+  test("disconnect removes a route and keeps the sink by default", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-main",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
 
+    await connectCommand("alpha", { sink: "postgres-main" });
     await disconnectCommand("alpha", {});
 
-    const config = await readTestConfig(env.dir);
-    expect(config.routes).toHaveLength(0);
-    // Sink is kept
-    expect(config.sinks).toHaveLength(1);
-
-    const output = console_.logs.join("\n");
-    expect(output).toContain("Disconnected alpha");
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.routes).toEqual([]);
+    expect(nextConfig.sinks).toHaveLength(1);
   });
 
-  test("disconnect --remove-sink removes sink if unused", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
+  test("disconnect --remove-sink removes an unused destination", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-main",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
 
+    await connectCommand("alpha", { sink: "postgres-main" });
     await disconnectCommand("alpha", { "remove-sink": true });
 
-    const config = await readTestConfig(env.dir);
-    expect(config.routes).toHaveLength(0);
-    expect(config.sinks).toHaveLength(0);
-  });
-
-  test("disconnect --remove-sink keeps sink if other routes use it", async () => {
-    const connStr = "postgresql://localhost:5432/jin";
-    await connectCommand("alpha", { postgres: connStr });
-    await connectCommand("beta", { postgres: connStr });
-
-    // Disconnect alpha with --remove-sink
-    await disconnectCommand("alpha", { "remove-sink": true });
-
-    const config = await readTestConfig(env.dir);
-    expect(config.routes).toHaveLength(1); // beta's route remains
-    expect(config.sinks).toHaveLength(1); // sink kept (still used by beta)
-
-    const output = console_.logs.join("\n");
-    expect(output).toContain("still used");
-  });
-
-  test("disconnect non-existent project shows error", async () => {
-    await expect(
-      disconnectCommand("nonexistent", {})
-    ).rejects.toThrow(ExitError);
-
-    const output = console_.errors.join("\n");
-    expect(output).toContain('repo "nonexistent" was not found');
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.routes).toEqual([]);
+    expect(nextConfig.sinks).toEqual([]);
   });
 });
-
-// ── jin connections ──────────────────────────────────────────────────────
 
 describe("jin connections", () => {
-  test("shows connected projects with full paths", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
+  test("connections summarizes routes, local-only repos, and destinations", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-main",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
 
+    await connectCommand("alpha", { sink: "postgres-main" });
     await connectionsCommand();
 
     const output = console_.logs.join("\n");
-    expect(output).toContain("Routed Repos");
-    expect(output).toContain("alpha");
-    expect(output).toContain("postgres-0");
-  });
-
-  test("shows remote-based routes", async () => {
-    await connectCommand("", {
-      remote: "github.com/org/alpha",
-      postgres: "postgresql://localhost:5432/jin",
-    });
-
-    await connectionsCommand();
-
-    const output = console_.logs.join("\n");
-    expect(output).toContain("remote:github.com/org/alpha");
-  });
-
-  test("shows configured sinks with usage count", async () => {
-    await connectCommand("alpha", {
-      postgres: "postgresql://localhost:5432/jin",
-    });
-
-    await connectionsCommand();
-
-    const output = console_.logs.join("\n");
-    expect(output).toContain("Destinations");
-    expect(output).toContain("postgres-0");
-    expect(output).toContain("1 route");
-  });
-
-  test("empty state shows help message", async () => {
-    // No sinks, no routes, and no projects in the store
-    // Need a fresh env without seeded data
-    env.cleanup();
-    env = createTestEnv();
-    // Don't seed store - leave it empty
-
-    await connectionsCommand();
-
-    const output = console_.logs.join("\n");
-    expect(output).toContain("No workspace or integration routing configured");
+    expect(output).toContain("Routes:");
+    expect(output).toContain("Routed Repos:");
+    expect(output).toContain("Local-only Repos:");
+    expect(output).toContain("Destinations:");
   });
 });
+
+function seedRepos(): void {
+  const store = openStoreAtPath(runtimePaths.storePath);
+  try {
+    store.writeBundle(makeBundle("alpha-root", "github.com/org/alpha"));
+    store.writeBundle(makeBundle("beta-root", "github.com/org/beta"));
+  } finally {
+    store.close();
+  }
+}
+
+function makeBundle(id: string, gitRemote: string): ConversationBundle {
+  return {
+    conversation: {
+      id,
+      traceId: id,
+      parentId: "",
+      relationship: "root",
+      forkPoint: -1,
+      adapterId: "mock-adapter",
+      name: `${gitRemote} conversation`,
+      cwd: "/tmp",
+      gitRemote,
+      branch: "main",
+      model: "mock-model",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      endedAt: "2026-04-01T00:01:00.000Z",
+      sourcePath: `/tmp/${id}.jsonl`,
+      sourceFormat: "jsonl",
+    },
+    messages: [
+      {
+        id: `${id}-m1`,
+        role: "user",
+        content: "hello",
+        recordType: "message",
+        model: "mock-model",
+        sequence: 1,
+        turn: 1,
+        isSidechain: false,
+        parentMessageId: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinkingContent: "",
+        thinkingTokens: 0,
+        timestamp: "2026-04-01T00:00:00.000Z",
+        toolUses: [],
+      },
+    ],
+  };
+}

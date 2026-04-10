@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { configDir } from "../config";
 import {
@@ -15,16 +15,13 @@ import {
 } from "./runtime-state";
 
 const PID_FILE = join(configDir(), "jin.pid");
-const UI_PID_FILE = join(configDir(), "ui.pid");
-const UI_PORT_FILE = join(configDir(), "ui.port");
 const DEFAULT_STOP_WAIT_MS = 2_000;
 
 export interface ComponentState {
-  name: "watcher" | "dashboard";
+  name: "watcher";
   status: "running" | "stopped";
   pid?: number;
   mode?: RuntimeMode;
-  port?: number;
   uptime?: string;
   lifecycleState?: RuntimeState;
   issues?: RuntimeIssue[];
@@ -60,30 +57,14 @@ export function getWatcherState(): ComponentState {
   };
 }
 
-export function getDashboardState(): ComponentState {
-  const pid = getUiPid();
-  if (pid) {
-    const port = getUiPort();
-    return {
-      name: "dashboard",
-      status: "running",
-      pid,
-      port: port || undefined,
-    };
-  }
-  return { name: "dashboard", status: "stopped" };
-}
-
 export function getAllState(): ComponentState[] {
-  return [getWatcherState(), getDashboardState()];
+  return [getWatcherState()];
 }
 
 export async function stopAll(
   options?: StopWatcherOptions,
 ): Promise<StopWatcherResult> {
-  const watcherResult = await stopWatcher(options);
-  await stopDashboard();
-  return watcherResult;
+  return stopWatcher(options);
 }
 
 export async function stopWatcher(
@@ -177,26 +158,6 @@ export async function stopWatcher(
   };
 }
 
-export async function stopDashboard(): Promise<void> {
-  const pid = getUiPid();
-  if (!pid) return;
-
-  try {
-    process.kill(pid, "SIGTERM");
-    for (let i = 0; i < 20; i++) {
-      await Bun.sleep(100);
-      try {
-        process.kill(pid, 0);
-      } catch {
-        break;
-      }
-    }
-  } catch {}
-
-  cleanupPidFile(UI_PID_FILE);
-  cleanupPidFile(UI_PORT_FILE);
-}
-
 export function getUptime(pid: number): string | null {
   try {
     if (process.platform === "linux") {
@@ -234,30 +195,6 @@ function formatUptime(seconds: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   if (minutes > 0) return `${minutes}m`;
   return `${Math.floor(seconds)}s`;
-}
-
-function getUiPid(): number | null {
-  if (!existsSync(UI_PID_FILE)) return null;
-
-  try {
-    const pid = parseInt(readFileSync(UI_PID_FILE, "utf-8").trim(), 10);
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    cleanupPidFile(UI_PID_FILE);
-    cleanupPidFile(UI_PORT_FILE);
-    return null;
-  }
-}
-
-function getUiPort(): number | null {
-  if (!existsSync(UI_PORT_FILE)) return null;
-
-  try {
-    return parseInt(readFileSync(UI_PORT_FILE, "utf-8").trim(), 10);
-  } catch {
-    return null;
-  }
 }
 
 async function requestServiceStop(): Promise<void> {

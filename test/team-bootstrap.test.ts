@@ -46,7 +46,7 @@ mock.module("../src/commands/start", () => ({
 
 // ── Imports (after mocks) ────────────────────────────────────────────────
 
-import { teamConfigCommand } from "../src/commands/team-config";
+import { teamBridgeCommand } from "../src/commands/team-bridge";
 import { encodeTeamConfig } from "../src/sinks/types";
 import {
   schemaApplyCommand,
@@ -96,7 +96,7 @@ afterEach(() => {
 
 describe("jin team bridge", () => {
   test("shows help text pointing developers to jin connect --team", async () => {
-    await teamConfigCommand({});
+    await teamBridgeCommand({});
 
     const output = console_.logs.join("\n");
     expect(output).toContain("jin team bridge");
@@ -107,7 +107,7 @@ describe("jin team bridge", () => {
   });
 
   test("generates bridge code directing developers to jin connect --team", async () => {
-    await teamConfigCommand({
+    await teamBridgeCommand({
       type: "webhook",
       name: "workspace-main",
       url: "https://workspace.example/jin",
@@ -121,7 +121,7 @@ describe("jin team bridge", () => {
   });
 
   test("bridge code is a valid base64 blob", async () => {
-    await teamConfigCommand({
+    await teamBridgeCommand({
       type: "postgres",
       name: "workspace-pg",
       connectionString: "postgresql://host/db",
@@ -143,7 +143,7 @@ describe("developer onboarding path", () => {
   test("connect --team remains the developer path (no jin team connect)", async () => {
     // The developer path is jin connect --team=<code>, exercised in connect.test.ts.
     // This test verifies the bridge output does NOT direct to jin team connect.
-    await teamConfigCommand({
+    await teamBridgeCommand({
       type: "webhook",
       name: "workspace-main",
       url: "https://workspace.example/jin",
@@ -264,7 +264,7 @@ describe("jin team schema version", () => {
 
 describe("namespace boundary", () => {
   test("team bridge help text does not leak schema commands into developer namespace", async () => {
-    await teamConfigCommand({});
+    await teamBridgeCommand({});
 
     const output = console_.logs.join("\n");
     // Bridge help should not mention schema apply
@@ -283,7 +283,7 @@ describe("namespace boundary", () => {
 
   test("teamConnectCommand is not exported (deferred per BP-09)", () => {
     // Verify the prior-pass exports were removed
-    const exports = Object.keys(require("../src/commands/team-config"));
+    const exports = Object.keys(require("../src/commands/team-bridge"));
     expect(exports).not.toContain("teamConnectCommand");
     expect(exports).not.toContain("teamStatusCommand");
     expect(exports).not.toContain("teamDisconnectCommand");

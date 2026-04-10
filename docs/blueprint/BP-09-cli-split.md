@@ -105,16 +105,8 @@ legacy leftovers).
 | `jin ingest` | One-shot ingest without daemon |
 | `jin benchmark [--json]` | Measure ingest budgets |
 | `jin service install\|uninstall\|status` | OS service management |
-| `jin ui [--port]` | Local dashboard |
 | `jin update` | Self-update |
 | `jin version` | Print version |
-
-### Deprecated
-
-| Command | Replacement | Notes |
-|---------|-------------|-------|
-| `jin init` | `jin start` | Keep as alias for `--team` + `--skills` onboarding flows; print deprecation notice for bare `jin init` |
-| `jin team-config` | `jin team bridge` | Hidden alias during transition; remove in a later release |
 
 ---
 
@@ -157,13 +149,11 @@ heuristic in the local config:
 | `jin team schema check <connection>` | Read-only version compatibility check |
 | `jin team schema version` | Print expected local schema version |
 
-## Command Rename: `team-config` to `jin team bridge`
+## Operator Bridge: `jin team bridge`
 
-Current `team-config` generates a base64 bridge code encoding sink
+`jin team bridge` generates a base64 bridge code encoding sink
 credentials. It is an operator command — it requires knowing connection
 strings, bucket names, or webhook URLs.
-
-**Rename to `jin team bridge`.**
 
 Why:
 - "team-config" is ambiguous (configure the team? show team configuration?)
@@ -171,12 +161,6 @@ Why:
   a "workspace onboarding bridge"
 - It belongs in the `jin team` namespace because it is an operator action,
   not a developer action
-
-Migration:
-1. Add `jin team bridge` with the current `teamConfigCommand` logic
-2. Keep `jin team-config` as a hidden alias that prints a deprecation notice
-3. Remove `team-config` from the main help text immediately
-4. Remove the alias in a later release
 
 ---
 
@@ -306,7 +290,6 @@ Utility:
   ingest                               One-shot local ingest
   benchmark [--json]                   Measure ingest budgets
   service install|uninstall|status     OS service management
-  ui [--port=4000]                     Local dashboard
   update                               Self-update
   version                              Show version
 
@@ -345,9 +328,8 @@ BP-01 lists `commands/schema.ts` as a planned file. Under this blueprint:
 ```
 src/commands/
   team.ts              # jin team dispatch (routes to sub-commands)
-  team-bridge.ts       # jin team bridge (was team-config.ts)
+  team-bridge.ts       # jin team bridge
   team-schema.ts       # jin team schema apply|check|version
-  team-config.ts       # deprecated alias → team-bridge.ts
 
 Future:
 
@@ -439,12 +421,14 @@ Verify that at no point does the developer need to run a `jin team` command.
 Verify that this path works without touching `jin team` at all. Generic
 sinks remain first-class.
 
-### Experiment 4: Deprecation Aliases
+### Experiment 4: Removed Compatibility Bridges
 
 1. Run `jin team-config --type=webhook --url=...`
-2. Verify it prints a deprecation notice and delegates to `jin team bridge`
-3. Run `jin init` (bare, no flags)
-4. Verify it prints a deprecation notice pointing to `jin start`
+2. Verify it fails and points to `jin team bridge`
+3. Run `jin init`
+4. Verify it fails and points to `jin start`
+5. Run `jin sessions`
+6. Verify it fails and points to `jin conversations`
 
 ---
 
@@ -455,13 +439,10 @@ sinks remain first-class.
 | 1 | Add `jin team` subcommand dispatch in `index.ts` | No |
 | 2 | Add `jin team bridge` with current `teamConfigCommand` logic | No |
 | 3 | Add `jin team schema apply`, `check`, `version` | No |
-| 4 | Deprecate `jin team-config` in help text, keep as hidden alias | Soft |
-| 5 | Move bare `jin init` guidance to `jin start` | Soft |
+| 4 | Remove `jin team-config`, `jin init`, `jin sessions`, and `jin ui` from the developer surface | Yes |
+| 5 | Remove `jin connect --postgres|--s3|--webhook` shortcut wiring | Yes |
 | 6 | Add `jin team init` once workspace identity/product behavior exists | No |
 | 7 | Add `jin team status` once workspace identity is no longer heuristic | No |
-| 8 | Remove `team-config` alias in a future release | Breaking (with warning) |
-
-Every change adds a new path before removing an old one.
 
 ---
 

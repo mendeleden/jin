@@ -12,13 +12,11 @@ import { join } from "path";
 import { captureConsole } from "./helpers";
 
 let watcherState: any;
-let dashboardState: any;
 let runtimeStatus: any;
 let stopWatcherResult: any;
 let stopWatcherCalls: any[] = [];
 let watchCalls: any[] = [];
 let serviceCalls: any[] = [];
-let uiCalls: any[] = [];
 let serviceInstalled = false;
 let configValue: any;
 let runtimePaths = {
@@ -30,14 +28,10 @@ let runtimePaths = {
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => watcherState,
-  getDashboardState: () => dashboardState,
-  getAllState: () => [watcherState, dashboardState],
+  getAllState: () => [watcherState],
   stopWatcher: async (options?: unknown) => {
     stopWatcherCalls.push(options);
     return stopWatcherResult;
-  },
-  stopDashboard: async () => {
-    dashboardState = { ...dashboardState, status: "stopped" };
   },
 }));
 
@@ -74,20 +68,15 @@ mock.module("../src/commands/service", () => ({
   },
 }));
 
-mock.module("../src/api/server", () => ({
-  startDetached: async (options: unknown) => {
-    uiCalls.push(options);
-  },
-}));
-
 mock.module("../src/config", () => ({
+  configDir: () => runtimePaths.configDir,
   configPath: () => runtimePaths.configPath,
   loadConfig: async () => configValue,
 }));
 
-import { startCommand } from "../src/commands/start";
-import { stopCommand } from "../src/commands/stop";
-import { statusCommand } from "../src/commands/status";
+const { startCommand } = await import("../src/commands/start");
+const { stopCommand } = await import("../src/commands/stop");
+const { statusCommand } = await import("../src/commands/status");
 
 let console_: ReturnType<typeof captureConsole>;
 let tempDir = "";
@@ -113,7 +102,6 @@ beforeEach(() => {
   };
 
   watcherState = { name: "watcher", status: "stopped", lifecycleState: "stopped" };
-  dashboardState = { name: "dashboard", status: "stopped" };
   runtimeStatus = { state: "stopped", issues: [] };
   stopWatcherResult = {
     requested: false,
@@ -124,7 +112,6 @@ beforeEach(() => {
   stopWatcherCalls = [];
   watchCalls = [];
   serviceCalls = [];
-  uiCalls = [];
   serviceInstalled = false;
   configValue = { sinks: [], routes: [] };
   console_ = captureConsole();

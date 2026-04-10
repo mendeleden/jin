@@ -3,7 +3,7 @@ set -e
 
 # ─── jin performance harness ────────────────────────────────────────────
 # Runs inside Docker. Measures the full lifecycle using REAL jin commands:
-#   jin init --team → jin connect → jin start → ingest → verify postgres
+#   jin connect --team → jin connect <repo> --sink → jin start → ingest → verify postgres
 #
 # Dogfoods jin's own CLI — no manual config writing.
 #
@@ -85,21 +85,22 @@ metric "baseline" "jsonl_files" "$FILE_COUNT"
 metric "baseline" "total_bytes" "$TOTAL_SIZE"
 metric "baseline" "total_lines" "$TOTAL_LINES"
 
-# ─── Phase 1: jin init --team (dogfooding real commands) ─────────────────
+# ─── Phase 1: jin connect --team (dogfooding real commands) ──────────────
 
 log ""
-log "═══ PHASE 1: JIN INIT --TEAM ═══"
+log "═══ PHASE 1: JIN CONNECT --TEAM ═══"
 
 # Build Postgres team config base64 the same way a team lead would
 TEAM_JSON="{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
 TEAM_B64=$(echo -n "$TEAM_JSON" | base64 -w0)
 log "Postgres team config (base64): ${TEAM_B64:0:40}..."
 
-INIT_START=$(date +%s%N)
-jin init --team="$TEAM_B64" 2>&1 | tee -a "$REPORT"
-INIT_END=$(date +%s%N)
-INIT_MS=$(( (INIT_END - INIT_START) / 1000000 ))
-metric "init" "pg_duration_ms" "$INIT_MS"
+TEAM_CONNECT_START=$(date +%s%N)
+CONNECT_TEAM_JSON=$(jin connect --team="$TEAM_B64" --json 2>&1 || echo "{}")
+echo "$CONNECT_TEAM_JSON" | tee -a "$REPORT"
+TEAM_CONNECT_END=$(date +%s%N)
+TEAM_CONNECT_MS=$(( (TEAM_CONNECT_END - TEAM_CONNECT_START) / 1000000 ))
+metric "connect_team" "pg_duration_ms" "$TEAM_CONNECT_MS"
 
 # Build S3 team config and create MinIO bucket
 S3_ENDPOINT="$JIN_PERF_S3_ENDPOINT"
@@ -121,19 +122,17 @@ if [ -n "$S3_ENDPOINT" ]; then
   S3_B64=$(echo -n "$S3_JSON" | base64 -w0)
   log "S3 team config (base64): ${S3_B64:0:40}..."
 
-  S3_INIT_START=$(date +%s%N)
-  jin init --team="$S3_B64" 2>&1 | tee -a "$REPORT"
-  S3_INIT_END=$(date +%s%N)
-  S3_INIT_MS=$(( (S3_INIT_END - S3_INIT_START) / 1000000 ))
-  metric "init" "s3_duration_ms" "$S3_INIT_MS"
+  S3_CONNECT_START=$(date +%s%N)
+  jin connect --team="$S3_B64" --json 2>&1 | tee -a "$REPORT" >/dev/null
+  S3_CONNECT_END=$(date +%s%N)
+  S3_CONNECT_MS=$(( (S3_CONNECT_END - S3_CONNECT_START) / 1000000 ))
+  metric "connect_team" "s3_duration_ms" "$S3_CONNECT_MS"
 fi
 
-# Verify init created the config and detected adapters
+# Verify workspace connect created the sink and reported repos
 log ""
-log "Verifying init results (via jin init --json)..."
-INIT_JSON=$(jin init --json 2>&1 || echo "{}")
-log "init --json output length: ${#INIT_JSON} chars"
-echo "$INIT_JSON" >> "$REPORT"
+log "Verifying workspace connect results..."
+log "connect --team --json output length: ${#CONNECT_TEAM_JSON} chars"
 
 # Extract project names using bun (reliable JSON parsing, no fragile grep)
 PROJECTS_FILE="$RESULTS_DIR/projects.txt"
@@ -142,11 +141,11 @@ bun -e "
 const data = JSON.parse(process.argv[1]);
 const projects = data.projects || [];
 for (const p of projects) console.log(p);
-" "$INIT_JSON" > "$PROJECTS_FILE" 2>/dev/null || true
+" "$CONNECT_TEAM_JSON" > "$PROJECTS_FILE" 2>/dev/null || true
 cd /home/testuser
 
 PROJECT_COUNT=$(wc -l < "$PROJECTS_FILE" | tr -d ' ')
-metric "init" "projects_discovered" "$PROJECT_COUNT"
+metric "connect_team" "projects_discovered" "$PROJECT_COUNT"
 log "Discovered $PROJECT_COUNT projects:"
 cat "$PROJECTS_FILE" | while read p; do log "  - $p"; done
 
@@ -169,7 +168,7 @@ done < "$PROJECTS_FILE"
 
 if [ "$CONNECT_COUNT" -eq 0 ]; then
   log "  WARNING: No projects connected. No routes will match."
-  log "  This likely means jin init found no projects in the store."
+  log "  This likely means `jin connect --team --json` found no repos in the store."
 fi
 
 metric "connect" "projects_connected" "$CONNECT_COUNT"
@@ -424,7 +423,7 @@ if [ "$FAIL" -eq 0 ]; then
 else
   log "═══ SOME CHECKS FAILED ═══"
   log "Review assertions above. Common causes:"
-  log "  - jin init --team did not register the sink"
+  log "  - jin connect --team did not register the sink"
   log "  - jin connect did not route projects to the sink"
   log "  - Postgres unreachable from container"
   log "  - Adapter detected 0 sessions (conversation fixtures missing?)"

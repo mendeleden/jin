@@ -1,6 +1,6 @@
 {
   "name": "jin",
-  "version": "0.8.2",
+  "version": "0.8.4",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "bin": {
@@ -9,16 +9,11 @@
   "scripts": {
     "test": "bun test",
     "dev": "bun run src/index.ts",
-    "build": "bun run scripts/embed-spa.ts && bun build ./src/index.ts --compile --outfile jin",
-    "build:dashboard": "cd dashboard && bun install && bun run build && cd .. && bun run scripts/embed-spa.ts",
+    "build": "bun build ./src/index.ts --compile --outfile jin",
     "typecheck": "tsc --noEmit",
     "test:integration": "docker compose -f test/docker-compose.integration.yml up -d --wait && bun test test/integration.test.ts; docker compose -f test/docker-compose.integration.yml down -v"
   },
-  "dependencies": {
-    "ink": "^5.1.0",
-    "react": "^18.3.1",
-    "react-devtools-core": "^4.28.5"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/bun": "latest",
     "@types/react": "^18.3.0",

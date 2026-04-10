@@ -65,7 +65,7 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin search "migration" --adapter=claude-code --since=30d
     $ jin search "deploy" --json
 `,
-  sessions: `
+  conversations: `
   List recent local conversations
 
   USAGE
@@ -79,7 +79,6 @@ const COMMAND_HELP: Record<string, string> = {
 
   EXAMPLES
     $ jin conversations --since=7d
-    $ jin sessions --adapter=claude-code --json   # compatibility alias
 `,
   show: `
   Show one local conversation, full trace, or conversation tree
@@ -128,11 +127,6 @@ const COMMAND_HELP: Record<string, string> = {
   LOW-LEVEL BYO INTEGRATION
     jin sink add <type> ...
     jin route add --remote="github.com/org/repo" --sink=<id>
-
-  COMPATIBILITY SHORTCUTS
-    --postgres=<url>   Legacy one-step sink creation + routing
-    --s3=<bucket>      Legacy one-step sink creation + routing
-    --webhook=<url>    Legacy one-step sink creation + routing
 
   EXAMPLES
     $ jin connect --team=<workspace-code>
@@ -198,28 +192,6 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin export --format=md --since=7d
     $ jin export --adapter=codex --output=./exports
 `,
-  init: `
-  Compatibility bootstrap helper for onboarding and setup
-
-  USAGE
-    jin init [flags]
-
-  FLAGS
-    --team=<code>      Add a workspace destination from an onboarding code
-    --skills           Install jin as a skill/command in detected coding tools
-    --json             Output as JSON
-
-  PRIMARY LOCAL-FIRST PATH
-    jin start          Bootstraps the local daemon and index on first run
-
-  COMPATIBILITY NOTE
-    jin init remains for onboarding/setup compatibility. It will not run a
-    second ingest coordinator while the daemon is active.
-
-  EXAMPLES
-    $ jin init
-    $ jin init --team=<code> --skills
-`,
   start: `
   Start the local daemon (bootstraps on first run)
 
@@ -229,14 +201,11 @@ const COMMAND_HELP: Record<string, string> = {
   FLAGS
     --foreground       Run in foreground (no daemon)
     --service          Also install OS service
-    --ui               Also start dashboard
-    --all              Start watcher + UI
-    --port=<n>         Dashboard port (default: 4000)
 
   EXAMPLES
     $ jin start
     $ jin start --foreground
-    $ jin start --all --port=8080
+    $ jin start --service
 `,
   status: `
   Show local daemon, health, and destination status
@@ -296,15 +265,6 @@ const COMMAND_HELP: Record<string, string> = {
   These commands are for workspace operators, not everyday developers.
   Developers join a workspace with: jin connect --team=<code>
 `,
-  "team-config": `
-  Deprecated: use jin team bridge instead.
-
-  USAGE
-    jin team bridge --type=<sink-type> [flags]
-
-  EXAMPLES
-    $ jin team bridge --type=webhook --url=https://workspace.example/jin --name=workspace-main
-`,
   ingest: `
   Run a one-shot local ingest without starting the daemon
 
@@ -316,15 +276,13 @@ const COMMAND_HELP: Record<string, string> = {
 `,
 };
 
-COMMAND_HELP.conversations = COMMAND_HELP.sessions;
-
 function usage(): void {
   console.log(`
   jin v${VERSION} — local daemon and conversation index for coding-tool activity
 
   Local-first:
     start [--foreground|--service]       Start the local daemon
-    stop [--watcher|--ui]                Stop running components
+    stop                                 Stop the local daemon
     restart                              Restart the local daemon
     status [--json|--short]              Show daemon, health, and destination status
     conversations [--adapter=X]          List local conversations
@@ -353,8 +311,6 @@ function usage(): void {
     ingest                               One-shot local ingest
     benchmark [--json]                   Measure ingest budgets
     service install|uninstall|status     OS service management
-    ui [--port=4000]                     Local dashboard
-    init [--team=<code>] [--skills]      Compatibility bootstrap helper
     update [--quiet|--rollback]          Self-update or rollback
     version                              Show version
 
@@ -362,6 +318,13 @@ function usage(): void {
   Config:        ~/.config/jin/config.json
   Help:          jin help <command> for details (e.g. jin help sink)
 `);
+}
+
+function failRemovedSurface(lines: string[]): never {
+  for (const line of lines) {
+    console.error(line);
+  }
+  process.exit(1);
 }
 
 async function main(): Promise<void> {
@@ -374,6 +337,13 @@ async function main(): Promise<void> {
   switch (command) {
     // ── Lifecycle ──────────────────────────────────────────────────────
     case "start": {
+      if (flags.ui || flags.all || flags.port) {
+        failRemovedSurface([
+          "  Error: `jin start` no longer supports dashboard flags.",
+          "  Removed: `--ui`, `--all`, and `--port`.",
+          "  Use `jin start` or `jin start --service` for lifecycle control only.",
+        ]);
+      }
       if (flags.foreground) {
         const { watchCommand } = await import("./commands/watch");
         await watchCommand({ daemon: false });
@@ -381,28 +351,32 @@ async function main(): Promise<void> {
         const { startCommand } = await import("./commands/start");
         await startCommand({
           service: !!flags.service,
-          ui: !!flags.ui,
-          all: !!flags.all,
-          port: flags.port ? parseInt(flags.port as string) : undefined,
         });
       }
       break;
     }
     case "stop": {
+      if (flags.ui) {
+        failRemovedSurface([
+          "  Error: `jin stop --ui` was removed with the dashboard surface.",
+          "  Use `jin stop` to stop the local daemon.",
+        ]);
+      }
       const { stopCommand } = await import("./commands/stop");
-      await stopCommand({
-        watcher: !!flags.watcher,
-        ui: !!flags.ui,
-      });
+      await stopCommand();
       break;
     }
     case "restart": {
+      if (flags.ui || flags.all || flags.port) {
+        failRemovedSurface([
+          "  Error: `jin restart` no longer supports dashboard flags.",
+          "  Removed: `--ui`, `--all`, and `--port`.",
+          "  Use `jin restart` or `jin restart --service` for runtime lifecycle control.",
+        ]);
+      }
       const { restartCommand } = await import("./commands/start");
       await restartCommand({
         service: !!flags.service,
-        ui: !!flags.ui,
-        all: !!flags.all,
-        port: flags.port ? parseInt(flags.port as string) : undefined,
       });
       break;
     }
@@ -420,38 +394,22 @@ async function main(): Promise<void> {
       break;
     }
 
-    // ── Setup ──────────────────────────────────────────────────────────
-    case "init": {
-      const { initCommand } = await import("./commands/init");
-      await initCommand({
-        team: flags.team as string | undefined,
-        json: !!flags.json,
-        skills: !!flags.skills,
-      });
-      break;
-    }
-
     // ── Connections ───────────────────────────────────────────────────────
     case "connect": {
+      if (flags.postgres || flags.s3 || flags.webhook) {
+        failRemovedSurface([
+          "  Error: `jin connect` no longer creates sinks directly.",
+          "  Removed: `--postgres`, `--s3`, and `--webhook`.",
+          "  Use `jin sink add ...` to configure a destination, then `jin connect <repo> --sink=<id>` or `jin route add ...`.",
+        ]);
+      }
       const { connectCommand } = await import("./commands/connect");
       const project = args[1] && !args[1].startsWith("--") ? args[1] : "";
       await connectCommand(project, {
-        postgres: flags.postgres as string | undefined,
-        s3: flags.s3 as string | undefined,
-        webhook: flags.webhook as string | undefined,
         sink: flags.sink as string | undefined,
         team: flags.team as string | undefined,
         id: flags.id as string | undefined,
-        name: flags.name as string | undefined,
-        "team-id": flags["team-id"] as string | undefined,
         teamId: flags.teamId as string | undefined,
-        region: flags.region as string | undefined,
-        endpoint: flags.endpoint as string | undefined,
-        "access-key-id": flags["access-key-id"] as string | undefined,
-        accessKeyId: flags.accessKeyId as string | undefined,
-        "secret-access-key": flags["secret-access-key"] as string | undefined,
-        secretAccessKey: flags.secretAccessKey as string | undefined,
-        prefix: flags.prefix as string | undefined,
         remote: flags.remote as string | undefined,
         json: !!flags.json,
         yes: !!flags.yes,
@@ -570,39 +528,8 @@ async function main(): Promise<void> {
       break;
     }
 
-    // ── Interactive / Foreground ────────────────────────────────────────
-    case "ui": {
-      if (flags.tui) {
-        const { launchTui } = await import("./tui/app");
-        await launchTui();
-      } else {
-        const subcommand = args[1];
-        const port = flags.port ? parseInt(flags.port as string) : 4000;
-        if (subcommand === "start") {
-          const { startDetached } = await import("./api/server");
-          await startDetached({ port });
-        } else if (subcommand === "stop") {
-          const { stopServer } = await import("./api/server");
-          stopServer();
-        } else if (subcommand === "status") {
-          const { serverStatus } = await import("./api/server");
-          serverStatus();
-        } else {
-          // Default: foreground mode
-          const { startServer } = await import("./api/server");
-          await startServer({
-            port,
-            dev: !!flags.dev,
-            open: !flags["no-open"],
-          });
-        }
-      }
-      break;
-    }
-
     // ── Data ───────────────────────────────────────────────────────────
-    case "conversations":
-    case "sessions": {
+    case "conversations": {
       const { listCommand } = await import("./commands/list");
       await listCommand({
         adapter: flags.adapter as string | undefined,
@@ -682,8 +609,8 @@ async function main(): Promise<void> {
 
       switch (teamAction) {
         case "bridge": {
-          const { teamConfigCommand } = await import("./commands/team-config");
-          await teamConfigCommand({
+          const { teamBridgeCommand } = await import("./commands/team-bridge");
+          await teamBridgeCommand({
             name: teamFlags.name as string | undefined,
             type: teamFlags.type as string | undefined,
             url: teamFlags.url as string | undefined,
@@ -751,25 +678,6 @@ async function main(): Promise<void> {
       await serviceCommand(action);
       break;
     }
-    case "team-config": {
-      console.log("  Note: jin team-config is deprecated. Use jin team bridge instead.\n");
-      const { teamConfigCommand } = await import("./commands/team-config");
-      await teamConfigCommand({
-        name: flags.name as string | undefined,
-        type: flags.type as string | undefined,
-        url: flags.url as string | undefined,
-        connectionString: (flags["connection-string"] || flags.connectionString) as string | undefined,
-        bucket: flags.bucket as string | undefined,
-        region: flags.region as string | undefined,
-        endpoint: flags.endpoint as string | undefined,
-        accessKeyId: (flags["access-key-id"] || flags.accessKeyId) as string | undefined,
-        secretAccessKey: (flags["secret-access-key"] || flags.secretAccessKey) as string | undefined,
-        prefix: flags.prefix as string | undefined,
-        teamId: (flags["team-id"] || flags.teamId) as string | undefined,
-        headers: flags.headers as string | undefined,
-      });
-      break;
-    }
     case "update": {
       if (flags.rollback) {
         const { rollback } = await import("./updater");
@@ -800,6 +708,26 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "init":
+      failRemovedSurface([
+        "  Error: `jin init` was removed.",
+        "  Use `jin start` for local bootstrap and `jin connect --team=<code>` for workspace onboarding.",
+      ]);
+    case "sessions":
+      failRemovedSurface([
+        "  Error: `jin sessions` was removed.",
+        "  Use `jin conversations`.",
+      ]);
+    case "team-config":
+      failRemovedSurface([
+        "  Error: `jin team-config` was removed.",
+        "  Use `jin team bridge`.",
+      ]);
+    case "ui":
+      failRemovedSurface([
+        "  Error: `jin ui` was removed.",
+        "  Use `jin status`, `jin start`, and `jin stop` for the daemon-first local surface.",
+      ]);
     default:
       console.error(`Unknown command: ${command}`);
       usage();

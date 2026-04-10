@@ -1,0 +1,73 @@
+flowchart TD
+  subgraph Runtime["Runtime / Live blockers"]
+    PERF2["W3-PERF-02<br/>approved<br/>runtime RSS fix landed<br/>guard stays frozen at 200 / 256 MB"]
+    AD07["W3-ADAPTER-07<br/>approved<br/>Claude path precedence fixed<br/>stack overflow fixed<br/>live peak still ~812 MB"]
+    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude + Cursor follow-ups isolated"]
+    SINK04["W3-SINK-04<br/>needs_codex<br/>sql.begin transport fix landed<br/>await unrestricted clean-start rerun"]
+    E2E["W3-E2E-01<br/>review_ready<br/>wait for stable runtime"]
+    SERVICE["W3-SERVICE-01<br/>in_progress<br/>wait for stable runtime"]
+  end
+
+  subgraph Perf["Repeatable perf system"]
+    SCALE["W3-SCALE-01<br/>approved<br/>1x / 10x / 100x datasets"]
+    PERF3["W3-PERF-03<br/>approved<br/>strict adapter targeting fixed<br/>peak RSS artifacts normalized"]
+    BP01["W3-BP-01<br/>approved<br/>BP-10 + BP hardening"]
+  end
+
+  subgraph Reviews["Review outcomes"]
+    RPERF2["W3-PERF-02 review<br/>approved"]
+    RSCALE["W3-SCALE-01 review<br/>approved"]
+    RPERF3["W3-PERF-03 review<br/>approved"]
+    RBP01["W3-BP-01 review<br/>approved"]
+    RAD07["W3-ADAPTER-07 review<br/>approved"]
+    RVALIDATE["W3-VALIDATE-01 review<br/>approved"]
+  end
+
+  subgraph Rechecks["Recent codex follow-ups"]
+    PERF2FIX["W3-PERF-02 recheck<br/>completed<br/>removed watch.ts RSS env drift"]
+    PERF3FIX["W3-PERF-03 recheck<br/>completed<br/>strict adapter failures + normalized peak RSS"]
+    SINKFIX["W3-SINK-04 review<br/>needs_codex<br/>code fix ready<br/>await local + Railway row proof"]
+  end
+
+  subgraph Evidence["Fresh evidence"]
+    CLEAN["Fresh-start litmus<br/>clean config + reprovision<br/>SQLite populated<br/>both Postgres sinks stayed 0/0"]
+    LIVE["W3-VALIDATE-01 audit<br/>Codex clean<br/>Claude message-id collisions<br/>Cursor null bundles / DB open issue"]
+  end
+
+  subgraph Release["Downstream"]
+    PR["W3-PR-01<br/>in_progress<br/>wait for runtime stability"]
+    CLEANUP["W3-CLEANUP-01<br/>approved<br/>cleanup commit landing<br/>userId blockers cleared"]
+    UI["W3-UI-01<br/>blocked<br/>superseded by cleanup lane"]
+  end
+
+  HEAP["jin-heap-inspect<br/>manual diagnostic session"]
+
+  AD07 --> VALIDATE
+  PERF3 --> VALIDATE
+  VALIDATE --> SINK04
+  CLEAN --> SINK04
+  LIVE --> VALIDATE
+  PERF2 --> E2E
+  PERF2 --> SERVICE
+  PERF2 --> SINK04
+  SCALE --> PERF3
+  PERF3 --> BP01
+  PERF2 --> RPERF2
+  SCALE --> RSCALE
+  PERF3 --> RPERF3
+  BP01 --> RBP01
+  AD07 --> RAD07
+  VALIDATE --> RVALIDATE
+  RPERF2 --> PERF2FIX
+  RPERF3 --> PERF3FIX
+  SINK04 --> SINKFIX
+  AD07 --> E2E
+  SINK04 --> E2E
+  BP01 --> PR
+  E2E --> PR
+  SERVICE --> PR
+  SINK04 --> PR
+  PR --> CLEANUP
+  CLEANUP --> UI
+  HEAP -. supports diagnosis .-> AD07
+  HEAP -. supports diagnosis .-> PERF2

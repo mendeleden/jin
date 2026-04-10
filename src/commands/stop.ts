@@ -1,13 +1,10 @@
 import {
   stopWatcher,
-  stopDashboard,
   getWatcherState,
-  getDashboardState,
 } from "../daemon/process-state";
 
 export async function stopCommand(opts?: {
   watcher?: boolean;
-  ui?: boolean;
 }): Promise<void> {
   if (opts?.watcher) {
     const state = getWatcherState();
@@ -41,23 +38,10 @@ export async function stopCommand(opts?: {
     return;
   }
 
-  if (opts?.ui) {
-    const state = getDashboardState();
-    if (state.status === "stopped") {
-      console.log("  Dashboard is not running.");
-      return;
-    }
-    console.log(`  Stopping dashboard (PID ${state.pid})...`);
-    await stopDashboard();
-    console.log("  Dashboard stopped.");
-    return;
-  }
-
   // Default: stop everything
   const watcherState = getWatcherState();
-  const dashboardState = getDashboardState();
 
-  if (watcherState.status === "stopped" && dashboardState.status === "stopped") {
+  if (watcherState.status === "stopped") {
     console.log("  jin is already stopped.");
     return;
   }
@@ -75,11 +59,6 @@ export async function stopCommand(opts?: {
           : `PID ${watcherState.pid}`;
     console.log(`  Requesting watcher shutdown (${label})...`);
     watcherResult = await stopWatcher();
-  }
-  if (dashboardState.status === "running") {
-    console.log(`  Stopping dashboard (PID ${dashboardState.pid})...`);
-    await stopDashboard();
-    console.log("  Dashboard stopped.");
   }
 
   if (!watcherResult) {
