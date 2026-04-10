@@ -64,6 +64,7 @@ export interface RunPipelineOptions {
   watchDebounceMs?: number;
   scanIntervalMs?: number | null;
   scheduleStartupWork?: boolean;
+  deferWatcherStart?: boolean;
   watcherFactory?: PipelineWatcherFactory;
   shutdownDrainTimeoutMs?: number;
   rssWarningBytes?: number;

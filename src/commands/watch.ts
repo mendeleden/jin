@@ -106,7 +106,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   }
   console.log("");
 
-  const pipelineHandle = await startPipeline(config, store, sinks, log);
+  Bun.gc(true);
+  const pipelineHandle = await startPipeline(config, store, sinks, log, activeAdapters);
   await runUntilShutdown(pipelineHandle, store, log);
 }
 
@@ -115,17 +116,39 @@ async function startPipeline(
   store: SqliteConversationStore,
   sinks: V2Sink[],
   log: RuntimeLog,
+  initialAdapters: V2Adapter[],
 ): Promise<PipelineHandle> {
+  let useInitialAdapters = true;
+
   try {
-    return await runPipeline({
-      adapterSource: () => detectActiveAdapters(config),
+    const handle = await runPipeline({
+      adapterSource: async () => {
+        if (useInitialAdapters) {
+          useInitialAdapters = false;
+          return initialAdapters;
+        }
+        return detectActiveAdapters(config);
+      },
       store,
       sinks,
       routes: config.routes,
       scanIntervalMs: config.watch.pollIntervalMs,
       watchDebounceMs: config.watch.debounceMs,
+      // Runtime push batches stay tiny so the live Codex workload can drain
+      // store->sink work without pinning a full multi-conversation batch.
+      pushBatchSize: 2,
+      scheduleStartupWork: false,
+      deferWatcherStart: true,
       logger: toPipelineLogger(log),
     });
+    for (const adapter of initialAdapters) {
+      handle.enqueue({
+        kind: "ingest-adapter",
+        adapterId: adapter.id,
+        hint: { kind: "startup-scan" },
+      });
+    }
+    return handle;
   } catch (error) {
     await closeSinks(sinks);
     store.close();
@@ -311,7 +334,7 @@ function logProtectedSourceStartupNotices(
     log(notice.summary);
   }
   log(
-    `Opt in via ${configPath()}: set adapters.<id>.allowProtectedSource = true or adapters.<id>.dataDir to a user-provided path.`,
+    `Opt in via ${configPath()}: set adapters.<id>.allowProtectedSource = true or adapters.<id>.dataDir to a user-provided path, then restart with \`jin stop\` and \`jin start\`.`,
   );
 }
 

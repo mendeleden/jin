@@ -1,22 +1,24 @@
 import type { PipelineWorkItem } from "./types";
 
+export type WorkQueueEnqueueResult = "queued" | "coalesced" | "handed-off";
+
 export class WorkQueue {
   private readonly items: PipelineWorkItem[] = [];
   private readonly waiters: Array<(item: PipelineWorkItem) => void> = [];
 
-  enqueue(item: PipelineWorkItem): boolean {
+  enqueue(item: PipelineWorkItem): WorkQueueEnqueueResult {
     if (this.tryCoalesce(item)) {
-      return true;
+      return "coalesced";
     }
 
     const waiter = this.waiters.shift();
     if (waiter) {
       waiter(item);
-      return true;
+      return "handed-off";
     }
 
     this.items.push(item);
-    return true;
+    return "queued";
   }
 
   async take(): Promise<PipelineWorkItem> {

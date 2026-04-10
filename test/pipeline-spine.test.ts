@@ -134,6 +134,52 @@ describe("pipeline spine", () => {
     }
   });
 
+  test("waitForIdle does not resolve before a directly handed-off work item finishes", async () => {
+    const store = new InMemoryConversationStore();
+    const firstFindChanged = deferred<void>();
+    const adapter = new TestAdapter("alpha", {
+      async findChanged() {
+        await firstFindChanged.promise;
+        return [makeRef("alpha-1", "alpha")];
+      },
+      async loadConversation(ref) {
+        return makeBundle(ref.id, "alpha");
+      },
+    });
+
+    const handle = await startPipeline({
+      adapterSource: [adapter],
+      store,
+      sinks: [],
+      routes: [],
+    });
+
+    try {
+      handle.enqueue({
+        kind: "ingest-adapter",
+        adapterId: "alpha",
+        hint: { kind: "startup-scan" },
+      });
+
+      let idleResolved = false;
+      const idlePromise = handle.waitForIdle().then(() => {
+        idleResolved = true;
+      });
+
+      await Bun.sleep(0);
+      await Bun.sleep(0);
+      expect(idleResolved).toBe(false);
+
+      await waitFor(() => adapter.findChangedHints.length === 1);
+      firstFindChanged.resolve();
+      await idlePromise;
+
+      expect(adapter.loadConversationRefs).toEqual(["alpha-1"]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
   test("does not enqueue push work when ingest is unchanged", async () => {
     const store = new InMemoryConversationStore();
     const sink = new TestSink("primary");
@@ -165,6 +211,55 @@ describe("pipeline spine", () => {
       await handle.waitForIdle();
 
       expect(sink.pushCalls).toHaveLength(0);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("can defer watcher startup until the pipeline drains initial work", async () => {
+    const store = new InMemoryConversationStore();
+    const watcherHarness = new FakeWatcherHarness();
+    const firstFindChanged = deferred<void>();
+    const adapter = new TestAdapter("alpha", {
+      async findChanged() {
+        await firstFindChanged.promise;
+        return [makeRef("alpha-1", "alpha")];
+      },
+      async loadConversation(ref) {
+        return makeBundle(ref.id, "alpha");
+      },
+    });
+
+    const handle = await runPipeline({
+      adapterSource: [adapter],
+      store,
+      sinks: [],
+      routes: [],
+      scheduleStartupWork: false,
+      deferWatcherStart: true,
+      scanIntervalMs: null,
+      watcherFactory: watcherHarness.factory,
+      logger: NOOP_LOGGER,
+    });
+
+    try {
+      expect(watcherHarness.current.paths).toEqual([]);
+
+      handle.enqueue({
+        kind: "ingest-adapter",
+        adapterId: "alpha",
+        hint: { kind: "startup-scan" },
+      });
+
+      await waitFor(() => adapter.findChangedHints.length === 1);
+      expect(watcherHarness.current.paths).toEqual([]);
+
+      firstFindChanged.resolve();
+      await handle.waitForIdle();
+
+      expect(watcherHarness.current.paths).toEqual([
+        { path: "/watch/alpha", adapterId: "alpha" },
+      ]);
     } finally {
       await handle.shutdown();
     }

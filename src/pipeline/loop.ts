@@ -56,7 +56,12 @@ export async function runPipeline(
     },
     watcherFactory: options.watcherFactory,
   });
-  watcher.reconcile(activeAdapters);
+  const deferWatcherStart = options.deferWatcherStart === true;
+  let watcherStarted = false;
+  if (!deferWatcherStart) {
+    watcher.reconcile(activeAdapters);
+    watcherStarted = true;
+  }
 
   const ingestBatchSize = normalizeBatchSize(
     options.ingestBatchSize,
@@ -89,6 +94,7 @@ export async function runPipeline(
   let shutdownPromise: Promise<PipelineShutdownResult> | null = null;
   let shutdownInitiated = false;
   let abandonedWorkItems = 0;
+  let handedOffWorkItems = 0;
   const idleResolvers: Array<() => void> = [];
   let rssWarningActive = false;
 
@@ -111,11 +117,15 @@ export async function runPipeline(
   const coordinatorDone = coordinator();
 
   if (options.scheduleStartupWork !== false) {
-    enqueue({
-      kind: "ingest-all",
-      hint: { kind: "startup-scan" },
+    queueMicrotask(() => {
+      for (const adapter of activeAdapters) {
+        enqueue({
+          kind: "ingest-adapter",
+          adapterId: adapter.id,
+          hint: { kind: "startup-scan" },
+        });
+      }
     });
-    enqueue({ kind: "push" });
   }
 
   return {
@@ -129,13 +139,16 @@ export async function runPipeline(
       return false;
     }
 
-    const accepted = queue.enqueue(work);
+    const enqueueResult = queue.enqueue(work);
+    if (enqueueResult === "handed-off") {
+      handedOffWorkItems += 1;
+    }
     resolveIdleIfNeeded();
-    return accepted;
+    return true;
   }
 
   async function waitForIdle(): Promise<void> {
-    if (currentWork === null && queue.isEmpty()) {
+    if (currentWork === null && handedOffWorkItems === 0 && queue.isEmpty()) {
       return;
     }
 
@@ -191,6 +204,9 @@ export async function runPipeline(
     while (true) {
       const work = await queue.take();
       currentWork = work;
+      if (handedOffWorkItems > 0) {
+        handedOffWorkItems -= 1;
+      }
       let shouldStop = false;
 
       try {
@@ -203,7 +219,9 @@ export async function runPipeline(
         switch (work.kind) {
           case "reconcile-adapters": {
             activeAdapters = await resolveAdapters(options.adapterSource);
-            watcher.reconcile(activeAdapters);
+            if (watcherStarted) {
+              watcher.reconcile(activeAdapters);
+            }
             break;
           }
           case "ingest-all": {
@@ -215,6 +233,8 @@ export async function runPipeline(
                 batchSize: ingestBatchSize,
                 findChangedTimeoutMs,
                 loadConversationTimeoutMs,
+                reclaimBetweenAdapters: true,
+                trackChangedConversationIds: false,
                 logger,
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
@@ -247,6 +267,8 @@ export async function runPipeline(
                 batchSize: ingestBatchSize,
                 findChangedTimeoutMs,
                 loadConversationTimeoutMs,
+                reclaimBetweenAdapters: true,
+                trackChangedConversationIds: false,
                 logger,
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
@@ -276,6 +298,7 @@ export async function runPipeline(
                 batchSize: ingestBatchSize,
                 findChangedTimeoutMs,
                 loadConversationTimeoutMs,
+                trackChangedConversationIds: false,
                 logger,
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
@@ -366,8 +389,13 @@ export async function runPipeline(
   }
 
   function resolveIdleIfNeeded(): void {
-    if (currentWork !== null || !queue.isEmpty()) {
+    if (currentWork !== null || handedOffWorkItems > 0 || !queue.isEmpty()) {
       return;
+    }
+
+    if (!stopping && deferWatcherStart && !watcherStarted) {
+      watcher.reconcile(activeAdapters);
+      watcherStarted = true;
     }
 
     while (idleResolvers.length > 0) {
