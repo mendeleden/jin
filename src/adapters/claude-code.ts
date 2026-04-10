@@ -23,6 +23,10 @@ import type {
 interface ClaudeCodeAdapterOptions {
   projectsDir?: string;
   claudeDir?: string;
+  homeDir?: string;
+  xdgConfigHome?: string;
+  appDataDir?: string;
+  platform?: NodeJS.Platform;
   now?: () => Date;
 }
 
@@ -32,6 +36,7 @@ interface RawLine {
   uuid?: string;
   parentUuid?: string | null;
   sessionId?: string;
+  agentId?: string;
   timestamp?: string;
   slug?: string;
   cwd?: string;
@@ -89,6 +94,8 @@ interface SegmentBuilder {
   forkPoint: number;
   messages: ParsedMessage[];
   toolRefs: Map<string, ParsedToolCall>;
+  messageIdentityCounts: Map<string, number>;
+  lastMessageIdByUuid: Map<string, string>;
   sequence: number;
   turn: number;
   firstUserText: string;
@@ -124,6 +131,14 @@ interface LoadedFileCacheEntry {
   model: FileModel;
 }
 
+interface FileMetadata {
+  conversationId: string;
+  traceSessionId: string;
+  parentLookupNeedles: string[];
+  initialCwd: string;
+  initialGitBranch: string;
+}
+
 interface IndexedSegment {
   id: string;
   messageCount: number;
@@ -137,12 +152,83 @@ interface GitInfo {
 
 const HOME = homedir();
 
-function defaultProjectsDir(): string {
-  const xdg = join(HOME, ".config", "claude", "projects");
-  if (existsSync(xdg)) return xdg;
-  const legacy = join(HOME, ".claude", "projects");
-  if (existsSync(legacy)) return legacy;
-  return xdg;
+function hasJsonlSource(rootDir: string): boolean {
+  if (!existsSync(rootDir)) return false;
+
+  const stack = [resolve(rootDir)];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    let stat;
+    try {
+      stat = statSync(current);
+    } catch {
+      continue;
+    }
+
+    if (stat.isFile()) {
+      if (current.endsWith(".jsonl")) {
+        return true;
+      }
+      continue;
+    }
+
+    try {
+      for (const entry of readdirSync(current)) {
+        stack.push(join(current, entry));
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function defaultProjectsDirCandidates(input: {
+  homeDir: string;
+  currentPlatform: NodeJS.Platform;
+  xdgConfigHome?: string;
+  appDataDir?: string;
+}): string[] {
+  const candidates: string[] = [];
+
+  if (input.currentPlatform === "win32") {
+    const appDataDir = input.appDataDir ?? join(input.homeDir, "AppData", "Roaming");
+    candidates.push(join(appDataDir, "Claude", "projects"));
+    candidates.push(join(input.homeDir, ".claude", "projects"));
+    candidates.push(join(input.homeDir, ".config", "claude", "projects"));
+  } else {
+    const xdgConfigHome = input.xdgConfigHome ?? join(input.homeDir, ".config");
+    candidates.push(join(xdgConfigHome, "claude", "projects"));
+    candidates.push(join(input.homeDir, ".claude", "projects"));
+  }
+
+  return [...new Set(candidates.map((candidate) => resolve(candidate)))];
+}
+
+function defaultProjectsDir(input: {
+  homeDir: string;
+  currentPlatform: NodeJS.Platform;
+  xdgConfigHome?: string;
+  appDataDir?: string;
+}): string {
+  const candidates = defaultProjectsDirCandidates(input);
+
+  for (const candidate of candidates) {
+    if (hasJsonlSource(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0] ?? resolve(input.homeDir, ".claude", "projects");
 }
 
 function stableHash(...parts: string[]): string {
@@ -179,16 +265,6 @@ function extractToolResultText(content: unknown): string {
     .join("\n");
 }
 
-function cloneBundle(bundle: ConversationBundle): ConversationBundle {
-  return {
-    conversation: { ...bundle.conversation },
-    messages: bundle.messages.map((message) => ({
-      ...message,
-      toolUses: message.toolUses.map((toolUse) => ({ ...toolUse })),
-    })),
-  };
-}
-
 function collectThinkingBlocks(message: ParsedMessage): ThinkingBlock[] {
   if (!message.thinkingContent) return [];
   return [
@@ -204,6 +280,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   name = "Claude Code";
   icon = "◆";
 
+  private homeDir: string;
   private projectsDir: string;
   private claudeDir: string;
   private now: () => Date;
@@ -213,8 +290,20 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   private gitCache = new Map<string, GitInfo>();
 
   constructor(options: ClaudeCodeAdapterOptions = {}) {
-    this.projectsDir = resolve(options.projectsDir ?? defaultProjectsDir());
-    this.claudeDir = resolve(options.claudeDir ?? join(HOME, ".claude"));
+    const homeDir = resolve(options.homeDir ?? HOME);
+    const currentPlatform = options.platform ?? process.platform;
+
+    this.homeDir = homeDir;
+    this.projectsDir = resolve(
+      options.projectsDir ??
+        defaultProjectsDir({
+          homeDir,
+          currentPlatform,
+          xdgConfigHome: options.xdgConfigHome,
+          appDataDir: options.appDataDir,
+        }),
+    );
+    this.claudeDir = resolve(options.claudeDir ?? join(homeDir, ".claude"));
     this.now = options.now ?? (() => new Date());
   }
 
@@ -292,10 +381,12 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     if (!conversation.gitRemote) conversation.gitRemote = gitInfo.remote;
     if (!conversation.branch) conversation.branch = gitInfo.branch;
 
-    return cloneBundle({
+    // Keep the cached message tree immutable-by-convention and avoid duplicating
+    // large source files on every load; the store path only reads the bundle.
+    return {
       conversation,
       messages: bundle.messages,
-    });
+    };
   }
 
   watchPaths(): string[] {
@@ -413,7 +504,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     scanDir(join(this.claudeDir, "skills"), "skill", "skills (global)", "global");
     addFile(join(this.claudeDir, "history.jsonl"), "history", "history.jsonl", "global");
     addFile(join(this.claudeDir, "stats-cache.json"), "config", "stats-cache.json", "global");
-    addFile(join(HOME, ".claude.json"), "mcp", ".claude.json (MCP + prefs)", "global");
+    addFile(join(this.homeDir, ".claude.json"), "mcp", ".claude.json (MCP + prefs)", "global");
     scanDir(join(this.claudeDir, "plans"), "plan", "plans", "global");
 
     if (existsSync(this.projectsDir)) {
@@ -561,8 +652,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       mtimeMs: stat.mtimeMs,
       index,
     });
-    this.clearSessionPathIndex(resolvedPath);
-    this.sessionIdToPath.set(index.sessionId, resolvedPath);
+    this.replaceSessionPathIndex(resolvedPath, index.refs.map((ref) => ref.id));
     return index;
   }
 
@@ -600,18 +690,18 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       mtimeMs: stat.mtimeMs,
       model,
     };
-    this.clearSessionPathIndex(resolvedPath);
-    this.sessionIdToPath.set(model.sessionId, resolvedPath);
+    this.replaceSessionPathIndex(
+      resolvedPath,
+      model.bundles.map((bundle) => bundle.conversation.id),
+    );
     return model;
   }
 
   private buildFileIndex(filePath: string): FileIndex | null {
-    const records = this.readRecords(filePath);
-    if (records.length === 0) return null;
+    const metadata = this.inspectFile(filePath);
+    if (!metadata) return null;
 
-    const sessionId =
-      records.find((record) => record.raw.sessionId)?.raw.sessionId ??
-      basename(filePath, ".jsonl");
+    const sessionId = metadata.conversationId;
     const rootId = sessionId;
     const segments: IndexedSegment[] = [
       {
@@ -624,7 +714,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     let current = segments[0];
     let pendingCompactionSeed = "";
 
-    for (const record of records) {
+    this.forEachParsedRecord(filePath, (record) => {
       const raw = record.raw;
 
       if (raw.type === "system" && raw.subtype === "compact_boundary") {
@@ -655,13 +745,13 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       }
 
       const role = this.recordRole(raw);
-      if (!role) continue;
+      if (!role) return;
 
       current.messageCount += 1;
       if (role !== "system") {
         current.hasOnlySystemMessages = false;
       }
-    }
+    });
 
     const refs = segments
       .filter((segment) => segment.messageCount > 0)
@@ -680,27 +770,26 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   }
 
   private buildFileModel(filePath: string): FileModel | null {
-    const records = this.readRecords(filePath);
-    if (records.length === 0) return null;
+    const metadata = this.inspectFile(filePath);
+    if (!metadata) return null;
 
-    const sessionId =
-      records.find((record) => record.raw.sessionId)?.raw.sessionId ??
-      basename(filePath, ".jsonl");
-    const initialCwd =
-      records.find((record) => typeof record.raw.cwd === "string" && record.raw.cwd.trim())?.raw
-        .cwd ?? "";
-    const initialGitBranch =
-      records.find(
-        (record) => typeof record.raw.gitBranch === "string" && record.raw.gitBranch.trim(),
-      )?.raw.gitBranch ?? "";
+    const sessionId = metadata.conversationId;
+    const traceSessionId = metadata.traceSessionId;
+    const initialCwd = metadata.initialCwd;
+    const initialGitBranch = metadata.initialGitBranch;
 
-    const parentLink = this.resolveParentLink(filePath, sessionId);
+    const parentLink = this.resolveParentLink(
+      filePath,
+      sessionId,
+      traceSessionId,
+      metadata.parentLookupNeedles,
+    );
     const rootId = sessionId;
 
     const builders: SegmentBuilder[] = [
       this.createSegmentBuilder({
         id: rootId,
-        traceId: parentLink.traceId || rootId,
+        traceId: parentLink.traceId || traceSessionId || rootId,
         parentId: parentLink.parentId,
         relationship: parentLink.relationship,
         forkPoint: parentLink.forkPoint,
@@ -712,7 +801,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     let current = builders[0];
     let pendingCompactionSeed = "";
 
-    for (const record of records) {
+    this.forEachParsedRecord(filePath, (record) => {
       const raw = record.raw;
 
       if (raw.type === "system" && raw.subtype === "compact_boundary") {
@@ -752,7 +841,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       }
 
       const message = this.parseMessageRecord(record, current, sessionId);
-      if (!message) continue;
+      if (!message) return;
       current.messages.push(message);
 
       if (message.timestamp) {
@@ -770,7 +859,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       }
       if (!current.cwd && raw.cwd) current.cwd = raw.cwd;
       if (!current.gitBranchHint && raw.gitBranch) current.gitBranchHint = raw.gitBranch;
-    }
+    });
 
     const allBundles = builders
       .filter((builder) => builder.messages.length > 0)
@@ -807,6 +896,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       forkPoint: input.forkPoint,
       messages: [],
       toolRefs: new Map<string, ParsedToolCall>(),
+      messageIdentityCounts: new Map<string, number>(),
+      lastMessageIdByUuid: new Map<string, string>(),
       sequence: 0,
       turn: 0,
       firstUserText: "",
@@ -826,10 +917,16 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     const raw = record.raw;
     const timestamp = normalizeIso(raw.timestamp);
     const sequence = ++segment.sequence;
+    const parentMessageId = raw.parentUuid
+      ? segment.lastMessageIdByUuid.get(raw.parentUuid) ?? ""
+      : "";
 
     if (raw.type === "summary" && raw.summary) {
-      return {
-        id: raw.uuid || stableHash(sessionId, "summary", String(record.lineIndex)),
+      const message: ParsedMessage = {
+        id: this.nextMessageId(
+          segment,
+          this.messageIdentitySeed(record, sessionId, "summary", timestamp),
+        ),
         role: "system",
         content: raw.summary,
         recordType: "summary",
@@ -837,7 +934,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
         sequence,
         turn: -1,
         isSidechain: false,
-        parentMessageId: "",
+        parentMessageId,
         inputTokens: 0,
         outputTokens: 0,
         cacheRead: 0,
@@ -847,11 +944,16 @@ export class ClaudeCodeAdapter implements ContractAdapter {
         timestamp,
         toolUses: [],
       };
+      this.recordParsedMessageId(segment, raw.uuid, message.id);
+      return message;
     }
 
     if (raw.type === "system") {
-      return {
-        id: raw.uuid || stableHash(sessionId, "system", String(record.lineIndex)),
+      const message: ParsedMessage = {
+        id: this.nextMessageId(
+          segment,
+          this.messageIdentitySeed(record, sessionId, "system", timestamp),
+        ),
         role: "system",
         content:
           raw.subtype === "compact_boundary"
@@ -862,7 +964,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
         sequence,
         turn: -1,
         isSidechain: false,
-        parentMessageId: "",
+        parentMessageId,
         inputTokens: 0,
         outputTokens: 0,
         cacheRead: 0,
@@ -872,6 +974,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
         timestamp,
         toolUses: [],
       };
+      this.recordParsedMessageId(segment, raw.uuid, message.id);
+      return message;
     }
 
     if ((raw.type !== "user" && raw.type !== "assistant") || !raw.message) {
@@ -962,15 +1066,11 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       messageContent = toolUses.map((toolUse) => `[tool:${toolUse.name}]`).join("\n");
     }
 
-    return {
-      id:
-        raw.uuid ||
-        stableHash(
-          sessionId,
-          raw.message.id ?? raw.type,
-          normalizeIso(raw.timestamp),
-          String(record.lineIndex),
-        ),
+    const message: ParsedMessage = {
+      id: this.nextMessageId(
+        segment,
+        this.messageIdentitySeed(record, sessionId, raw.type, timestamp),
+      ),
       role,
       content: messageContent,
       recordType: raw.type,
@@ -978,7 +1078,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       sequence,
       turn,
       isSidechain,
-      parentMessageId: raw.parentUuid ?? "",
+      parentMessageId,
       inputTokens: raw.message.usage?.input_tokens || 0,
       outputTokens: raw.message.usage?.output_tokens || 0,
       cacheRead: raw.message.usage?.cache_read_input_tokens || 0,
@@ -988,6 +1088,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       timestamp,
       toolUses,
     };
+    this.recordParsedMessageId(segment, raw.uuid, message.id);
+    return message;
   }
 
   private recordRole(raw: RawLine): ParsedMessage["role"] | null {
@@ -1046,22 +1148,46 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     };
   }
 
-  private readRecords(filePath: string): ParsedRecord[] {
+  private forEachParsedRecord(
+    filePath: string,
+    visit: (record: ParsedRecord) => boolean | void,
+  ): boolean {
     try {
       const text = readFileSync(filePath, "utf8");
-      return text
-        .split("\n")
-        .map((line, lineIndex) => ({ line, lineIndex }))
-        .filter(({ line }) => line.trim().length > 0)
-        .flatMap(({ line, lineIndex }) => {
+      let lineStart = 0;
+      let lineIndex = 0;
+      let sawRecord = false;
+
+      while (lineStart <= text.length) {
+        let lineEnd = text.indexOf("\n", lineStart);
+        if (lineEnd === -1) {
+          lineEnd = text.length;
+        }
+
+        const line = text.slice(lineStart, lineEnd);
+        if (line.trim().length > 0) {
           try {
-            return [{ lineIndex, raw: JSON.parse(line) as RawLine }];
+            sawRecord = true;
+            const shouldContinue = visit({ lineIndex, raw: JSON.parse(line) as RawLine });
+            if (shouldContinue === false) {
+              return true;
+            }
           } catch {
-            return [];
+            // Skip malformed JSONL rows from partial writes.
           }
-        });
+        }
+
+        if (lineEnd === text.length) {
+          break;
+        }
+
+        lineStart = lineEnd + 1;
+        lineIndex += 1;
+      }
+
+      return sawRecord;
     } catch {
-      return [];
+      return false;
     }
   }
 
@@ -1073,7 +1199,21 @@ export class ClaudeCodeAdapter implements ContractAdapter {
     return stableHash(rootId, boundarySeed);
   }
 
-  private resolveParentLink(filePath: string, sessionId: string): ParentLinkInfo {
+  private subagentConversationId(
+    parentScopeId: string,
+    sourceConversationId: string,
+    filePath: string,
+  ): string {
+    const fileStem = basename(filePath, ".jsonl");
+    return `agent-${stableHash(parentScopeId || fileStem, sourceConversationId || fileStem, fileStem)}`;
+  }
+
+  private resolveParentLink(
+    filePath: string,
+    sessionId: string,
+    traceSessionId: string,
+    parentLookupNeedles: string[] = [],
+  ): ParentLinkInfo {
     const parentSessionId = this.parentSessionIdFromPath(filePath);
     if (!parentSessionId) {
       return {
@@ -1084,27 +1224,33 @@ export class ClaudeCodeAdapter implements ContractAdapter {
       };
     }
 
+    const fallbackLink = {
+      relationship: "spawned" as const,
+      traceId: traceSessionId || parentSessionId,
+      parentId: parentSessionId,
+      forkPoint: -1,
+    };
     const parentPath = this.parentSourcePath(filePath, parentSessionId);
     if (!parentPath) {
-      return {
-        relationship: "root",
-        traceId: sessionId,
-        parentId: "",
-        forkPoint: -1,
-      };
+      return fallbackLink;
+    }
+    if (resolve(parentPath) === resolve(filePath)) {
+      return fallbackLink;
     }
 
     const parentModel = this.getLoadedFileModel(parentPath);
     if (!parentModel || parentModel.bundles.length === 0) {
-      return {
-        relationship: "root",
-        traceId: sessionId,
-        parentId: "",
-        forkPoint: -1,
-      };
+      return fallbackLink;
     }
 
-    const needles = [sessionId, basename(filePath, ".jsonl"), basename(filePath)];
+    const needles = [
+      ...new Set([
+        ...parentLookupNeedles,
+        sessionId,
+        basename(filePath, ".jsonl"),
+        basename(filePath),
+      ]),
+    ].filter(Boolean);
     let matchedParentId = parentModel.bundles[parentModel.bundles.length - 1]?.conversation.id ?? "";
     let forkPoint = -1;
 
@@ -1123,8 +1269,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
 
     return {
       relationship: "spawned",
-      traceId: parentModel.bundles[0]?.conversation.traceId || parentSessionId,
-      parentId: matchedParentId,
+      traceId: parentModel.bundles[0]?.conversation.traceId || fallbackLink.traceId,
+      parentId: matchedParentId || fallbackLink.parentId,
       forkPoint,
     };
   }
@@ -1132,30 +1278,166 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   private parentSessionIdFromPath(filePath: string): string {
     const normalized = resolve(filePath);
     const marker = `${sep}subagents${sep}`;
-    if (!normalized.includes(marker)) return "";
-    const parts = normalized.split(sep);
-    const subagentsIndex = parts.lastIndexOf("subagents");
-    return subagentsIndex > 0 ? parts[subagentsIndex - 1] : "";
+    const markerIndex = normalized.lastIndexOf(marker);
+    if (markerIndex < 0) return "";
+    return basename(normalized.slice(0, markerIndex));
   }
 
   private parentSourcePath(filePath: string, parentSessionId: string): string | null {
+    const structuralPath = this.structuralParentSourcePath(filePath, parentSessionId);
+    if (structuralPath && existsSync(structuralPath)) {
+      return structuralPath;
+    }
+
     const indexed = this.sessionIdToPath.get(parentSessionId);
-    if (indexed && existsSync(indexed)) return indexed;
+    if (indexed && existsSync(indexed) && resolve(indexed) !== resolve(filePath)) return indexed;
 
     const projectRoot = this.projectRootForPath(filePath);
     const canonicalPath = join(projectRoot, `${parentSessionId}.jsonl`);
-    if (existsSync(canonicalPath)) return canonicalPath;
+    if (existsSync(canonicalPath) && resolve(canonicalPath) !== resolve(filePath)) {
+      return canonicalPath;
+    }
 
     const topLevelJsonl = this.collectSourceFiles(projectRoot).find(
-      (candidate) => basename(candidate, ".jsonl") === parentSessionId,
+      (candidate) =>
+        resolve(candidate) !== resolve(filePath) && basename(candidate, ".jsonl") === parentSessionId,
     );
     return topLevelJsonl ?? null;
+  }
+
+  private structuralParentSourcePath(filePath: string, parentSessionId: string): string | null {
+    const normalized = resolve(filePath);
+    const marker = `${sep}subagents${sep}`;
+    const markerIndex = normalized.lastIndexOf(marker);
+    if (markerIndex < 0) return null;
+
+    const parentStem = normalized.slice(0, markerIndex);
+    if (basename(parentStem) !== parentSessionId) {
+      return null;
+    }
+
+    return `${parentStem}.jsonl`;
   }
 
   private projectRootForPath(filePath: string): string {
     const relative = resolve(filePath).slice(this.projectsDir.length + 1);
     const [projectSegment] = relative.split(sep);
     return projectSegment ? join(this.projectsDir, projectSegment) : this.projectsDir;
+  }
+
+  private inspectFile(filePath: string): FileMetadata | null {
+    const expectsAgentId = this.isSubagentPath(filePath);
+    const parentSessionId = this.parentSessionIdFromPath(filePath);
+    let traceSessionId = "";
+    let agentId = "";
+    let initialCwd = "";
+    let initialGitBranch = "";
+
+    const sawRecord = this.forEachParsedRecord(filePath, (record) => {
+      if (!traceSessionId && typeof record.raw.sessionId === "string" && record.raw.sessionId.trim()) {
+        traceSessionId = record.raw.sessionId.trim();
+      }
+      if (!agentId && typeof record.raw.agentId === "string" && record.raw.agentId.trim()) {
+        agentId = record.raw.agentId.trim();
+      }
+      if (!initialCwd && typeof record.raw.cwd === "string" && record.raw.cwd.trim()) {
+        initialCwd = record.raw.cwd;
+      }
+      if (
+        !initialGitBranch &&
+        typeof record.raw.gitBranch === "string" &&
+        record.raw.gitBranch.trim()
+      ) {
+        initialGitBranch = record.raw.gitBranch;
+      }
+
+      const hasConversationId = expectsAgentId
+        ? Boolean(agentId) || Boolean(traceSessionId)
+        : Boolean(traceSessionId);
+      const hasInitialHints = Boolean(initialCwd) && Boolean(initialGitBranch);
+      return !(hasConversationId && hasInitialHints);
+    });
+
+    if (!sawRecord) {
+      return null;
+    }
+
+    const fallbackId = basename(filePath, ".jsonl");
+    const sourceConversationId = expectsAgentId
+      ? agentId || traceSessionId || fallbackId
+      : traceSessionId || fallbackId;
+    const conversationId = expectsAgentId
+      ? this.subagentConversationId(
+          parentSessionId || traceSessionId || fallbackId,
+          sourceConversationId,
+          filePath,
+        )
+      : sourceConversationId;
+    const parentLookupNeedles = [
+      sourceConversationId,
+      basename(filePath, ".jsonl"),
+      basename(filePath),
+      basename(filePath, ".jsonl").replace(/^agent-/, ""),
+    ].filter(Boolean);
+
+    return {
+      conversationId,
+      traceSessionId: traceSessionId || parentSessionId || fallbackId,
+      parentLookupNeedles: [...new Set(parentLookupNeedles)],
+      initialCwd,
+      initialGitBranch,
+    };
+  }
+
+  private isSubagentPath(filePath: string): boolean {
+    return resolve(filePath).includes(`${sep}subagents${sep}`);
+  }
+
+  private replaceSessionPathIndex(filePath: string, ids: string[]): void {
+    this.clearSessionPathIndex(filePath);
+    for (const id of ids) {
+      if (id) {
+        this.sessionIdToPath.set(id, filePath);
+      }
+    }
+  }
+
+  private messageIdentitySeed(
+    record: ParsedRecord,
+    sessionId: string,
+    kind: string,
+    timestamp: string,
+  ): string {
+    const raw = record.raw;
+    if (typeof raw.uuid === "string" && raw.uuid.trim()) {
+      return raw.uuid.trim();
+    }
+
+    return stableHash(
+      sessionId,
+      kind,
+      raw.message?.id ?? "",
+      raw.subtype ?? "",
+      raw.summary ?? "",
+      timestamp,
+      String(record.lineIndex),
+    );
+  }
+
+  private nextMessageId(segment: SegmentBuilder, seed: string): string {
+    const occurrence = (segment.messageIdentityCounts.get(seed) ?? 0) + 1;
+    segment.messageIdentityCounts.set(seed, occurrence);
+    return stableHash(segment.id, seed, String(occurrence));
+  }
+
+  private recordParsedMessageId(
+    segment: SegmentBuilder,
+    rawUuid: string | undefined,
+    parsedMessageId: string,
+  ): void {
+    if (typeof rawUuid === "string" && rawUuid.trim()) {
+      segment.lastMessageIdByUuid.set(rawUuid.trim(), parsedMessageId);
+    }
   }
 
   private resolveGit(cwd: string): GitInfo {

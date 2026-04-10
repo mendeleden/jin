@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
@@ -18,6 +19,128 @@ afterEach(() => {
 });
 
 describe("ClaudeCodeAdapter v2 reference contract", () => {
+  for (const platform of ["darwin", "linux"] as const) {
+    test(`default path selection prefers populated legacy data over empty preferred dir on ${platform}`, async () => {
+      const root = mkdtempSync(join(tmpdir(), `jin-claude-default-${platform}-`));
+      createdRoots.push(root);
+
+      const xdgConfigHome = join(root, ".config");
+      const preferredDir = join(xdgConfigHome, "claude", "projects");
+      const legacyDir = join(root, ".claude", "projects");
+
+      mkdirSync(preferredDir, { recursive: true });
+      writeJsonl(join(legacyDir, "project-a", `${PARENT_SESSION_ID}.jsonl`), [
+        ...rootSessionRecords(PARENT_SESSION_ID, "Load the real fallback directory."),
+      ]);
+
+      const adapter = new ClaudeCodeAdapter({
+        homeDir: root,
+        platform,
+        xdgConfigHome,
+      });
+
+      expect(adapter.watchPaths()).toEqual([legacyDir]);
+      expect(await adapter.detect()).toBe(true);
+
+      const refs = await adapter.findChanged({ kind: "startup-scan" });
+      expect(refs).toHaveLength(1);
+      expect(refs[0]?.sourcePath.startsWith(legacyDir)).toBe(true);
+    });
+
+    test(`default path selection keeps the preferred populated dir on ${platform}`, async () => {
+      const root = mkdtempSync(join(tmpdir(), `jin-claude-preferred-${platform}-`));
+      createdRoots.push(root);
+
+      const xdgConfigHome = join(root, ".config");
+      const preferredDir = join(xdgConfigHome, "claude", "projects");
+      const legacyDir = join(root, ".claude", "projects");
+
+      writeJsonl(join(preferredDir, "project-a", `${PARENT_SESSION_ID}.jsonl`), [
+        ...rootSessionRecords(PARENT_SESSION_ID, "Use the preferred Claude path."),
+      ]);
+      writeJsonl(join(legacyDir, "project-b", `${CHILD_SESSION_ID}.jsonl`), [
+        ...rootSessionRecords(CHILD_SESSION_ID, "Legacy data should not win when both are populated."),
+      ]);
+
+      const adapter = new ClaudeCodeAdapter({
+        homeDir: root,
+        platform,
+        xdgConfigHome,
+      });
+
+      expect(adapter.watchPaths()).toEqual([preferredDir]);
+      const refs = await adapter.findChanged({ kind: "startup-scan" });
+      expect(refs).toHaveLength(1);
+      expect(refs[0]?.id).toBe(PARENT_SESSION_ID);
+      expect(refs[0]?.sourcePath.startsWith(preferredDir)).toBe(true);
+    });
+  }
+
+  test("default path selection reviews the Windows appdata path and falls back to legacy data", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jin-claude-default-win32-"));
+    createdRoots.push(root);
+
+    const appDataDir = join(root, "AppData", "Roaming");
+    const preferredDir = join(appDataDir, "Claude", "projects");
+    const legacyDir = join(root, ".claude", "projects");
+
+    mkdirSync(preferredDir, { recursive: true });
+    writeJsonl(join(legacyDir, "project-a", `${PARENT_SESSION_ID}.jsonl`), [
+      ...rootSessionRecords(PARENT_SESSION_ID, "Windows legacy fallback should stay visible."),
+    ]);
+
+    const fallbackAdapter = new ClaudeCodeAdapter({
+      homeDir: root,
+      platform: "win32",
+      appDataDir,
+    });
+
+    expect(fallbackAdapter.watchPaths()).toEqual([legacyDir]);
+    expect((await fallbackAdapter.findChanged({ kind: "startup-scan" }))[0]?.sourcePath.startsWith(legacyDir)).toBe(true);
+
+    writeJsonl(join(preferredDir, "project-b", `${CHILD_SESSION_ID}.jsonl`), [
+      ...rootSessionRecords(CHILD_SESSION_ID, "Preferred appdata path should win once populated."),
+    ]);
+
+    const preferredAdapter = new ClaudeCodeAdapter({
+      homeDir: root,
+      platform: "win32",
+      appDataDir,
+    });
+
+    expect(preferredAdapter.watchPaths()).toEqual([preferredDir]);
+    expect((await preferredAdapter.findChanged({ kind: "startup-scan" }))[0]?.sourcePath.startsWith(preferredDir)).toBe(true);
+  });
+
+  test("user-provided projectsDir override wins over all default path candidates", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jin-claude-override-"));
+    createdRoots.push(root);
+
+    const xdgConfigHome = join(root, ".config");
+    const preferredDir = join(xdgConfigHome, "claude", "projects");
+    const overrideDir = join(root, "override", "projects");
+
+    writeJsonl(join(preferredDir, "project-a", `${PARENT_SESSION_ID}.jsonl`), [
+      ...rootSessionRecords(PARENT_SESSION_ID, "Default path should be ignored when overridden."),
+    ]);
+    writeJsonl(join(overrideDir, "project-b", `${CHILD_SESSION_ID}.jsonl`), [
+      ...rootSessionRecords(CHILD_SESSION_ID, "Use the explicit override instead."),
+    ]);
+
+    const adapter = new ClaudeCodeAdapter({
+      homeDir: root,
+      platform: "darwin",
+      xdgConfigHome,
+      projectsDir: overrideDir,
+    });
+
+    expect(adapter.watchPaths()).toEqual([overrideDir]);
+    const refs = await adapter.findChanged({ kind: "startup-scan" });
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.id).toBe(CHILD_SESSION_ID);
+    expect(refs[0]?.sourcePath.startsWith(overrideDir)).toBe(true);
+  });
+
   test("findChanged emits deterministic refs and caches unchanged scans", async () => {
     const fixture = createFixture();
     const { adapter, parentPath } = fixture;
@@ -113,6 +236,224 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     expect(childBundle!.conversation.traceId).toBe(PARENT_SESSION_ID);
     expect(childBundle!.conversation.parentId).toBe(PARENT_SESSION_ID);
     expect(childBundle!.conversation.forkPoint).toBe(1);
+  });
+
+  test("spawned message ids stay unique when a child transcript replays parent rows and repeats raw uuids", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jin-claude-live-collision-"));
+    createdRoots.push(root);
+
+    const projectsDir = join(root, ".claude", "projects");
+    const projectDir = join(projectsDir, "project-a");
+    const parentPath = join(projectDir, `${PARENT_SESSION_ID}.jsonl`);
+    const childPath = join(
+      projectDir,
+      PARENT_SESSION_ID,
+      "subagents",
+      "agent-aside_question-2fc336cb9230930f.jsonl",
+    );
+
+    writeJsonl(parentPath, [
+      {
+        parentUuid: null,
+        isSidechain: false,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        gitBranch: "",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Root conversation prompt.",
+        },
+        uuid: "shared-user-1",
+        timestamp: "2026-02-08T17:51:13.903Z",
+      },
+      {
+        parentUuid: "shared-user-1",
+        isSidechain: false,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        gitBranch: "",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5-20251101",
+          content: [
+            {
+              type: "text",
+              text: "Root answer.",
+            },
+          ],
+          usage: {
+            input_tokens: 8,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+        uuid: "shared-assistant-1",
+        timestamp: "2026-02-08T17:51:15.000Z",
+      },
+    ]);
+
+    writeJsonl(childPath, [
+      {
+        parentUuid: null,
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Root conversation prompt.",
+        },
+        uuid: "shared-user-1",
+        timestamp: "2026-02-08T17:51:13.903Z",
+      },
+      {
+        parentUuid: "shared-user-1",
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5-20251101",
+          content: [
+            {
+              type: "text",
+              text: "Root answer.",
+            },
+          ],
+          usage: {
+            input_tokens: 8,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+        uuid: "shared-assistant-1",
+        timestamp: "2026-02-08T17:51:15.000Z",
+      },
+      {
+        parentUuid: null,
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "user",
+        message: {
+          role: "user",
+          content: "Root conversation prompt.",
+        },
+        uuid: "shared-user-1",
+        timestamp: "2026-02-08T17:51:13.903Z",
+      },
+      {
+        parentUuid: "shared-user-1",
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5-20251101",
+          content: [
+            {
+              type: "text",
+              text: "Root answer.",
+            },
+          ],
+          usage: {
+            input_tokens: 8,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+        uuid: "shared-assistant-1",
+        timestamp: "2026-02-08T17:51:15.000Z",
+      },
+      {
+        parentUuid: "shared-assistant-1",
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            "<system-reminder>This is a side question from the user.</system-reminder>",
+        },
+        uuid: "child-user-1",
+        timestamp: "2026-02-08T17:52:13.903Z",
+      },
+      {
+        parentUuid: "child-user-1",
+        isSidechain: true,
+        cwd: "/tmp/jin-reference-project",
+        sessionId: PARENT_SESSION_ID,
+        agentId: "aside_question-2fc336cb9230930f",
+        gitBranch: "",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5-20251101",
+          content: [
+            {
+              type: "text",
+              text: "Direct child-only answer.",
+            },
+          ],
+          usage: {
+            input_tokens: 8,
+            output_tokens: 9,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+        uuid: "child-assistant-1",
+        timestamp: "2026-02-08T17:52:19.000Z",
+      },
+    ]);
+
+    const adapter = new ClaudeCodeAdapter({ projectsDir });
+    const refs = await adapter.findChanged({ kind: "startup-scan" });
+    const rootRef = refs.find((ref) => ref.id === PARENT_SESSION_ID);
+    const childRef = refs.find((ref) => ref.sourcePath === childPath);
+
+    expect(rootRef).toBeDefined();
+    expect(childRef).toBeDefined();
+
+    const rootBundle = await adapter.loadConversation(rootRef!);
+    const childBundle = await adapter.loadConversation(childRef!);
+    const childBundleReloaded = await adapter.loadConversation(childRef!);
+
+    expect(rootBundle).not.toBeNull();
+    expect(childBundle).not.toBeNull();
+    expect(childBundleReloaded).not.toBeNull();
+
+    const rootMessageIds = new Set(rootBundle!.messages.map((message) => message.id));
+    const childMessageIds = childBundle!.messages.map((message) => message.id);
+
+    expect(new Set(childMessageIds).size).toBe(childMessageIds.length);
+    expect(childMessageIds.some((id) => rootMessageIds.has(id))).toBe(false);
+    expect(childBundle!.messages.map((message) => message.id)).toEqual(
+      childBundleReloaded!.messages.map((message) => message.id),
+    );
+    expect(childBundle!.messages.find((message) => message.content.includes("Direct child-only answer."))?.parentMessageId).toBe(
+      childBundle!.messages.find((message) =>
+        message.content.includes("<system-reminder>This is a side question"),
+      )?.id,
+    );
   });
 
   test("tool calls, thinking blocks, and full bundles are extracted without store access", async () => {
@@ -221,6 +562,96 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     for (const entry of caches.fileIndexCache.values()) {
       expect((entry.index as { bundles?: unknown }).bundles).toBeUndefined();
     }
+  });
+
+  test("subagent conversation ids are parent-scoped so reused raw agent ids do not collide", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jin-claude-live-child-"));
+    createdRoots.push(root);
+
+    const projectsDir = join(root, ".claude", "projects");
+    const projectDir = join(projectsDir, "project-a");
+    const secondParentSessionId = "33333333-3333-3333-3333-333333333333";
+    const sharedAgentId = "a0fee2f";
+    const firstParentPath = join(projectDir, `${PARENT_SESSION_ID}.jsonl`);
+    const secondParentPath = join(projectDir, `${secondParentSessionId}.jsonl`);
+    const firstChildPath = join(
+      projectDir,
+      PARENT_SESSION_ID,
+      "subagents",
+      `agent-${sharedAgentId}.jsonl`,
+    );
+    const secondChildPath = join(
+      projectDir,
+      secondParentSessionId,
+      "subagents",
+      `agent-${sharedAgentId}.jsonl`,
+    );
+
+    writeJsonl(firstParentPath, rootSessionRecords(PARENT_SESSION_ID, "First parent session."));
+    writeJsonl(
+      secondParentPath,
+      rootSessionRecords(secondParentSessionId, "Second parent session."),
+    );
+
+    writeJsonl(firstChildPath, [
+      ...subagentSessionRecords(
+        PARENT_SESSION_ID,
+        sharedAgentId,
+        "Inspect the logs.",
+        "No persistent error found.",
+      ),
+    ]);
+    writeJsonl(secondChildPath, [
+      ...subagentSessionRecords(
+        secondParentSessionId,
+        sharedAgentId,
+        "Review the config history.",
+        "The CSP rollout only changed headers.",
+      ),
+    ]);
+
+    const adapter = new ClaudeCodeAdapter({ projectsDir });
+    const refs = await adapter.findChanged({ kind: "startup-scan" });
+    const firstExpectedId = expectedSubagentConversationId(
+      PARENT_SESSION_ID,
+      sharedAgentId,
+      firstChildPath,
+    );
+    const secondExpectedId = expectedSubagentConversationId(
+      secondParentSessionId,
+      sharedAgentId,
+      secondChildPath,
+    );
+
+    expect(refs).toHaveLength(4);
+    expect(refs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([PARENT_SESSION_ID, secondParentSessionId, firstExpectedId, secondExpectedId]),
+    );
+    expect(firstExpectedId).not.toBe(secondExpectedId);
+
+    const firstBundle = await adapter.loadConversation(refs.find((ref) => ref.id === firstExpectedId)!);
+    const secondBundle = await adapter.loadConversation(refs.find((ref) => ref.id === secondExpectedId)!);
+
+    expect(firstBundle).not.toBeNull();
+    expect(secondBundle).not.toBeNull();
+    expect(firstBundle!.conversation).toEqual(
+      expect.objectContaining({
+        id: firstExpectedId,
+        traceId: PARENT_SESSION_ID,
+        parentId: PARENT_SESSION_ID,
+        relationship: "spawned",
+        sourcePath: firstChildPath,
+      }),
+    );
+    expect(secondBundle!.conversation).toEqual(
+      expect.objectContaining({
+        id: secondExpectedId,
+        traceId: secondParentSessionId,
+        parentId: secondParentSessionId,
+        relationship: "spawned",
+        sourcePath: secondChildPath,
+      }),
+    );
   });
 });
 
@@ -511,4 +942,117 @@ function writeJsonl(path: string, records: Array<Record<string, unknown>>) {
     `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
     "utf8",
   );
+}
+
+function rootSessionRecords(sessionId: string, content: string) {
+  return [
+    {
+      parentUuid: null,
+      isSidechain: false,
+      cwd: "/tmp/jin-reference-project",
+      sessionId,
+      gitBranch: "",
+      type: "user",
+      message: {
+        role: "user",
+        content,
+      },
+      uuid: `${sessionId}-user-1`,
+      timestamp: "2026-02-08T17:51:13.903Z",
+    },
+    {
+      parentUuid: `${sessionId}-user-1`,
+      isSidechain: false,
+      cwd: "/tmp/jin-reference-project",
+      sessionId,
+      gitBranch: "",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-5-20251101",
+        content: [
+          {
+            type: "text",
+            text: "Finished processing the requested work.",
+          },
+        ],
+        usage: {
+          input_tokens: 8,
+          output_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+      uuid: `${sessionId}-assistant-1`,
+      timestamp: "2026-02-08T17:51:15.000Z",
+    },
+  ];
+}
+
+function subagentSessionRecords(
+  traceSessionId: string,
+  agentId: string,
+  prompt: string,
+  answer: string,
+) {
+  return [
+    {
+      parentUuid: null,
+      isSidechain: true,
+      cwd: "/tmp/jin-reference-project",
+      sessionId: traceSessionId,
+      agentId,
+      gitBranch: "",
+      type: "user",
+      message: {
+        role: "user",
+        content: prompt,
+      },
+      uuid: `${agentId}-user-1`,
+      timestamp: "2026-02-08T17:51:17.500Z",
+    },
+    {
+      parentUuid: `${agentId}-user-1`,
+      isSidechain: true,
+      cwd: "/tmp/jin-reference-project",
+      sessionId: traceSessionId,
+      agentId,
+      gitBranch: "",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-5-20251101",
+        content: [
+          {
+            type: "text",
+            text: answer,
+          },
+        ],
+        usage: {
+          input_tokens: 8,
+          output_tokens: 9,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+      uuid: `${agentId}-assistant-1`,
+      timestamp: "2026-02-08T17:51:19.000Z",
+    },
+  ];
+}
+
+function expectedSubagentConversationId(
+  parentScopeId: string,
+  sourceConversationId: string,
+  filePath: string,
+) {
+  const fileStem = filePath.split("/").pop()?.replace(/\.jsonl$/, "") ?? "";
+  return `agent-${stableId(parentScopeId || fileStem, sourceConversationId || fileStem, fileStem)}`;
+}
+
+function stableId(...parts: string[]) {
+  return createHash("sha256")
+    .update(parts.join("\u001f"))
+    .digest("hex")
+    .slice(0, 24);
 }

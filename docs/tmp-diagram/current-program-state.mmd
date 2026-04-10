@@ -2,8 +2,8 @@ flowchart TD
   subgraph Runtime["Runtime / Live blockers"]
     PERF2["W3-PERF-02<br/>approved<br/>runtime RSS fix landed<br/>guard stays frozen at 200 / 256 MB"]
     AD07["W3-ADAPTER-07<br/>approved<br/>Claude path precedence fixed<br/>stack overflow fixed<br/>live peak still ~812 MB"]
-    AD09["W3-ADAPTER-09<br/>in_progress<br/>Claude duplicate-id fix<br/>live revalidation running next"]
-    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude full-fix now first<br/>Cursor next"]
+    AD09["W3-ADAPTER-09<br/>approved<br/>Claude duplicate-id fix landed<br/>live validation clean"]
+    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude fixed<br/>Cursor next"]
     SINK04["W3-SINK-04<br/>needs_codex<br/>transport + schema fixes landed<br/>queued behind Claude/Cursor follow-ups"]
     E2E["W3-E2E-01<br/>review_ready<br/>wait for stable runtime"]
     SERVICE["W3-SERVICE-01<br/>in_progress<br/>wait for stable runtime"]
@@ -32,7 +32,7 @@ flowchart TD
 
   subgraph Evidence["Fresh evidence"]
     CLEAN["Fresh-start litmus<br/>clean config + reprovision<br/>SQLite populated<br/>both Postgres sinks stayed 0/0"]
-    LIVE["W3-VALIDATE-01 audit<br/>Codex clean<br/>Claude message-id collisions<br/>Cursor null bundles / DB open issue"]
+    LIVE["W3-VALIDATE-01 audit<br/>Codex clean<br/>Claude fixed by AD09<br/>Cursor null bundles / DB open issue"]
   end
 
   subgraph Release["Downstream"]
