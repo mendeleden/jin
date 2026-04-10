@@ -79,7 +79,16 @@ describe("normalizeConfig", () => {
     });
 
     expect(normalized.adapters).toEqual({
-      cursor: { enabled: true },
+      "claude-code": { enabled: true },
+      cursor: { enabled: true, allowProtectedSource: false },
+      codex: { enabled: true },
+      warp: { enabled: true, allowProtectedSource: false },
+      "gemini-cli": { enabled: true },
+      kiro: { enabled: true, allowProtectedSource: false },
+      amp: { enabled: true },
+      opencode: { enabled: true, allowProtectedSource: false },
+      pi: { enabled: true },
+      piagent: { enabled: true },
     });
     expect(normalized.sinks).toEqual([
       {

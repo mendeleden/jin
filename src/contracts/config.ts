@@ -22,6 +22,7 @@ export interface RouteConfig {
 export interface AdapterConfig {
   enabled: boolean;
   dataDir?: string;
+  allowProtectedSource?: boolean;
 }
 
 export interface WatchConfig {

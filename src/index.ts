@@ -98,19 +98,20 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin show abc12345 --json
 `,
   stats: `
-  Token and cost analysis by adapter and model
+  Token and cost analysis by harness and model
 
   USAGE
     jin stats [flags]
 
   FLAGS
-    --adapter=<id>     Filter by adapter
+    --harness=<id>     Filter by harness
+    --adapter=<id>     Compatibility alias for --harness
     --since=<duration> Time range (e.g. 24h, 7d)
     --json             Output as JSON
 
   EXAMPLES
     $ jin stats --since=30d
-    $ jin stats --adapter=claude-code --json
+    $ jin stats --harness=claude-code --json
 `,
   connect: `
   Connect local repos to a workspace or configured destination
@@ -577,7 +578,7 @@ async function main(): Promise<void> {
     case "stats": {
       const { analyzeCommand } = await import("./commands/analyze");
       await analyzeCommand({
-        adapter: flags.adapter as string | undefined,
+        harness: (flags.harness as string | undefined) ?? (flags.adapter as string | undefined),
         since: flags.since as string | undefined,
         json: !!flags.json,
       });

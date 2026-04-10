@@ -7,7 +7,7 @@ import {
 import { getRuntimePaths } from "../daemon/runtime-state";
 
 export async function analyzeCommand(opts: {
-  adapter?: string;
+  harness?: string;
   since?: string;
   json?: boolean;
 }): Promise<void> {
@@ -18,13 +18,15 @@ export async function analyzeCommand(opts: {
     const adapterSummary = analyzeByAdapter(store.database);
     const modelSummary = analyzeByModel(store.database);
 
-    const byAdapter = Object.fromEntries(
+    const byHarness = Object.fromEntries(
       Object.entries(adapterSummary).map(([id, stats]) => [
         id,
         {
           sessions: stats.conversations,
           messages: stats.messages,
           tokens: stats.tokens,
+          displayTokens: stats.displayTokens,
+          cacheTokens: stats.cacheTokens,
           cost: stats.cost,
         },
       ]),
@@ -35,9 +37,12 @@ export async function analyzeCommand(opts: {
         totalSessions: summary.conversations,
         totalMessages: summary.messages,
         totalTokens: summary.tokens,
+        displayTokens: summary.displayTokens,
+        cacheTokens: summary.cacheTokens,
         totalCost: summary.cost,
       },
-      byAdapter,
+      byHarness,
+      byAdapter: byHarness,
       byModel: modelSummary,
     };
 
@@ -50,25 +55,31 @@ export async function analyzeCommand(opts: {
     console.log(`  Total Sessions:  ${analysis.summary.totalSessions}`);
     console.log(`  Total Messages:  ${analysis.summary.totalMessages}`);
     console.log(`  Total Tokens:    ${analysis.summary.totalTokens.toLocaleString()}`);
+    console.log(`  Display Tokens:  ${analysis.summary.displayTokens.toLocaleString()}`);
+    console.log(`  Cache Tokens:    ${analysis.summary.cacheTokens.toLocaleString()}`);
     console.log(`  Total Cost:      $${analysis.summary.totalCost.toFixed(2)}`);
 
-    console.log("\n  --- By Adapter ---\n");
+    console.log("\n  --- By Harness ---\n");
     console.log(
       "  " +
-        "Adapter".padEnd(16) +
+        "Harness".padEnd(16) +
         "Sessions".padEnd(10) +
         "Messages".padEnd(10) +
-        "Tokens".padEnd(14) +
+        "Billed".padEnd(14) +
+        "Display".padEnd(14) +
+        "Cache".padEnd(14) +
         "Cost",
     );
-    console.log("  " + "-".repeat(60));
-    for (const [id, data] of Object.entries(analysis.byAdapter)) {
+    console.log("  " + "-".repeat(88));
+    for (const [id, data] of Object.entries(analysis.byHarness)) {
       console.log(
         "  " +
           id.padEnd(16) +
           String(data.sessions).padEnd(10) +
           String(data.messages).padEnd(10) +
           data.tokens.toLocaleString().padEnd(14) +
+          data.displayTokens.toLocaleString().padEnd(14) +
+          data.cacheTokens.toLocaleString().padEnd(14) +
           `$${data.cost.toFixed(2)}`,
       );
     }

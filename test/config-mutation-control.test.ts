@@ -208,6 +208,42 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toEqual([{ service: true }]);
   });
 
+  test("manual protected-source opt-in changes the startup notice after restart", async () => {
+    const config = defaultConfig();
+    mockAdapters = [];
+
+    await writeTestConfig(tempDir, config);
+    await expect(watchCommand({ daemon: false })).rejects.toThrow();
+
+    const beforeLogs = console_.logs.join("\n");
+    expect(beforeLogs).toContain(
+      "Protected/app-private startup sources were not probed without explicit opt-in.",
+    );
+    expect(beforeLogs).toContain(
+      "Cursor startup skips app-private globalStorage by default",
+    );
+    expect(beforeLogs).toContain(
+      "set adapters.<id>.allowProtectedSource = true",
+    );
+    expect(beforeLogs).toContain("jin stop");
+    expect(beforeLogs).toContain("jin start");
+
+    console_.logs.length = 0;
+
+    config.adapters.cursor = {
+      ...config.adapters.cursor,
+      allowProtectedSource: true,
+    };
+    await writeTestConfig(tempDir, config);
+
+    await expect(watchCommand({ daemon: false })).rejects.toThrow();
+
+    const afterLogs = console_.logs.join("\n");
+    expect(afterLogs).not.toContain(
+      "Cursor startup skips app-private globalStorage by default",
+    );
+  });
+
   test("sink pause and resume update the control plane without a full restart", async () => {
     const config = defaultConfig();
     config.sinks = [

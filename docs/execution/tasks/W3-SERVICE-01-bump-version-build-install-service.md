@@ -7,7 +7,7 @@ Codex worker packet.
 ## Goal
 
 From an isolated clean worktree based on the approved baseline, bump the
-product version to `0.8.4`, rebuild the binary, install it to
+product version to `0.8.5`, rebuild the binary, install it to
 `~/.local/bin/jin`, and bring the local macOS launchd service up with bounded
 verification.
 
@@ -23,7 +23,7 @@ unreviewed changes into the installed binary.
 ## Unblocks
 
 - local service-mode validation on a clean post-perf baseline
-- a user-visible `0.8.4` binary install
+- a user-visible `0.8.5` binary install
 
 ## Read In Order
 
@@ -63,9 +63,9 @@ Then read the shared control plane from the canonical repo:
 
 ## Deliverables
 
-- version bumped to `0.8.4`
+- version bumped to `0.8.5`
 - rebuilt binary from the isolated worktree
-- installed binary at `~/.local/bin/jin` reports `0.8.4`
+- installed binary at `~/.local/bin/jin` reports `0.8.5`
 - local service installed/loaded from that binary
 - durable audit artifact records the exact commands and observed outputs
 
@@ -73,7 +73,7 @@ Then read the shared control plane from the canonical repo:
 
 Run, in order:
 
-1. bump version in `package.json` and `src/updater.ts` from `0.8.3` to `0.8.4`
+1. bump version in `package.json` and `src/updater.ts` from `0.8.4` to `0.8.5`
 2. `bun run build`
 3. `./jin version`
 4. `install -m 755 ./jin ~/.local/bin/jin`
@@ -89,7 +89,7 @@ Do not widen into runtime debugging or product fixes in this packet.
 
 ## Acceptance Checks
 
-- installed binary reports `jin 0.8.4`
+- installed binary reports `jin 0.8.5`
 - `jin service install` succeeds from the installed binary
 - launchd shows the service loaded under `com.jin.agent`
 - audit artifact records exact outputs and does not overclaim beyond the
