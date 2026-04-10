@@ -63,9 +63,21 @@ type Layer3Meta = Layer3Snapshot & {
   raw: Record<string, unknown>;
 };
 
+type Layer3Blob = {
+  bytes: Uint8Array;
+  parsed: JsonObject | null;
+};
+
 type Layer3Node = {
   id: string;
   raw: Record<string, unknown>;
+};
+
+type Layer3ToolResult = {
+  toolCallId: string;
+  toolName: string;
+  output: string;
+  isError: boolean;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -641,7 +653,10 @@ export class CursorAdapter implements V2Adapter {
   private loadLayer3Conversation(
     ref: ConversationRef,
   ): ConversationBundle | null {
-    const meta = this.readLayer3Meta(ref.sourcePath, workspaceFromDbPath(ref.sourcePath));
+    const meta = this.readLayer3Meta(
+      ref.sourcePath,
+      workspaceFromDbPath(ref.sourcePath),
+    );
     if (!meta) {
       return null;
     }
@@ -651,41 +666,46 @@ export class CursorAdapter implements V2Adapter {
       return null;
     }
 
+    const messages: ParsedMessage[] = [];
     let currentTurn = -1;
-    const messages = nodes
-      .map((node, sequence) => {
-        const role = normalizeLayer3Role(getString(node.raw.role));
-        const extracted = extractLayer3Content(node.id, node.raw.content);
-        const timestamp =
-          normalizeTimestamp(node.raw.createdAt) || meta.createdAt || meta.updatedAt;
-        const turn = nextTurnNumber(currentTurn, role);
-        currentTurn = turn;
-        const message: ParsedMessage = {
-          id: node.id,
-          role,
-          content: extracted.content,
-          recordType: "",
-          model: getString(node.raw.model) || getString(meta.raw.model),
-          sequence,
-          turn,
-          isSidechain: false,
-          parentMessageId: sequence > 0 ? nodes[sequence - 1]?.id ?? "" : "",
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          thinkingContent: extracted.thinkingContent,
-          thinkingTokens: extracted.thinkingTokens,
-          timestamp,
-          toolUses: extracted.toolUses,
-        };
-        return message;
-      })
-      .filter(
-        (message) =>
-          message.content.length > 0 ||
-          message.toolUses.length > 0,
-      );
+
+    for (const node of nodes) {
+      const role = normalizeLayer3Role(getString(node.raw.role));
+      const extracted = extractLayer3Content(ref.id, node.id, node.raw.content);
+      applyLayer3ToolResults(messages, extracted.toolResults);
+
+      if (extracted.content.length === 0 && extracted.toolUses.length === 0) {
+        continue;
+      }
+
+      const timestamp =
+        normalizeTimestamp(node.raw.createdAt) ||
+        meta.createdAt ||
+        meta.updatedAt;
+      const turn = nextTurnNumber(currentTurn, role);
+      currentTurn = turn;
+      const sequence = messages.length;
+
+      messages.push({
+        id: buildLayer3MessageId(ref.id, node.id),
+        role,
+        content: extracted.content,
+        recordType: "",
+        model: getString(node.raw.model) || getString(meta.raw.model),
+        sequence,
+        turn,
+        isSidechain: false,
+        parentMessageId: sequence > 0 ? messages[sequence - 1]?.id ?? "" : "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        thinkingContent: extracted.thinkingContent,
+        thinkingTokens: extracted.thinkingTokens,
+        timestamp,
+        toolUses: extracted.toolUses,
+      });
+    }
 
     if (messages.length === 0) {
       return null;
@@ -731,29 +751,22 @@ export class CursorAdapter implements V2Adapter {
       const rows = db
         .query("SELECT id, data FROM blobs")
         .all() as Array<{ id: string; data: unknown }>;
-      const blobs = new Map<string, JsonObject>();
+      const knownIds = new Set(rows.map((row) => row.id));
+      const blobs = new Map<string, Layer3Blob>();
+
       for (const row of rows) {
-        const parsed = parseJsonObject(row.data);
-        if (parsed) {
-          blobs.set(row.id, parsed);
-        }
-      }
-
-      const chain: Layer3Node[] = [];
-      const seen = new Set<string>();
-      let currentId = rootId;
-      while (currentId && blobs.has(currentId) && !seen.has(currentId)) {
-        seen.add(currentId);
-        const node = blobs.get(currentId);
-        if (!node) {
-          break;
+        const bytes = toBlobBytes(row.data);
+        if (!bytes) {
+          continue;
         }
 
-        chain.push({ id: currentId, raw: node });
-        currentId = getString(node.parentId);
+        blobs.set(row.id, {
+          bytes,
+          parsed: parseJsonObject(bytes),
+        });
       }
 
-      return chain.reverse();
+      return collectLayer3Nodes(rootId, blobs, knownIds);
     } catch (error) {
       logCursorWarning(`Failed to read Layer 3 blobs from ${dbPath}`, error);
       return [];
@@ -909,6 +922,22 @@ function parseJsonObject(value: unknown): JsonObject | null {
   }
 }
 
+function toBlobBytes(value: unknown): Uint8Array | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return Buffer.from(value);
+  }
+
+  if (typeof value === "string") {
+    return Buffer.from(value, "utf-8");
+  }
+
+  return null;
+}
+
 function decodeHexJsonObject(value: unknown): JsonObject | null {
   if (typeof value !== "string" || value.length === 0) {
     return null;
@@ -1028,11 +1057,13 @@ function buildLayer1ToolUses(
 }
 
 function extractLayer3Content(
+  conversationId: string,
   messageId: string,
   content: unknown,
 ): {
   content: string;
   toolUses: ParsedToolCall[];
+  toolResults: Layer3ToolResult[];
   thinkingContent: string;
   thinkingTokens: number;
 } {
@@ -1040,6 +1071,7 @@ function extractLayer3Content(
     return {
       content,
       toolUses: [],
+      toolResults: [],
       thinkingContent: "",
       thinkingTokens: 0,
     };
@@ -1049,6 +1081,7 @@ function extractLayer3Content(
     return {
       content: stableJson(content),
       toolUses: [],
+      toolResults: [],
       thinkingContent: "",
       thinkingTokens: 0,
     };
@@ -1056,6 +1089,7 @@ function extractLayer3Content(
 
   const textParts: string[] = [];
   const toolUses: ParsedToolCall[] = [];
+  const toolResults: Layer3ToolResult[] = [];
   const thinkingParts: string[] = [];
 
   for (const block of content) {
@@ -1084,8 +1118,14 @@ function extractLayer3Content(
 
     if (type === "tool-call" || type === "tool_use") {
       const toolName = getString(json.toolName) || getString(json.name);
+      const toolCallId = buildLayer3ToolUseId(
+        conversationId,
+        messageId,
+        toolUses.length,
+        getString(json.toolCallId),
+      );
       const toolUse: ParsedToolCall = {
-        id: `${messageId}:tool:${toolUses.length}`,
+        id: toolCallId,
         name: toolName || `tool_${toolUses.length}`,
         input: stableJson(json.args ?? json.input ?? {}),
         output: "",
@@ -1098,15 +1138,32 @@ function extractLayer3Content(
     }
 
     if (type === "tool-result" || type === "tool_result") {
+      const toolCallId = buildLayer3ExternalToolCallId(
+        conversationId,
+        getString(json.toolCallId),
+      );
       const toolName = getString(json.toolName) || getString(json.name);
       const output = stableJson(json.result ?? json.output ?? "");
       const target =
         Array.from(toolUses)
           .reverse()
-          .find((toolCall) => toolCall.name === toolName || !toolName) ??
+          .find(
+            (toolCall) =>
+              (toolCallId && toolCall.id === toolCallId) ||
+              toolCall.name === toolName ||
+              !toolName,
+          ) ??
         toolUses[toolUses.length - 1];
       if (target) {
         target.output = output;
+        target.isError = target.isError || json.isError === true;
+      } else {
+        toolResults.push({
+          toolCallId,
+          toolName,
+          output,
+          isError: json.isError === true,
+        });
       }
       continue;
     }
@@ -1119,9 +1176,127 @@ function extractLayer3Content(
   return {
     content: textParts.join("\n"),
     toolUses,
+    toolResults,
     thinkingContent: thinkingParts.join("\n"),
     thinkingTokens: 0,
   };
+}
+
+function buildLayer3MessageId(
+  conversationId: string,
+  blobId: string,
+): string {
+  return `${conversationId}:${blobId}`;
+}
+
+function buildLayer3ExternalToolCallId(
+  conversationId: string,
+  toolCallId: string,
+): string {
+  return toolCallId ? `${conversationId}:${toolCallId}` : "";
+}
+
+function buildLayer3ToolUseId(
+  conversationId: string,
+  messageId: string,
+  index: number,
+  toolCallId: string,
+): string {
+  return (
+    buildLayer3ExternalToolCallId(conversationId, toolCallId) ||
+    `${conversationId}:${messageId}:tool:${index}`
+  );
+}
+
+function collectLayer3Nodes(
+  rootId: string,
+  blobs: Map<string, Layer3Blob>,
+  knownIds: Set<string>,
+  seen = new Set<string>(),
+): Layer3Node[] {
+  if (!rootId || seen.has(rootId)) {
+    return [];
+  }
+
+  const blob = blobs.get(rootId);
+  if (!blob) {
+    return [];
+  }
+
+  seen.add(rootId);
+
+  if (blob.parsed) {
+    const parentId = getString(blob.parsed.parentId);
+    const parentNodes = parentId
+      ? collectLayer3Nodes(parentId, blobs, knownIds, seen)
+      : [];
+    return parentNodes.concat({ id: rootId, raw: blob.parsed });
+  }
+
+  const refs = extractLayer3BlobRefs(blob.bytes, knownIds);
+  if (refs.length === 0) {
+    return [];
+  }
+
+  return refs.flatMap((ref) => collectLayer3Nodes(ref, blobs, knownIds, seen));
+}
+
+function extractLayer3BlobRefs(
+  blob: Uint8Array,
+  knownIds: Set<string>,
+): string[] {
+  const refs: string[] = [];
+
+  for (let index = 0; index <= blob.length - 34; index += 1) {
+    const tag = blob[index];
+    const length = blob[index + 1];
+    if ((tag & 0x07) !== 2 || length !== 0x20) {
+      continue;
+    }
+
+    const ref = Buffer.from(blob.slice(index + 2, index + 34)).toString("hex");
+    if (knownIds.has(ref)) {
+      refs.push(ref);
+    }
+  }
+
+  return refs;
+}
+
+function applyLayer3ToolResults(
+  messages: ParsedMessage[],
+  toolResults: Layer3ToolResult[],
+): void {
+  for (const toolResult of toolResults) {
+    const target = findLayer3ToolUse(messages, toolResult);
+    if (!target) {
+      continue;
+    }
+
+    target.output = toolResult.output;
+    target.isError = target.isError || toolResult.isError;
+  }
+}
+
+function findLayer3ToolUse(
+  messages: ParsedMessage[],
+  toolResult: Layer3ToolResult,
+): ParsedToolCall | null {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const toolUses = messages[messageIndex]?.toolUses ?? [];
+    for (let toolIndex = toolUses.length - 1; toolIndex >= 0; toolIndex -= 1) {
+      const toolUse = toolUses[toolIndex];
+      if (toolResult.toolCallId && toolUse.id === toolResult.toolCallId) {
+        return toolUse;
+      }
+
+      if (toolResult.toolName && toolUse.name === toolResult.toolName) {
+        return toolUse;
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizeLayer3Role(

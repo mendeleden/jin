@@ -5,6 +5,15 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { CursorAdapter } from "../src/adapters/cursor";
 
+const LAYER3_ROOT_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const LAYER3_NESTED_ROOT_ID = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+const LAYER3_USER_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const LAYER3_ASSISTANT_ID = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const LAYER3_TOOL_RESULT_ID =
+  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const LAYER3_FINAL_ID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const LAYER3_TOOL_CALL_ID = "toolu_cursor_live_read";
+
 describe("W2-ADAPTER-03 Cursor reference adapter", () => {
   let rootDir: string;
   let chatsDir: string;
@@ -164,7 +173,6 @@ describe("W2-ADAPTER-03 Cursor reference adapter", () => {
 
     updateLayer3AssistantMessage(dbPath, {
       role: "assistant",
-      parentId: "cli-user",
       content: [
         { type: "reasoning", text: "Thinking through the workspace" },
         { type: "tool-call", toolName: "Read", args: { path: "src/index.ts" } },
@@ -181,7 +189,7 @@ describe("W2-ADAPTER-03 Cursor reference adapter", () => {
     expect(changedRefs[0]?.sourcePath).toBe(dbPath);
   });
 
-  it("loads Layer 3 bundles as root conversations and extracts representative tool calls", async () => {
+  it("loads live-style Layer 3 pointer roots and stitches tool results onto the prior assistant message", async () => {
     seedLayer3Session(join(chatsDir, "workspace-a", "cli-session"));
     const adapter = makeAdapter(chatsDir, stateDbPath);
 
@@ -199,26 +207,91 @@ describe("W2-ADAPTER-03 Cursor reference adapter", () => {
     expect(bundle.conversation.relationship).toBe("root");
     expect(bundle.conversation.traceId).toBe("cli-session");
     expect(bundle.messages.map((message) => message.id)).toEqual([
-      "cli-user",
-      "cli-assistant",
+      `cli-session:${LAYER3_USER_ID}`,
+      `cli-session:${LAYER3_ASSISTANT_ID}`,
+      `cli-session:${LAYER3_FINAL_ID}`,
     ]);
     expect(bundle.messages[0]?.turn).toBe(0);
     expect(bundle.messages[1]?.turn).toBe(0);
+    expect(bundle.messages[2]?.turn).toBe(0);
     expect(bundle.messages[1]?.toolUses[0]?.id).toBe(
-      "cli-assistant:tool:0",
+      `cli-session:${LAYER3_TOOL_CALL_ID}`,
     );
     expect(bundle.messages[1]?.toolUses[0]?.name).toBe("Read");
     expect(bundle.messages[1]?.toolUses[0]?.output).toBe(
       "export const ok = true;",
     );
-    expect(bundle.messages[1]?.content).toBe(
-      "Thinking through the workspace\nDone reading the file.",
-    );
+    expect(bundle.messages[1]?.content).toBe("Thinking through the workspace");
     expect(bundle.messages[1]?.thinkingContent).toBe(
       "Thinking through the workspace",
     );
     expect(bundle.messages[1]?.thinkingTokens).toBe(0);
+    expect(bundle.messages[2]?.content).toBe("Done reading the file.");
     expect(bundleAgain.conversation.id).toBe(bundle.conversation.id);
+  });
+
+  it("prefixes Layer 3 message ids by conversation so content-addressed blobs stay unique across sessions", async () => {
+    seedLayer3Session(join(chatsDir, "workspace-a", "cli-session"));
+    seedLayer3Session(join(chatsDir, "workspace-a", "cli-session-copy"), {
+      sessionId: "cli-session-copy",
+    });
+    const adapter = makeAdapter(chatsDir, stateDbPath);
+
+    const refs = await adapter.findChanged({ kind: "startup-scan" });
+    const first = refs.find((ref) => ref.id === "cli-session");
+    const second = refs.find((ref) => ref.id === "cli-session-copy");
+
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+
+    const firstBundle = await adapter.loadConversation(first!);
+    const secondBundle = await adapter.loadConversation(second!);
+
+    expect(firstBundle).not.toBeNull();
+    expect(secondBundle).not.toBeNull();
+
+    if (!firstBundle || !secondBundle) {
+      throw new Error("expected both Cursor layer3 bundles to load");
+    }
+
+    expect(firstBundle.messages[0]?.id).toBe(`cli-session:${LAYER3_USER_ID}`);
+    expect(secondBundle.messages[0]?.id).toBe(
+      `cli-session-copy:${LAYER3_USER_ID}`,
+    );
+    expect(firstBundle.messages[0]?.id).not.toBe(secondBundle.messages[0]?.id);
+    expect(firstBundle.messages[1]?.toolUses[0]?.id).toBe(
+      `cli-session:${LAYER3_TOOL_CALL_ID}`,
+    );
+    expect(secondBundle.messages[1]?.toolUses[0]?.id).toBe(
+      `cli-session-copy:${LAYER3_TOOL_CALL_ID}`,
+    );
+  });
+
+  it("warns and continues with Layer 3 discovery when the shared Layer 1 DB path exists but cannot be opened", async () => {
+    seedLayer3Session(join(chatsDir, "workspace-a", "cli-session"));
+    const unreadableLayer1Path = join(rootDir, "not-a-db");
+    mkdirSync(unreadableLayer1Path, { recursive: true });
+
+    const adapter = makeAdapter(chatsDir, unreadableLayer1Path);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => {
+      warnings.push(args.map(String).join(" "));
+    };
+
+    try {
+      expect(await adapter.detect()).toBe(true);
+      const refs = await adapter.findChanged({ kind: "startup-scan" });
+      expect(refs.map((ref) => ref.id)).toEqual(["cli-session"]);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(
+      warnings.some((warning) =>
+        warning.includes("Failed to open SQLite database"),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -315,7 +388,11 @@ function seedLayer1ParentAndChild(
   return parentId;
 }
 
-function seedLayer3Session(sessionDir: string): string {
+function seedLayer3Session(
+  sessionDir: string,
+  options: { sessionId?: string } = {},
+): string {
+  const sessionId = options.sessionId ?? "cli-session";
   mkdirSync(sessionDir, { recursive: true });
   const dbPath = join(sessionDir, "store.db");
   const db = new Database(dbPath);
@@ -323,15 +400,27 @@ function seedLayer3Session(sessionDir: string): string {
   db.run("CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)");
   db.run("INSERT INTO meta (key, value) VALUES ('0', ?)", [
     encodeHexJson({
-      agentId: "cli-session",
-      latestRootBlobId: "cli-assistant",
+      agentId: sessionId,
+      latestRootBlobId: LAYER3_ROOT_ID,
       name: "New Agent",
       mode: "search",
       createdAt: 1774308018582,
     }),
   ]);
   db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
-    "cli-user",
+    LAYER3_ROOT_ID,
+    encodeLayer3PointerBlob([LAYER3_USER_ID, LAYER3_NESTED_ROOT_ID]),
+  ]);
+  db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
+    LAYER3_NESTED_ROOT_ID,
+    encodeLayer3PointerBlob([
+      LAYER3_ASSISTANT_ID,
+      LAYER3_TOOL_RESULT_ID,
+      LAYER3_FINAL_ID,
+    ]),
+  ]);
+  db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
+    LAYER3_USER_ID,
     Buffer.from(
       JSON.stringify({
         role: "user",
@@ -341,17 +430,46 @@ function seedLayer3Session(sessionDir: string): string {
     ),
   ]);
   db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
-    "cli-assistant",
+    LAYER3_ASSISTANT_ID,
     Buffer.from(
       JSON.stringify({
         role: "assistant",
-        parentId: "cli-user",
         content: [
           { type: "reasoning", text: "Thinking through the workspace" },
-          { type: "tool-call", toolName: "Read", args: { path: "src/index.ts" } },
-          { type: "tool-result", toolName: "Read", result: "export const ok = true;" },
-          { type: "text", text: "Done reading the file." },
+          {
+            type: "tool-call",
+            toolCallId: LAYER3_TOOL_CALL_ID,
+            toolName: "Read",
+            args: { path: "src/index.ts" },
+          },
         ],
+      }),
+      "utf-8",
+    ),
+  ]);
+  db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
+    LAYER3_TOOL_RESULT_ID,
+    Buffer.from(
+      JSON.stringify({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: LAYER3_TOOL_CALL_ID,
+            toolName: "Read",
+            result: "export const ok = true;",
+          },
+        ],
+      }),
+      "utf-8",
+    ),
+  ]);
+  db.run("INSERT INTO blobs (id, data) VALUES (?, ?)", [
+    LAYER3_FINAL_ID,
+    Buffer.from(
+      JSON.stringify({
+        role: "assistant",
+        content: [{ type: "text", text: "Done reading the file." }],
       }),
       "utf-8",
     ),
@@ -369,12 +487,21 @@ function updateLayer3AssistantMessage(
   payload: Record<string, unknown>,
 ): void {
   const db = new Database(dbPath);
-  db.run("UPDATE blobs SET data = ? WHERE id = 'cli-assistant'", [
+  db.run("UPDATE blobs SET data = ? WHERE id = ?", [
     Buffer.from(JSON.stringify(payload), "utf-8"),
+    LAYER3_ASSISTANT_ID,
   ]);
   db.close();
 }
 
 function encodeHexJson(value: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(value), "utf-8").toString("hex");
+}
+
+function encodeLayer3PointerBlob(blobIds: string[]): Buffer {
+  return Buffer.concat(
+    blobIds.map((blobId) =>
+      Buffer.concat([Buffer.from([0x0a, 0x20]), Buffer.from(blobId, "hex")]),
+    ),
+  );
 }
