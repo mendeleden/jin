@@ -349,30 +349,32 @@ grouping key.
 See [docs/adapters/cursor/overview.md](adapters/cursor/overview.md) for
 the full 4-layer storage analysis.
 
-**Current adapter** (reads CLI `store.db` only):
+**Current adapter** (reads Layer 1 `state.vscdb` plus Layer 3 CLI `store.db`):
 
 | Source (SQLite) | v2 Field | Notes |
 |-----------------|----------|-------|
-| Blob tree traversal | `Message.content` | Walk tree from root via `parentId` |
-| `role` | `Message.role` | Direct |
-| File ctime/mtime | `Message.timestamp` | **Interpolated** — not per-message |
-| `data.model` | `Message.model` | Optional |
-| `parentId` | `Message.parent_message_id` | Blob tree DAG |
-| Agent transcripts dir | `relationship='spawned'` conversations | **Not yet captured** |
-
-**Available in `state.vscdb`** (not yet captured):
-
-| Source (state.vscdb) | v2 Field | Notes |
-|---------------------|----------|-------|
-| `composerData.composerId` | `Conversation.id` | UUID |
+| `composerData.composerId` | `Conversation.id` | Layer 1 IDE session UUID |
 | `composerData.name` | `Conversation.name` | User-set or auto-generated |
-| `composerData.modelConfig.modelName` | `Conversation.model` | e.g., `"composer-2-fast"` |
-| `composerData.subagentComposerIds` | `relationship='spawned'`, `parent_id` | Array of child UUIDs |
-| `bubbleId.tokenCount.inputTokens` | `Message.inputTokens` | Per-message |
-| `bubbleId.tokenCount.outputTokens` | `Message.outputTokens` | Per-message |
-| `bubbleId.createdAt` | `Message.timestamp` | Real per-message timestamps |
-| `bubbleId.toolFormerData` | `ToolCall` rows | name, rawArgs, status |
-| `bubbleId.allThinkingBlocks` | `Message.thinking_content` | Reasoning text |
+| `modelConfig.modelName` | `Conversation.model`, `Message.model` | Layer 1 model name |
+| `subagentComposerIds` + `task_v2` bubbles | `relationship='spawned'`, `parent_id` | Layer 1 sub-agent linkage |
+| `bubbleId.workspaceUris[0]` | `Conversation.cwd` | Preferred workspace path when present |
+| `bubbleId.createdAt` | `Message.timestamp` | Real per-message timestamp for Layer 1 |
+| `bubbleId.tokenCount.*` | `Message.input_tokens`, `Message.output_tokens` | Layer 1 only; model-dependent |
+| `bubbleId.toolFormerData` | `ToolCall` rows | name, args, status, partial result payloads |
+| `bubbleId.thinking.text` / `allThinkingBlocks[]` | `Message.thinking_content` | Current local data is mostly empty signatures |
+| Blob tree traversal | `Message.content` | Layer 3 walks from `latestRootBlobId` via pointer blobs |
+| `role` | `Message.role` | Direct |
+| `data.model` | `Message.model` | Optional Layer 3 model |
+| `parentId` | `Message.parent_message_id` | Layer 3 blob DAG |
+| Layer 3 `tool-result` blobs | `ToolCall.output` | Matched to prior tool use by `toolCallId`, then name fallback |
+| File ctime/mtime | `Message.timestamp` | Layer 3 fallback only; still interpolated |
+
+**Not yet captured:**
+
+| Source | Missing v2 Field | Notes |
+|--------|------------------|-------|
+| Layer 2 agent transcripts JSONL | transcript-only CLI/ACP fallback | not implemented yet |
+| Agent transcripts dir | `relationship='spawned'` for transcript-only sessions | only Layer 1 spawned sessions are captured today |
 
 ### 6.4 Gemini CLI
 

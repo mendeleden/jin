@@ -285,9 +285,9 @@ bubbleId:sub1-uuid:bubble-uuid
 | Sub-agent IDs | **Yes** | `subagentComposerIds` array on parent |
 | Sub-agent sessions | **Yes** | Full `composerData` + `bubbleId` entries per sub-agent |
 | Session auto-naming | **Yes** | Cursor auto-generates names from content |
-| Token counts | **Partial** | 25/964 bubbles have non-zero tokens (model-dependent) |
-| Thinking blocks | **No** | 0/964 bubbles have `allThinkingBlocks` populated |
-| Tool call results | **No** | Not in `toolFormerData` (only name + args + status) |
+| Token counts | **Partial** | Present on Layer 1 bubbles, but many remain zero depending on model/runtime path |
+| Thinking blocks | **Partial** | `allThinkingBlocks` is empty on current local data, but `thinking` objects and durations are present on assistant bubbles; text is usually empty |
+| Tool call results | **Partial** | `toolFormerData.result` / `additionalData` are often present, but not every tool stores a rich result payload |
 
 ---
 

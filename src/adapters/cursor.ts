@@ -42,6 +42,9 @@ type Layer1Bubble = {
   type: number;
   text: string;
   createdAt: string;
+  workspaceUris: string[];
+  workspaceProjectDir: string;
+  thinkingText: string;
   tokenCount: {
     inputTokens: number;
     outputTokens: number;
@@ -391,6 +394,9 @@ export class CursorAdapter implements V2Adapter {
           type: getNumber(bubble.type),
           text: getString(bubble.text),
           createdAt: normalizeTimestamp(bubble.createdAt),
+          workspaceUris: extractStringArray(bubble.workspaceUris),
+          workspaceProjectDir: getString(bubble.workspaceProjectDir),
+          thinkingText: extractLayer1ThinkingText(bubble),
           tokenCount: {
             inputTokens: getNumber(
               (bubble.tokenCount as JsonObject | undefined)?.inputTokens,
@@ -465,7 +471,7 @@ export class CursorAdapter implements V2Adapter {
         outputTokens: bubble.tokenCount.outputTokens,
         cacheRead: 0,
         cacheWrite: 0,
-        thinkingContent: "",
+        thinkingContent: bubble.thinkingText,
         thinkingTokens: 0,
         timestamp,
         toolUses,
@@ -483,7 +489,7 @@ export class CursorAdapter implements V2Adapter {
       messages[messages.length - 1]?.timestamp ||
       composer.updatedAt ||
       composer.createdAt;
-    const cwd = resolveCursorCwd(composer.raw);
+    const cwd = resolveCursorCwd(composer.raw, composer.bubbles);
     const conversation: ParsedConversation = {
       id: ref.id,
       traceId,
@@ -1145,15 +1151,11 @@ function extractLayer3Content(
       const toolName = getString(json.toolName) || getString(json.name);
       const output = stableJson(json.result ?? json.output ?? "");
       const target =
-        Array.from(toolUses)
-          .reverse()
-          .find(
-            (toolCall) =>
-              (toolCallId && toolCall.id === toolCallId) ||
-              toolCall.name === toolName ||
-              !toolName,
-          ) ??
-        toolUses[toolUses.length - 1];
+        findLayer3ToolUseInList(
+          toolUses,
+          { toolCallId, toolName },
+          { allowTailFallback: true },
+        ) ?? toolUses[toolUses.length - 1];
       if (target) {
         target.output = output;
         target.isError = target.isError || json.isError === true;
@@ -1282,18 +1284,82 @@ function findLayer3ToolUse(
   messages: ParsedMessage[],
   toolResult: Layer3ToolResult,
 ): ParsedToolCall | null {
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+  if (toolResult.toolCallId) {
+    for (
+      let messageIndex = messages.length - 1;
+      messageIndex >= 0;
+      messageIndex -= 1
+    ) {
+      const target = findLayer3ToolUseInList(
+        messages[messageIndex]?.toolUses ?? [],
+        { toolCallId: toolResult.toolCallId, toolName: "" },
+      );
+      if (target) {
+        return target;
+      }
+    }
+  }
+
+  if (toolResult.toolName) {
+    for (
+      let messageIndex = messages.length - 1;
+      messageIndex >= 0;
+      messageIndex -= 1
+    ) {
+      const target = findLayer3ToolUseInList(
+        messages[messageIndex]?.toolUses ?? [],
+        { toolCallId: "", toolName: toolResult.toolName },
+      );
+      if (target) {
+        return target;
+      }
+    }
+  }
+
+  return findLatestLayer3ToolUse(messages);
+}
+
+function findLatestLayer3ToolUse(messages: ParsedMessage[]): ParsedToolCall | null {
+  for (
+    let messageIndex = messages.length - 1;
+    messageIndex >= 0;
+    messageIndex -= 1
+  ) {
     const toolUses = messages[messageIndex]?.toolUses ?? [];
+    const fallback = toolUses[toolUses.length - 1];
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return null;
+}
+
+function findLayer3ToolUseInList(
+  toolUses: ParsedToolCall[],
+  toolResult: Pick<Layer3ToolResult, "toolCallId" | "toolName">,
+  options: { allowTailFallback?: boolean } = {},
+): ParsedToolCall | null {
+  if (toolResult.toolCallId) {
     for (let toolIndex = toolUses.length - 1; toolIndex >= 0; toolIndex -= 1) {
       const toolUse = toolUses[toolIndex];
-      if (toolResult.toolCallId && toolUse.id === toolResult.toolCallId) {
-        return toolUse;
-      }
-
-      if (toolResult.toolName && toolUse.name === toolResult.toolName) {
+      if (toolUse?.id === toolResult.toolCallId) {
         return toolUse;
       }
     }
+  }
+
+  if (toolResult.toolName) {
+    for (let toolIndex = toolUses.length - 1; toolIndex >= 0; toolIndex -= 1) {
+      const toolUse = toolUses[toolIndex];
+      if (toolUse?.name === toolResult.toolName) {
+        return toolUse;
+      }
+    }
+  }
+
+  if (options.allowTailFallback) {
+    return toolUses[toolUses.length - 1] ?? null;
   }
 
   return null;
@@ -1323,10 +1389,19 @@ function pickConversationName(
   }
 
   const firstUserMessage = messages.find(
-    (message) => message.role === "user" && message.content.length > 0,
+    (message) =>
+      message.role === "user" &&
+      stripCursorSyntheticPrelude(message.content).length > 0,
   );
   if (firstUserMessage) {
-    return firstUserMessage.content.slice(0, 80);
+    return stripCursorSyntheticPrelude(firstUserMessage.content).slice(0, 80);
+  }
+
+  const fallbackUserMessage = messages.find(
+    (message) => message.role === "user" && message.content.length > 0,
+  );
+  if (fallbackUserMessage) {
+    return fallbackUserMessage.content.slice(0, 80);
   }
 
   return fallbackId.slice(0, 8);
@@ -1428,7 +1503,26 @@ function stableJson(value: unknown): string {
   }
 }
 
-function resolveCursorCwd(raw: JsonObject): string {
+function resolveCursorCwd(raw: JsonObject, bubbles: Layer1Bubble[] = []): string {
+  for (const bubble of bubbles) {
+    for (const workspaceUri of bubble.workspaceUris) {
+      const cwd = decodeCursorFileUri(workspaceUri);
+      if (cwd) {
+        return cwd;
+      }
+    }
+  }
+
+  for (const workspaceUri of [
+    getString(raw.workspaceUri),
+    ...extractStringArray(raw.workspaceUris),
+  ]) {
+    const cwd = decodeCursorFileUri(workspaceUri);
+    if (cwd) {
+      return cwd;
+    }
+  }
+
   // Cursor storage varies by layer and often omits cwd entirely, so try a few
   // common keys and leave the field empty when the source truly lacks it.
   const candidates = [
@@ -1438,6 +1532,8 @@ function resolveCursorCwd(raw: JsonObject): string {
     raw.workspaceRoot,
     raw.projectPath,
     raw.path,
+    ...bubbles.map((bubble) => bubble.workspaceProjectDir),
+    raw.workspaceProjectDir,
   ];
 
   for (const candidate of candidates) {
@@ -1448,6 +1544,124 @@ function resolveCursorCwd(raw: JsonObject): string {
   }
 
   return "";
+}
+
+function extractLayer1ThinkingText(raw: JsonObject): string {
+  const thinkingBlocks = extractLayer1ThinkingBlocks(raw.allThinkingBlocks);
+  if (thinkingBlocks.length > 0) {
+    return thinkingBlocks.join("\n");
+  }
+
+  const thinking = asJsonObject(raw.thinking);
+  return getString(thinking?.text);
+}
+
+function extractLayer1ThinkingBlocks(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  for (const block of value) {
+    if (typeof block === "string" && block.length > 0) {
+      parts.push(block);
+      continue;
+    }
+
+    const json = asJsonObject(block);
+    const text = getString(json?.text) || getString(json?.content);
+    if (text) {
+      parts.push(text);
+    }
+  }
+
+  return parts;
+}
+
+function stripCursorSyntheticPrelude(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const directUserQuery = trimmed.match(
+    /^<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,
+  );
+  if (directUserQuery) {
+    return directUserQuery[1]?.trim() ?? "";
+  }
+
+  const leadingPrelude = stripLeadingCursorWrapperBlocks(trimmed);
+  if (!leadingPrelude.changed) {
+    return trimmed;
+  }
+
+  const userQuery = leadingPrelude.content.match(
+    /^<user_query>\s*([\s\S]*?)\s*<\/user_query>\s*$/i,
+  );
+  if (userQuery) {
+    return userQuery[1]?.trim() ?? "";
+  }
+
+  return leadingPrelude.content.trim();
+}
+
+function stripLeadingCursorWrapperBlocks(content: string): {
+  content: string;
+  changed: boolean;
+} {
+  const wrapperTags = [
+    "user_info",
+    "git_status",
+    "agent_transcripts",
+    "agent_skills",
+    "rules",
+  ];
+  let remaining = content;
+  let changed = false;
+
+  while (true) {
+    let consumed = false;
+    for (const tag of wrapperTags) {
+      const pattern = new RegExp(`^<${tag}>[\\s\\S]*?<\\/${tag}>\\s*`, "i");
+      if (!pattern.test(remaining)) {
+        continue;
+      }
+
+      remaining = remaining.replace(pattern, "").trimStart();
+      changed = true;
+      consumed = true;
+      break;
+    }
+
+    if (!consumed) {
+      break;
+    }
+  }
+
+  return { content: remaining, changed };
+}
+
+function decodeCursorFileUri(value: string): string {
+  if (!value) {
+    return "";
+  }
+
+  if (!value.startsWith("file://")) {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    const pathname = decodeURIComponent(url.pathname);
+    if (/^\/[A-Za-z]:\//.test(pathname)) {
+      return pathname.slice(1);
+    }
+
+    return pathname;
+  } catch {
+    return value.replace(/^file:\/\//, "");
+  }
 }
 
 function logCursorWarning(message: string, error: unknown): void {
