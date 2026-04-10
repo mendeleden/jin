@@ -2,8 +2,9 @@ flowchart TD
   subgraph Runtime["Runtime / Live blockers"]
     PERF2["W3-PERF-02<br/>approved<br/>runtime RSS fix landed<br/>guard stays frozen at 200 / 256 MB"]
     AD07["W3-ADAPTER-07<br/>approved<br/>Claude path precedence fixed<br/>stack overflow fixed<br/>live peak still ~812 MB"]
-    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude + Cursor follow-ups isolated"]
-    SINK04["W3-SINK-04<br/>needs_codex<br/>sql.begin transport fix landed<br/>await unrestricted clean-start rerun"]
+    AD09["W3-ADAPTER-09<br/>in_progress<br/>Claude duplicate-id fix<br/>live revalidation running next"]
+    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude full-fix now first<br/>Cursor next"]
+    SINK04["W3-SINK-04<br/>needs_codex<br/>transport + schema fixes landed<br/>queued behind Claude/Cursor follow-ups"]
     E2E["W3-E2E-01<br/>review_ready<br/>wait for stable runtime"]
     SERVICE["W3-SERVICE-01<br/>in_progress<br/>wait for stable runtime"]
   end
@@ -44,7 +45,8 @@ flowchart TD
 
   AD07 --> VALIDATE
   PERF3 --> VALIDATE
-  VALIDATE --> SINK04
+  VALIDATE --> AD09
+  AD09 --> SINK04
   CLEAN --> SINK04
   LIVE --> VALIDATE
   PERF2 --> E2E

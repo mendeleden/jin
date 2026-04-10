@@ -1,0 +1,51 @@
+# Packet State
+
+- packet: `W3-TEAM-01`
+- title: `Team Bootstrap and Schema Escape Hatch`
+- status: `approved`
+- assigned agent: `claude-WORKER-team-bootstrap`
+- branch: `feat/rewrite-ontology`
+- worktree/container: `canonical repo workspace` / `local`
+- depends on: `W3-PRODUCT-01`
+- unblocks: `team demo readiness`, `remote Postgres bootstrap path`
+- last transition: `2026-04-06`
+- next Codex action: `use the approved and committed operator surface in W3-V2-01, W3-E2E-01, and the runtime/store cutover follow-on`
+- latest review: `2026-04-06-W3-TEAM-01-codex-recheck`
+
+## Notes
+
+- there is currently no `jin team` command group in the repo
+- current team-related local surfaces are:
+  - `src/commands/team-config.ts`
+  - `jin connect --team=<code>`
+  - compatibility `jin init --team=<code>`
+- current remote Postgres behavior is sink-style only:
+  - `src/sinks/postgres.ts` verifies remote readiness via `jin_meta`
+  - missing schema currently fails with `Remote schema is not initialized`
+- BP-Product says Team is a product plane, not a sink flavor
+- BP-09 now sharpens the split for this lane:
+  - developer onboarding remains `jin connect --team=<code>`
+  - operator bootstrap moves under `jin team bridge`
+  - operator schema escape hatch moves under `jin team schema ...`
+  - `jin team init` / `jin team status` stay deferred until workspace identity is real
+- worker heartbeat now reports `review_ready` with:
+  - `src/commands/team-config.ts` narrowed to the `jin team bridge` / deprecated `jin team-config` transition only
+  - new `src/commands/schema.ts` implementing `jin team schema apply|check|version`
+  - `src/index.ts` help/dispatch updates removing top-level `jin schema` and `jin team connect`
+  - new `test/team-bootstrap.test.ts`
+  - focused tests: `14 pass`, plus `42 pass` across existing onboarding/config suites
+- corrected BP-09 boundary now implemented:
+  - developer onboarding remains `jin connect --team=<code>`
+  - operator bootstrap moves under `jin team bridge`
+  - operator schema escape hatch moves under `jin team schema ...`
+  - `jin team init` / `jin team status` remain deferred
+- Codex review found one remaining blocker, now fixed in the worktree:
+  - `src/commands/schema.ts` no longer tells operators to run `jin sink add postgres ...` after `jin team schema apply`
+  - success-path guidance now stays inside the operator/team surface via `jin team bridge` / `jin team help`
+  - focused success-branch coverage was added in `test/team-bootstrap.test.ts`
+- narrow Codex re-review is now approved:
+  - review artifact: `.execution/reviews/2026-04-06-W3-TEAM-01-codex-recheck.md`
+  - verdict: `approved`
+  - `BP-09` is now aligned in `.execution/blueprints.md`
+- scoped repo-visible diff is committed:
+  - `b6428cf` — `Add jin team operator bootstrap commands`

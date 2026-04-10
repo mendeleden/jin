@@ -30,6 +30,16 @@ Before dispatch, every packet should already spell out:
 - a **V1 Comparison** section when the packet rewrites an existing surface,
   or an explicit `no prior v1 surface` note when it does not
 
+If a packet owns operational checklists, audits, release-prep notes, or other
+docs that describe current program state or gating steps, it should also spell
+out which live-state files must be revalidated before handoff and review:
+
+- current `program.md`
+- current packet file(s)
+- latest relevant review artifact(s)
+- current git/commit state when the checklist depends on an approval or commit
+  checkpoint
+
 Packets are not just work orders. They are the completeness contract for the
 review loop.
 
@@ -194,6 +204,8 @@ At minimum:
 3. any omitted BP requirement is explicitly marked deferred or out of scope
 4. the V1 Comparison exists for rewritten surfaces, or explicitly says
    `no prior v1 surface`
+5. any packet-owned checklist or audit that encodes current program state was
+   revalidated against the live control plane and current git/commit state
 
 ## Integration Rule
 

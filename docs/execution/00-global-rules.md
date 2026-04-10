@@ -84,6 +84,18 @@ These are one-way doors and remain Codex-owned until frozen and delegated.
 - The shared control plane is usually `.execution/`, or another directory
   selected via the dispatch protocol.
 - Workers must read the current control-plane state before starting work.
+- Packet-owned runbooks, checklists, and audit notes that describe current
+  program state or gating steps are derived from the live control plane, not a
+  second source of truth.
+- Before handoff or review, authors of those packet-owned docs must validate
+  them against:
+  - the current control-plane state
+  - the current packet file(s)
+  - the latest relevant review artifact(s)
+  - the current git/commit state when the checklist depends on an approval or
+    commit checkpoint
+- If a packet-owned checklist or audit disagrees with live state, fix the doc
+  before asking for approval.
 - Workers must update their own live heartbeat/progress state while working.
 - `codex-BRAIN` must update packet assignment and transition state.
 - reviewers must update review artifacts and the blueprint scoreboard.

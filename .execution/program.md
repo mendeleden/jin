@@ -2,7 +2,7 @@
 
 - phase: `Wave 3 integration`
 - current date: `2026-04-09`
-- current focus: `W3-SINK-04 remains the active release blocker while final sink evidence is being reconciled; W3-CLEANUP-01 is approved and the scoped cleanup commit is landing before workspace-member / userId follow-up work`
+- current focus: `W3-ADAPTER-09 is now the active lane: Claude Code full fix + live revalidation first, then Cursor follow-up, then sink reconciliation, then workspace-member / userId work`
 
 ## TL;DR
 
@@ -25,6 +25,7 @@ flowchart LR
   AdapterAudit["W3-ADAPTER-05<br/>approved"]
   ClaudeHarden["W3-ADAPTER-06<br/>approved"]
   ClaudeLive["W3-ADAPTER-07<br/>approved"]
+  ClaudeFix["W3-ADAPTER-09<br/>in_progress"]
   Validate["W3-VALIDATE-01<br/>approved"]
   Sink04["W3-SINK-04<br/>needs_codex"]
   Binary["W3-BIN-01<br/>completed"]
@@ -55,7 +56,8 @@ flowchart LR
   Perf2 --> BPPerf
   Perf3 --> Validate
   ClaudeLive --> Validate
-  Validate --> Sink04
+  Validate --> ClaudeFix
+  ClaudeFix --> Sink04
   Perf2 --> Sink04
   Sink04 --> E2E
   Sink04 --> PR
@@ -99,6 +101,7 @@ flowchart LR
 - `W3-ADAPTER-06` — `approved`
 - `W3-ADAPTER-07` — `approved`
 - `W3-ADAPTER-08` — `queued`
+- `W3-ADAPTER-09` — `in_progress`
 - `W3-VALIDATE-01` — `approved`
 - `W3-SINK-04` — `needs_codex`
 - `W3-BIN-01` — `completed`
@@ -142,6 +145,7 @@ flowchart LR
 - `codex-REVIEWER-adapter-memory-contract-audit` (external Codex session id: `019d6b39-5436-78b1-ac8d-36d471e044dd`, tmux session: `jin-review-w3-adapter-05-codex`, log: `.execution/logs/codex-REVIEWER-adapter-memory-contract-audit.jsonl`)
 - `codex-WORKER-claude-code-memory-hardening` (external Codex session id: `019d6b44-f001-7f53-adee-998c44b1c7f4`, tmux session: `jin-w3-adapter-06`, log: `.execution/logs/codex-WORKER-claude-code-memory-hardening.jsonl`)
 - `codex-WORKER-claude-code-live-hardening` (external Codex session id: `019d6f49-1124-77d1-aa81-c141272df282`, tmux session: `jin-w3-adapter-07`, log: `.execution/logs/codex-WORKER-claude-code-live-hardening.jsonl`)
+- `codex-WORKER-claude-code-id-collision` (backing heartbeat: `codex-WORKER-claude-code-id-collision.md`, tmux session: `jin-w3-adapter-09`, log: `.execution/logs/codex-WORKER-claude-code-id-collision.jsonl`)
 - `codex-WORKER-local-binary-smoke` (external Codex session id: `019d6b4a-7423-7380-9116-5cc407ea95f4`, tmux session: `jin-w3-bin`, log: `.execution/logs/codex-WORKER-local-binary-smoke.jsonl`)
 - `codex-WORKER-local-service-rollout` (tmux session: `jin-w3-service`, log: `.execution/logs/codex-WORKER-local-service-rollout.jsonl`)
 - `codex-WORKER-v1-surface-cleanup` (backing heartbeat: `codex-WORKER-v1-surface-cleanup.md`, external Codex session id: `019d702e-c524-78f1-ab5e-b06af95bf512`, tmux session: `jin-w3-cleanup-01`, log: `.execution/logs/codex-WORKER-v1-surface-cleanup.jsonl`)
@@ -168,14 +172,15 @@ flowchart LR
 
 ## Next Dispatches
 
-- reconcile `W3-SINK-04` after the refreshed sink evidence is written down
-- use the approved `W3-CLEANUP-01` cleanup baseline to unblock workspace-member / `userId` follow-up work
-- reconcile `W3-SINK-04` after row counts and `_jin_push_state` success rows are captured
-- open the narrow Claude Code and Cursor follow-up packets from `W3-VALIDATE-01`
-- dispatch `W3-ADAPTER-08` after sink delivery is reconciled if we want the Claude adapter split before functional follow-ups
+- use the approved `W3-CLEANUP-01` cleanup baseline to keep new work off the removed UI / v1 surfaces
+- execute `W3-ADAPTER-09` and rerun live Claude validation first
+- open and execute the Cursor null-bundle / DB-open follow-up second, then rerun live validation
+- reconcile `W3-SINK-04` after the adapter follow-ups unless sink proof is needed sooner for a release decision
+- dispatch `W3-ADAPTER-08` only if the Claude functional fix needs the internal split to stay safe and reviewable
 - review `W3-E2E-01` once runtime is stable again
 - execute `W3-SERVICE-01` follow-up validation once sink delivery and live validation are stable
 - execute `W3-PR-01` from the approved baseline once runtime is stable again
+- start workspace-member / `userId` modeling only after Claude, Cursor, and sink follow-ups are narrowed or closed
 - keep `W3-UI-01` blocked unless we need the original narrow UI-only slice again
 
 ## Blockers
@@ -208,6 +213,7 @@ flowchart LR
 - `W3-PERF-02` is approved; the narrow recheck removed the `JIN_RSS_WARNING_MB` / `JIN_RSS_HARD_LIMIT_MB` passthrough from `watch.ts`, preserved the frozen BP-02 guard, refreshed the audit wording, and reran focused runtime/store tests cleanly
 - `W3-PERF-03` is approved; the narrow recheck now hard-fails when requested adapters disappear, normalizes `highWaterMarkBytes` into byte-valued release artifacts, refreshed the packet-local runbook/audit, and reran focused harness tests plus a wrapper proof run
 - `W3-ADAPTER-07` is approved; the lane fixed Claude default-path precedence, removed the live child-recursion / stack-overflow failure, added focused tests and a packet-local audit, and left the remaining `~812 MB` full-dataset pressure explicitly documented as a separate contract/runtime follow-up
+- `W3-ADAPTER-09` is the active Claude follow-up lane for the remaining live duplicate loaded conversation IDs and `messages.id` collisions surfaced by `W3-VALIDATE-01`; keep it adapter-local unless Codex explicitly decides the structural split in `W3-ADAPTER-08` is required
 - `W3-VALIDATE-01` is approved on `2026-04-08-W3-VALIDATE-01-codex`; the reusable live-data sanity harness now cleanly validates Codex and leaves two narrow follow-ups: Claude Code duplicate IDs / `messages.id` collisions, and Cursor null bundles / DB-open failure
 - `W3-SINK-04` is `needs_codex` after code review: the Bun SQL `sql.begin(...)` transport fix and focused regression coverage are in place, but approval still needs an unrestricted clean-start rerun that records local SQLite counts, local+Railway row counts, and representative `_jin_push_state` success rows
 - repo-wide typecheck still fails in legacy files outside these packet boundaries; later Wave 1 and Wave 2 packets need to absorb that integration debt
