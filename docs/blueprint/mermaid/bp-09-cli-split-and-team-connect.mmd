@@ -1,0 +1,23 @@
+%% Source: docs/blueprint/BP-09-cli-split.md
+%% Diagram: CLI Split and Team Connect Flow
+
+flowchart LR
+    subgraph Developer["Developer namespace: jin"]
+        Local["Local commands<br/>start, stop, status,<br/>conversations, show, search, stats, export"]
+        Connect["jin connect --team=<code>"]
+        Integrations["sink add/remove<br/>sink disable/enable<br/>route add/remove"]
+    end
+
+    subgraph Operator["Operator namespace: jin team"]
+        Bridge["jin team bridge"]
+        Schema["jin team schema apply/check/version"]
+        Future["future workspace commands<br/>team init, team status, ..."]
+    end
+
+    Bridge -->|"share onboarding code"| Connect
+    Schema --> Workspace["existing workspace or Postgres-backed infra"]
+    Connect --> LocalConfig["local config + route created"]
+    LocalConfig --> Flow["data starts flowing"]
+
+    Rule["Single binary, two namespaces"] -. groups .-> Developer
+    Rule -. groups .-> Operator

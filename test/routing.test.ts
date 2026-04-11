@@ -1,232 +1,177 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { matchesRoute, sinksForSession } from "../src/routing";
-import type { Sink } from "../src/sinks/types";
-import type { JinConfig } from "../src/config";
+import { describe, expect, test } from "bun:test";
+import type { RouteConfig } from "../src/config";
+import type { Conversation } from "../src/contracts/conversations";
 import {
-  createTestEnv,
-  makeSession,
-  createFakeSink,
-  SAMPLE_PROJECTS,
-  type TestEnv,
-} from "./helpers";
-import { Store } from "../src/store";
+  matchesRoute,
+  sinkIdsForConversation,
+  sinksForConversation,
+} from "../src/routing";
+import type { Sink } from "../src/sinks/types";
 
-// ── matchesRoute ─────────────────────────────────────────────────────────
+type RoutableConversation = Pick<
+  Conversation,
+  "gitRemote" | "adapterId" | "branch" | "name"
+>;
+
+function makeConversation(
+  overrides: Partial<RoutableConversation> = {},
+): RoutableConversation {
+  return {
+    gitRemote: "github.com/Acme/API.git/",
+    adapterId: "Cursor",
+    branch: "fix/Auth",
+    name: "Fix auth middleware",
+    ...overrides,
+  };
+}
+
+function makeSink(id: string): Sink {
+  return {
+    id,
+    name: id,
+    async push() {
+      return {
+        pushed: 0,
+        failed: 0,
+        errors: [],
+      };
+    },
+    async healthCheck() {
+      return { ok: true };
+    },
+    async close() {},
+  };
+}
+
+const ALL_SINKS = [
+  makeSink("postgres-team"),
+  makeSink("s3-archive"),
+  makeSink("webhook-cursor"),
+];
 
 describe("matchesRoute", () => {
-  const project = {
-    id: "p1",
-    name: "MyApp",
-    directory: "/home/dev/projects/myapp",
-    gitRemote: "https://github.com/org/MyApp.git",
-  };
+  test("matches normalized remote globs case-insensitively", () => {
+    const conversation = makeConversation();
 
-  test("exact project name match (case-insensitive)", () => {
-    expect(matchesRoute({ project: "myapp" }, project)).toBe(true);
-    expect(matchesRoute({ project: "MYAPP" }, project)).toBe(true);
-    expect(matchesRoute({ project: "MyApp" }, project)).toBe(true);
-  });
-
-  test("exact remote match after normalization", () => {
     expect(
-      matchesRoute(
-        { remote: "https://github.com/org/MyApp.git" },
-        project
-      )
+      matchesRoute({ remote: "github.com/acme/*" }, conversation),
+    ).toBe(true);
+    expect(
+      matchesRoute({ remote: "git@github.com:acme/api.git" }, conversation),
     ).toBe(true);
   });
 
-  test("remote .git suffix is stripped for comparison", () => {
-    expect(
-      matchesRoute(
-        { remote: "https://github.com/org/MyApp" },
-        project
-      )
-    ).toBe(true);
+  test("matches adapter globs case-insensitively", () => {
+    const conversation = makeConversation();
+
+    expect(matchesRoute({ adapter: "cursor" }, conversation)).toBe(true);
+    expect(matchesRoute({ adapter: "CURS?R" }, conversation)).toBe(true);
   });
 
-  test("remote trailing slash is stripped", () => {
-    expect(
-      matchesRoute(
-        { remote: "https://github.com/org/MyApp/" },
-        project
-      )
-    ).toBe(true);
+  test("matches branch and name globs case-sensitively", () => {
+    const conversation = makeConversation();
+
+    expect(matchesRoute({ branch: "fix/*" }, conversation)).toBe(true);
+    expect(matchesRoute({ branch: "FIX/*" }, conversation)).toBe(false);
+    expect(matchesRoute({ name: "Fix auth middlewar?" }, conversation)).toBe(
+      true,
+    );
+    expect(matchesRoute({ name: "fix auth *" }, conversation)).toBe(false);
   });
 
-  test("remote match is case-insensitive", () => {
-    expect(
-      matchesRoute(
-        { remote: "HTTPS://GITHUB.COM/ORG/MYAPP.GIT" },
-        project
-      )
-    ).toBe(true);
-  });
+  test("uses AND semantics across every specified field", () => {
+    const conversation = makeConversation({
+      branch: "release/candidate",
+      name: "Release candidate",
+    });
 
-  test("directory match is exact and case-insensitive", () => {
     expect(
       matchesRoute(
-        { directory: "/home/dev/projects/myapp" },
-        project
-      )
+        {
+          remote: "github.com/acme/*",
+          adapter: "cursor",
+          branch: "release/*",
+          name: "Release *",
+        },
+        conversation,
+      ),
     ).toBe(true);
-    expect(
-      matchesRoute(
-        { directory: "/HOME/DEV/PROJECTS/MYAPP" },
-        project
-      )
-    ).toBe(true);
-  });
 
-  test("no match returns false", () => {
-    expect(matchesRoute({ project: "other" }, project)).toBe(false);
     expect(
       matchesRoute(
-        { remote: "https://github.com/org/other" },
-        project
-      )
+        {
+          remote: "github.com/acme/*",
+          branch: "main",
+        },
+        conversation,
+      ),
     ).toBe(false);
-    expect(
-      matchesRoute(
-        { directory: "/home/dev/other" },
-        project
-      )
-    ).toBe(false);
+  });
+
+  test("treats an empty match object as a wildcard route", () => {
+    expect(matchesRoute({}, makeConversation())).toBe(true);
   });
 });
 
-// ── sinksForSession ──────────────────────────────────────────────────────
+describe("routing engine", () => {
+  test("unions sink ids from all matching routes", () => {
+    const conversation = makeConversation();
+    const routes: RouteConfig[] = [
+      {
+        match: { remote: "github.com/acme/*" },
+        sinks: ["s3-archive", "postgres-team"],
+      },
+      {
+        match: { adapter: "cursor" },
+        sinks: ["postgres-team", "webhook-cursor"],
+      },
+      {
+        match: { branch: "release/*" },
+        sinks: ["never-used"],
+      },
+    ];
 
-describe("sinksForSession", () => {
-  let env: TestEnv;
+    expect(sinkIdsForConversation(conversation, routes)).toEqual([
+      "s3-archive",
+      "postgres-team",
+      "webhook-cursor",
+    ]);
 
-  const pgSink: Sink = createFakeSink({ id: "postgres-0", name: "pg" });
-  const whSink: Sink = createFakeSink({ id: "webhook-0", name: "wh" });
-  const allSinks = [pgSink, whSink];
-
-  beforeEach(() => {
-    env = createTestEnv();
-
-    // Seed projects and sessions
-    for (const proj of SAMPLE_PROJECTS) {
-      env.store.upsertProject(proj);
-    }
-
-    // Create sessions and link to projects
-    const s1 = makeSession("s-alpha");
-    env.store.upsertSession(s1);
-    env.store.linkSessionToProject("s-alpha", "proj-alpha-001");
-
-    const s2 = makeSession("s-beta");
-    env.store.upsertSession(s2);
-    env.store.linkSessionToProject("s-beta", "proj-beta-0002");
-
-    const s3 = makeSession("s-unlinked");
-    env.store.upsertSession(s3);
-    // s3 has no project link
-
-    // Worktree sessions linked to alpha-feature project (same remote as alpha)
-    const s4 = makeSession("s-alpha-wt");
-    env.store.upsertSession(s4);
-    env.store.linkSessionToProject("s-alpha-wt", "proj-alpha-wt1");
+    expect(
+      sinksForConversation(conversation, routes, ALL_SINKS).map((sink) => sink.id),
+    ).toEqual(["postgres-team", "s3-archive", "webhook-cursor"]);
   });
 
-  afterEach(() => {
-    env.cleanup();
+  test("returns an empty sink set when no routes match", () => {
+    const conversation = makeConversation();
+    const routes: RouteConfig[] = [
+      { match: { remote: "github.com/acme/other" }, sinks: ["postgres-team"] },
+    ];
+
+    expect(sinkIdsForConversation(conversation, routes)).toEqual([]);
+    expect(sinksForConversation(conversation, routes, ALL_SINKS)).toEqual([]);
   });
 
-  test("returns matching sinks for routed project", () => {
-    const config: JinConfig = {
-      adapters: {},
-      sinks: [],
-      routes: [{ match: { project: "alpha" }, sinks: ["postgres-0"] }],
-      store: { dbPath: "", rawDir: "" },
-      watch: { debounceMs: 200, pollIntervalMs: 30000 },
+  test("returns an empty sink set when no routes are configured", () => {
+    expect(sinkIdsForConversation(makeConversation(), [])).toEqual([]);
+    expect(sinksForConversation(makeConversation(), [], ALL_SINKS)).toEqual([]);
+  });
+
+  test("accepts wider session-shaped callers without a routing bridge", () => {
+    const conversation = {
+      ...makeConversation(),
+      adapterName: "Cursor",
+      sourcePath: "/tmp/conversation.jsonl",
     };
+    const routes: RouteConfig[] = [
+      { match: { remote: "github.com/acme/*" }, sinks: ["postgres-team"] },
+      { match: { adapter: "cursor" }, sinks: ["webhook-cursor"] },
+    ];
 
-    const session = makeSession("s-alpha");
-    const result = sinksForSession(session, env.store, config, allSinks);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("postgres-0");
-  });
-
-  test("returns empty array when no routes match", () => {
-    const config: JinConfig = {
-      adapters: {},
-      sinks: [],
-      routes: [{ match: { project: "nonexistent" }, sinks: ["postgres-0"] }],
-      store: { dbPath: "", rawDir: "" },
-      watch: { debounceMs: 200, pollIntervalMs: 30000 },
-    };
-
-    const session = makeSession("s-alpha");
-    const result = sinksForSession(session, env.store, config, allSinks);
-    expect(result).toHaveLength(0);
-  });
-
-  test("returns all sinks when routeUnmatchedToAll is true", () => {
-    const config: JinConfig = {
-      adapters: {},
-      sinks: [],
-      routeUnmatchedToAll: true,
-      store: { dbPath: "", rawDir: "" },
-      watch: { debounceMs: 200, pollIntervalMs: 30000 },
-    };
-
-    const session = makeSession("s-unlinked");
-    const result = sinksForSession(session, env.store, config, allSinks);
-    expect(result).toHaveLength(2);
-  });
-
-  test("returns defaultSinks for unmatched sessions", () => {
-    const config: JinConfig = {
-      adapters: {},
-      sinks: [],
-      routes: [{ match: { project: "nonexistent" }, sinks: ["postgres-0"] }],
-      defaultSinks: ["webhook-0"],
-      store: { dbPath: "", rawDir: "" },
-      watch: { debounceMs: 200, pollIntervalMs: 30000 },
-    };
-
-    const session = makeSession("s-alpha");
-    const result = sinksForSession(session, env.store, config, allSinks);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("webhook-0");
-  });
-
-  test("worktree scenario: same remote, different project names — all match one remote route", () => {
-    // Route by remote URL — should match both alpha and alpha-feature
-    const config: JinConfig = {
-      adapters: {},
-      sinks: [],
-      routes: [
-        {
-          match: { remote: "https://github.com/org/alpha.git" },
-          sinks: ["postgres-0"],
-        },
-      ],
-      store: { dbPath: "", rawDir: "" },
-      watch: { debounceMs: 200, pollIntervalMs: 30000 },
-    };
-
-    // Alpha project session
-    const alphaResult = sinksForSession(
-      makeSession("s-alpha"),
-      env.store,
-      config,
-      allSinks
-    );
-    expect(alphaResult).toHaveLength(1);
-    expect(alphaResult[0].id).toBe("postgres-0");
-
-    // Alpha worktree session (same remote, different project name)
-    const wtResult = sinksForSession(
-      makeSession("s-alpha-wt"),
-      env.store,
-      config,
-      allSinks
-    );
-    expect(wtResult).toHaveLength(1);
-    expect(wtResult[0].id).toBe("postgres-0");
+    expect(
+      sinksForConversation(conversation, routes, ALL_SINKS).map(
+        (sink) => sink.id,
+      ),
+    ).toEqual(["postgres-team", "webhook-cursor"]);
   });
 });

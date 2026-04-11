@@ -1,170 +1,138 @@
-import { loadConfig } from "../config";
-import { Store } from "../store";
-import { resolveSinksForCwd, findSinkById, allPostgresSinks } from "../sink-resolver";
-import { PostgresSearcher } from "../sinks/postgres-search";
-import type { RemoteSession, RemoteMessage } from "../sinks/postgres-search";
+import { configDir } from "../config";
+import {
+  buildConversationTree,
+  findConversationMatches,
+  getTraceConversations,
+  type ConversationTreeNode,
+} from "../db/query-surface";
+import { getStore } from "../db/store";
+import type { Conversation, Message } from "../contracts/conversations";
 
 export async function showCommand(
-  sessionId: string,
-  opts: { json?: boolean; markdown?: boolean; sink?: string; allSinks?: boolean }
+  conversationId: string,
+  opts: {
+    json?: boolean;
+    markdown?: boolean;
+    trace?: boolean;
+    tree?: boolean;
+    sink?: string;
+    allSinks?: boolean;
+  },
 ): Promise<void> {
-  const config = await loadConfig();
-  const store = new Store(config.store.dbPath);
+  const store = getStore(configDir());
+  const matches = findConversationMatches(store.database, conversationId, 10);
+  const exactMatch = matches.find((match) => match.id === conversationId) ?? null;
+  const conversation = exactMatch ?? (matches.length === 1 ? matches[0] : null);
 
-  // Try local first
-  const session = store.getSession(sessionId);
-  if (session) {
-    return showLocalSession(session.id, store, opts);
-  }
-
-  // Try partial match locally
-  const all = store.listSessions({ limit: 1000 });
-  const match = all.find((s) => s.id.startsWith(sessionId));
-  if (match) {
-    return showLocalSession(match.id, store, opts);
-  }
-
-  store.close();
-
-  // Not found locally — try Postgres sinks
-  let sinks;
-  if (opts.sink) {
-    const resolved = findSinkById(opts.sink, config);
-    sinks = resolved ? [resolved] : [];
-  } else if (opts.allSinks) {
-    sinks = allPostgresSinks(config);
-  } else {
-    sinks = resolveSinksForCwd(process.cwd(), config);
-    // If no route match, try all sinks as fallback for show
-    if (sinks.length === 0) {
-      sinks = allPostgresSinks(config);
-    }
-  }
-
-  for (const sink of sinks) {
-    const searcher = new PostgresSearcher({
-      connectionString: sink.sinkConfig.connectionString!,
-      schema: sink.sinkConfig.schema,
-      table: sink.sinkConfig.table,
-    });
-
-    try {
-      const remoteSession = await searcher.getSession(sessionId);
-      if (remoteSession) {
-        const messages = await searcher.getMessages(remoteSession.id);
-        await searcher.close();
-        showRemoteSession(remoteSession, messages, sink.sinkName, opts);
-        return;
+  if (!conversation) {
+    if (matches.length > 1) {
+      console.error(`Conversation id is ambiguous: ${conversationId}`);
+      console.error("  Matches:");
+      for (const match of matches) {
+        console.error(`  - ${match.id} (${match.adapterId}) ${match.name}`);
       }
-    } catch {
-      // Try next sink
-    } finally {
-      await searcher.close();
+    } else {
+      console.error(`Conversation not found: ${conversationId}`);
     }
+    process.exit(1);
   }
 
-  console.error(`Session not found: ${sessionId}`);
-  if (sinks.length > 0) {
-    console.error(`  Searched ${sinks.length} Postgres sink(s)`);
-  } else {
-    console.error(`  No Postgres sinks configured. Try: --sink=<id> or --all-sinks`);
+  if (opts.tree) {
+    return showConversationTree(store, conversation, opts);
   }
-  process.exit(1);
-}
 
-function showLocalSession(
-  sessionId: string,
-  store: Store,
-  opts: { json?: boolean; markdown?: boolean }
-): void {
-  const session = store.getSession(sessionId)!;
-  const messages = store.getMessages(sessionId);
+  if (opts.trace) {
+    return showConversationTrace(store, conversation, opts);
+  }
 
+  const messages = store.getMessages(conversation.id);
   if (opts.json) {
-    console.log(JSON.stringify({ session, messages }, null, 2));
-  } else {
-    printSession({
-      name: session.name,
-      adapterName: session.adapterName,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
-      messageCount: session.messageCount,
-      totalTokens: session.totalTokens,
-      estCost: session.estCost,
-    }, messages.map((m) => ({
-      role: m.role,
-      timestamp: m.timestamp,
-      model: m.model,
-      content: m.content,
-      toolUses: m.toolUses,
-      thinkingBlocks: m.thinkingBlocks,
-    })));
-  }
-
-  store.close();
-}
-
-function showRemoteSession(
-  session: RemoteSession,
-  messages: RemoteMessage[],
-  sinkName: string,
-  opts: { json?: boolean; markdown?: boolean }
-): void {
-  if (opts.json) {
-    console.log(JSON.stringify({ session, messages, sink: sinkName }, null, 2));
+    console.log(JSON.stringify({
+      view: "conversation",
+      conversation,
+      messages,
+    }, null, 2));
     return;
   }
 
-  console.log(`\x1b[2m  (from ${sinkName})\x1b[0m\n`);
-  printSession({
-    name: session.name,
-    adapterName: session.adapterName,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    messageCount: session.messageCount,
-    totalTokens: session.totalTokens,
-    estCost: session.estCost,
-    developerId: session.developerId,
-  }, messages.map((m) => ({
-    role: m.role,
-    timestamp: m.timestamp,
-    model: m.model,
-    content: m.content,
-    toolUses: m.toolUses,
-    thinkingBlocks: m.thinkingBlocks,
-  })));
+  printConversation(conversation, messages);
 }
 
-function printSession(
-  session: {
-    name: string;
-    adapterName: string;
-    createdAt: string;
-    updatedAt: string;
-    messageCount: number;
-    totalTokens: number;
-    estCost: number;
-    developerId?: string;
-  },
-  messages: Array<{
-    role: string;
-    timestamp: string;
-    model: string;
-    content: string;
-    toolUses: any[];
-    thinkingBlocks: any[];
-  }>
+function showConversationTrace(
+  store: ReturnType<typeof getStore>,
+  conversation: Conversation,
+  opts: { json?: boolean; markdown?: boolean },
 ): void {
-  console.log(`# Session: ${session.name}\n`);
-  console.log(`**Adapter**: ${session.adapterName}`);
-  if (session.developerId) {
-    console.log(`**Developer**: ${session.developerId}`);
+  const conversations = getTraceConversations(store.database, conversation.traceId);
+  const tree = buildConversationTree(conversations);
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      view: "trace",
+      traceId: conversation.traceId,
+      rootId: tree?.conversation.id ?? conversation.traceId,
+      conversations: conversations.map((entry) => ({
+        conversation: entry,
+        messages: store.getMessages(entry.id),
+      })),
+      tree,
+    }, null, 2));
+    return;
   }
-  console.log(`**Created**: ${session.createdAt}`);
-  console.log(`**Updated**: ${session.updatedAt}`);
-  console.log(`**Messages**: ${session.messageCount}`);
-  console.log(`**Tokens**: ${session.totalTokens}`);
-  console.log(`**Est. Cost**: $${session.estCost.toFixed(4)}`);
+
+  console.log(`# Trace: ${conversation.traceId}\n`);
+  if (!tree) {
+    printConversation(conversation, store.getMessages(conversation.id));
+    return;
+  }
+
+  renderTraceNode(store, tree, 0, new Set<string>());
+}
+
+function showConversationTree(
+  store: ReturnType<typeof getStore>,
+  conversation: Conversation,
+  opts: { json?: boolean; markdown?: boolean },
+): void {
+  const conversations = getTraceConversations(store.database, conversation.traceId);
+  const tree = buildConversationTree(conversations);
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      view: "tree",
+      traceId: conversation.traceId,
+      tree,
+    }, null, 2));
+    return;
+  }
+
+  console.log(`# Conversation Tree: ${conversation.traceId}\n`);
+  if (!tree) {
+    console.log("(empty)");
+    return;
+  }
+
+  printTreeRoot(tree);
+}
+
+function printConversation(
+  conversation: Conversation,
+  messages: Message[],
+): void {
+  console.log(`# Conversation: ${conversation.name}\n`);
+  console.log(`**ID**: ${conversation.id}`);
+  console.log(`**Trace**: ${conversation.traceId}`);
+  console.log(`**Relationship**: ${conversation.relationship}`);
+  if (conversation.parentId) {
+    console.log(`**Parent**: ${conversation.parentId}`);
+  }
+  console.log(`**Adapter**: ${conversation.adapterId}`);
+  console.log(`**Started**: ${conversation.startedAt}`);
+  console.log(`**Ended**: ${conversation.endedAt}`);
+  console.log(`**Messages**: ${conversation.messageCount}`);
+  console.log(`**Tools**: ${conversation.toolCount}`);
+  console.log(`**Tokens**: ${conversation.inputTokens + conversation.outputTokens}`);
+  console.log(`**Est. Cost**: $${conversation.estCost.toFixed(4)}`);
   console.log(`\n---\n`);
 
   for (const msg of messages) {
@@ -176,12 +144,10 @@ function printSession(
 
     console.log(`${header}\n`);
 
-    if (msg.thinkingBlocks.length > 0) {
-      for (const tb of msg.thinkingBlocks) {
-        console.log(`<details>\n<summary>Thinking (${tb.tokenCount} tokens)</summary>\n`);
-        console.log(tb.content);
-        console.log(`\n</details>\n`);
-      }
+    if (msg.thinkingContent) {
+      console.log(`<details>\n<summary>Thinking (${msg.thinkingTokens} tokens)</summary>\n`);
+      console.log(msg.thinkingContent);
+      console.log(`\n</details>\n`);
     }
 
     console.log(msg.content);
@@ -195,4 +161,138 @@ function printSession(
 
     console.log(`\n---\n`);
   }
+}
+
+function renderTraceNode(
+  store: ReturnType<typeof getStore>,
+  node: ConversationTreeNode,
+  depth: number,
+  renderedCompactions: Set<string>,
+): void {
+  const indent = "  ".repeat(depth);
+  if (renderedCompactions.has(node.conversation.id)) {
+    return;
+  }
+
+  renderedCompactions.add(node.conversation.id);
+
+  const compactedChildren = node.children.filter(
+    (child) => child.conversation.relationship === "compacted",
+  );
+  const spawnedChildren = node.children.filter(
+    (child) => child.conversation.relationship !== "compacted",
+  );
+  const messages = store.getMessages(node.conversation.id);
+
+  console.log(`${indent}## ${node.conversation.name || node.conversation.id}`);
+  console.log(`${indent}- id: ${node.conversation.id}`);
+  console.log(`${indent}- relationship: ${node.conversation.relationship}`);
+  if (node.conversation.parentId) {
+    console.log(`${indent}- parent: ${node.conversation.parentId}`);
+  }
+  console.log("");
+
+  const emittedChildren = new Set<string>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    printIndentedMessage(indent, message);
+
+    const currentTurn = message.turn;
+    const nextTurn = messages[index + 1]?.turn;
+    if (nextTurn !== currentTurn) {
+      for (const child of spawnedChildren) {
+        if (emittedChildren.has(child.conversation.id)) {
+          continue;
+        }
+
+        if (child.conversation.forkPoint === currentTurn) {
+          console.log(`${indent}> Spawned at turn ${currentTurn}`);
+          renderTraceNode(store, child, depth + 1, renderedCompactions);
+          emittedChildren.add(child.conversation.id);
+        }
+      }
+    }
+  }
+
+  for (const child of spawnedChildren) {
+    if (emittedChildren.has(child.conversation.id)) {
+      continue;
+    }
+
+    console.log(
+      `${indent}> ${child.conversation.relationship} conversation` +
+        (child.conversation.forkPoint >= 0
+          ? ` (turn ${child.conversation.forkPoint})`
+          : ""),
+    );
+    renderTraceNode(store, child, depth + 1, renderedCompactions);
+  }
+
+  for (const compactedChild of compactedChildren) {
+    console.log(`${indent}--- compacted continuation ---\n`);
+    renderTraceNode(store, compactedChild, depth, renderedCompactions);
+  }
+}
+
+function printIndentedMessage(indent: string, message: Message): void {
+  const time = message.timestamp ? message.timestamp.slice(11, 19) : "";
+  const roleLabel =
+    message.role === "user"
+      ? "User"
+      : message.role === "assistant"
+        ? "Assistant"
+        : "System";
+
+  console.log(
+    `${indent}${roleLabel} (${time})` +
+      (message.model ? ` — ${message.model}` : ""),
+  );
+  if (message.thinkingContent) {
+    console.log(
+      `${indent}  [thinking: ${message.thinkingTokens} tokens]`,
+    );
+  }
+  console.log(`${indent}  ${message.content}`);
+  if (message.toolUses.length > 0) {
+    console.log(
+      `${indent}  tools: ${message.toolUses.map((tool) => tool.name).join(", ")}`,
+    );
+  }
+  console.log("");
+}
+
+function printTreeRoot(node: ConversationTreeNode): void {
+  const forkSuffix =
+    node.conversation.forkPoint >= 0
+      ? ` @ turn ${node.conversation.forkPoint}`
+      : "";
+  console.log(
+    `${node.conversation.id} ` +
+      `[${node.conversation.relationship}${forkSuffix}] ${node.conversation.name}`,
+  );
+
+  node.children.forEach((child, index) => {
+    printTreeNode(child, "", index === node.children.length - 1);
+  });
+}
+
+function printTreeNode(
+  node: ConversationTreeNode,
+  prefix: string,
+  isLast: boolean,
+): void {
+  const connector = isLast ? "\\- " : "|- ";
+  const forkSuffix =
+    node.conversation.forkPoint >= 0
+      ? ` @ turn ${node.conversation.forkPoint}`
+      : "";
+  console.log(
+    `${prefix}${connector}${node.conversation.id} ` +
+      `[${node.conversation.relationship}${forkSuffix}] ${node.conversation.name}`,
+  );
+
+  const childPrefix = prefix + (isLast ? "   " : "|  ");
+  node.children.forEach((child, index) => {
+    printTreeNode(child, childPrefix, index === node.children.length - 1);
+  });
 }

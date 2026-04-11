@@ -1,0 +1,39 @@
+%% Source: docs/blueprint/BP-02-data-flow.md
+%% Diagram: Pipeline Loop
+
+sequenceDiagram
+    participant Watcher as File watcher
+    participant Timer as Periodic timer
+    participant Coordinator as pipeline/loop.ts
+    participant Adapter
+    participant Store as SQLite store
+    participant Routing
+    participant Sink
+
+    Watcher->>Coordinator: fs-change event
+    Timer->>Coordinator: periodic scan
+    Coordinator->>Coordinator: drain one serial ingest queue
+    Coordinator->>Adapter: findChanged(hint)
+    Adapter-->>Coordinator: ConversationRef[]
+
+    loop each changed ref
+        Coordinator->>Adapter: loadConversation(ref)
+        Adapter-->>Coordinator: ConversationBundle | null
+        Coordinator->>Store: writeBundle(bundle)
+        Store-->>Coordinator: { changed, revision }
+    end
+
+    Coordinator->>Coordinator: enqueue one push if any bundle changed
+    Coordinator->>Store: conversationsNeedingPush(sinkId)
+    Store-->>Coordinator: dirty conversation IDs
+
+    loop each dirty conversation
+        Coordinator->>Store: getConversation(id)
+        Coordinator->>Store: getMessages(id)
+        Coordinator->>Store: getToolCalls(id)
+        Coordinator->>Routing: route(conversation, routes, sinks)
+        Routing-->>Coordinator: matching sinks
+        Coordinator->>Sink: push({ attemptedRevision, conversation, messages, toolCalls })
+        Sink-->>Coordinator: PushResult
+        Coordinator->>Store: recordPushResult(...)
+    end

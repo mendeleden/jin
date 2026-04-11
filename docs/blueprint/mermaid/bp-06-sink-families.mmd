@@ -1,0 +1,17 @@
+%% Source: docs/blueprint/BP-06-sink-contract.md
+%% Diagram: Sink Families
+
+flowchart TD
+    Pipeline["Pipeline push phase"] --> Sink["Sink interface<br/>push(payloads)<br/>healthCheck()<br/>close()"]
+
+    Sink --> Table["Table sinks<br/>Postgres<br/>pre-provisioned schema<br/>jin_meta version handshake<br/>row upserts"]
+    Sink --> Object["Object sinks<br/>S3 / R2 / MinIO<br/>one JSON object per conversation<br/>overwrite same key"]
+    Sink --> Delivery["Delivery sinks<br/>Webhook<br/>HTTP POST batch<br/>idempotencyKey = conversation.id:r&lt;revision&gt;"]
+
+    NoProv["No privileged remote provisioning<br/>daemon does not create tables, buckets, or endpoints"]
+    NoProv -. applies to .-> Table
+    NoProv -. applies to .-> Object
+    NoProv -. applies to .-> Delivery
+
+    Team["Jin Team is a separate product boundary,<br/>not a sink family in BP-06"]
+    Team -. excluded from .-> Sink

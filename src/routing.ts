@@ -1,60 +1,115 @@
-import type { JinConfig, RouteMatch } from "./config";
+import type { RouteConfig, RouteMatch } from "./config";
 import type { Sink } from "./sinks/types";
-import type { Session } from "./adapters/types";
-import type { Store } from "./store";
 
-export interface ProjectInfo {
-  id: string;
-  name: string;
-  directory?: string;
+export interface RoutableConversation {
   gitRemote?: string;
+  adapterId?: string;
+  branch?: string;
+  name?: string;
 }
 
-export function sinksForSession(
-  session: Session,
-  store: Store,
-  config: JinConfig,
-  allSinks: Sink[],
-): Sink[] {
-  // Explicit company opt-in: push everything everywhere
-  if (config.routeUnmatchedToAll) return allSinks;
+export function sinkIdsForConversation(
+  conversation: RoutableConversation,
+  routes: ReadonlyArray<RouteConfig>,
+): string[] {
+  if (routes.length === 0) {
+    return [];
+  }
 
-  // No routes configured = nothing gets pushed (opt-in only)
-  if (!config.routes?.length) return [];
+  const sinkIds: string[] = [];
+  const seen = new Set<string>();
 
-  // Check routes — first match wins
-  const projects = store.getSessionProjects(session.id);
-  for (const route of config.routes) {
-    for (const project of projects) {
-      if (matchesRoute(route.match, project)) {
-        return allSinks.filter((s) => route.sinks.includes(s.id));
+  for (const route of routes) {
+    if (!matchesRoute(route.match, conversation)) {
+      continue;
+    }
+
+    for (const sinkId of route.sinks) {
+      if (seen.has(sinkId)) {
+        continue;
       }
+
+      seen.add(sinkId);
+      sinkIds.push(sinkId);
     }
   }
 
-  // No route matched — use defaultSinks or don't push
-  const defaults = config.defaultSinks || [];
-  if (defaults.length === 0) return [];
-  return allSinks.filter((s) => defaults.includes(s.id));
+  return sinkIds;
 }
 
-export function matchesRoute(match: RouteMatch, project: ProjectInfo): boolean {
-  if (match.project) {
-    if (project.name.toLowerCase() === match.project.toLowerCase()) return true;
+export function sinksForConversation(
+  conversation: RoutableConversation,
+  routes: ReadonlyArray<RouteConfig>,
+  allSinks: ReadonlyArray<Sink>,
+): Sink[] {
+  const sinkIds = new Set(sinkIdsForConversation(conversation, routes));
+  if (sinkIds.size === 0) {
+    return [];
   }
-  if (match.remote && project.gitRemote) {
-    if (normalizeRemote(match.remote) === normalizeRemote(project.gitRemote)) return true;
-  }
-  if (match.directory && project.directory) {
-    if (project.directory.toLowerCase() === match.directory.toLowerCase()) return true;
-  }
-  return false;
+
+  return allSinks.filter((sink) => sinkIds.has(sink.id));
 }
 
-/** Normalize a git remote URL for comparison: lowercase, strip .git suffix and trailing slashes */
-function normalizeRemote(remote: string): string {
+export function matchesRoute(
+  match: RouteMatch,
+  conversation: RoutableConversation,
+): boolean {
+  return (
+    matchesGlob(match.remote, conversation.gitRemote, normalizeRemote) &&
+    matchesGlob(match.adapter, conversation.adapterId, normalizeAdapterId) &&
+    matchesGlob(match.branch, conversation.branch) &&
+    matchesGlob(match.name, conversation.name)
+  );
+}
+
+export function normalizeRemote(remote: string): string {
   return remote
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
+    .replace(/^[^@]+@([^:]+):/u, "$1/")
+    .replace(/^[^/]+@(?=[^/]+\/)/u, "")
     .toLowerCase()
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "");
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/u, "")
+    .replace(/\/+$/u, "");
+}
+
+export function normalizeAdapterId(adapterId: string): string {
+  return adapterId.trim().toLowerCase();
+}
+
+function matchesGlob(
+  pattern: string | undefined,
+  value: string | undefined,
+  normalize: (value: string) => string = identity,
+): boolean {
+  if (pattern === undefined) {
+    return true;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const expression = globToRegExp(normalize(pattern));
+  return expression.test(normalize(value));
+}
+
+function globToRegExp(pattern: string): RegExp {
+  const source = [...pattern]
+    .map((character) => {
+      if (character === "*") {
+        return ".*";
+      }
+      if (character === "?") {
+        return ".";
+      }
+      return character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    })
+    .join("");
+
+  return new RegExp(`^${source}$`, "u");
+}
+
+function identity(value: string): string {
+  return value;
 }

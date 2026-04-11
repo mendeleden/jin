@@ -1,0 +1,47 @@
+# Blueprint Scoreboard
+
+- `BP-01`: `mostly_aligned`
+  - active packet: `W3-MODULE-01`, `W3-BP-01`
+  - last review: `2026-04-08-W3-BP-01-codex`, `2026-04-04-W3-MODULE-01-cursor`
+  - blocker: none — `W3-BP-01` now makes the cheap `detect()` versus expensive startup discovery split explicit, so rich-adapter startup work points at BP-02/BP-04/BP-10 instead of config; the remaining `src/pipeline/file-watcher.ts` versus `src/pipeline/watcher.ts` wording drift stays informational
+- `BP-02`: `mostly_aligned`
+  - active packet: `W3-PERF-01`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-BP-01`, `W3-PERF-02`, `W3-PERF-03`, `W3-VALIDATE-01`
+  - last review: `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-PERF-03-codex`, `2026-04-08-W3-PERF-02-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-PERF-01-codex-recheck`, `2026-04-08-W3-ADAPTER-06-codex`
+  - blocker: none — `W3-ADAPTER-10` closes the remaining live Cursor null-bundle / content-addressed layer3 collision gap with adapter-local pointer-root decoding, tool-result stitching, and conversation-scoped layer3 IDs, while `W3-VALIDATE-01` continues to provide the disposable-store reconciliation harness that exposes adapter drift before local dogfood. Informationally, `report.summary.verdict` remains an execution verdict while BP-10 owns release-gate policy.
+- `BP-03`: `frozen`
+  - active packet: `W2-CMD-01`, `W3-SCALE-01`
+  - last review: `2026-04-02-W2-CMD-01-cursor`, `2026-04-08-W3-SCALE-01-codex`
+  - blocker: none — all three views (single, trace, tree) remain verified in the read-only command surface, and `W3-SCALE-01` adds deterministic manifest-backed rich-adapter datasets that preserve root/compacted/spawned topology for future perf validation without reopening the frozen conversation model (`test/perf-datasets/README.md:64-80`, `test/perf-datasets/scale-datasets.test.ts:42-82`)
+- `BP-04`: `mostly_aligned`
+  - active packet: `W3-ADAPTER-05`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-ADAPTER-11`, `W3-ADAPTER-12`, `W3-SCALE-01`, `W3-BP-01`, `W3-VALIDATE-01`
+  - last review: `2026-04-10-W3-ADAPTER-12-codex`, `2026-04-09-W3-ADAPTER-11-codex`, `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-ADAPTER-06-codex`, `2026-04-08-W3-SCALE-01-codex`
+  - blocker: none — the `2026-04-10-W3-ADAPTER-12-codex` re-review confirms exact-`toolCallId`-first Cursor Layer 3 stitching in both inline and cross-message paths, Layer 1 `workspaceUris` / thinking extraction staying inside the existing parsed adapter fields, and leading-prelude-only fallback naming backed by `12/12` focused tests plus live probes (`96` refs, `58` repeated same-name Layer 3 tools with `0` empty outputs, `15` Layer 1 conversations with `cwd`, `140` messages with `thinkingContent`). The remaining control-plane stale state is operational drift for Codex to reconcile, not a BP-04 blocker.
+- `BP-05`: `mostly_aligned`
+  - active packet: `W3-RUNTIME-01`, `W3-V2-01`, `W3-RECOVERY-01`, `W3-VALIDATE-01`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-ADAPTER-11`, `W3-SINK-04`
+  - last review: `2026-04-09-W3-ADAPTER-11-codex`, `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-07-W3-RUNTIME-01-codex-recheck`, `2026-04-07-W3-V2-01-codex-recheck`, `2026-04-07-W3-RECOVERY-01-codex`
+  - blocker: pending live reconciliation follow-up — `W3-ADAPTER-10` removes the remaining Cursor null-bundle / `messages.id` collision blocker from the disposable-store path, `W3-ADAPTER-11` aligns top-line Claude/query token totals with billed cost while exposing display/cache breakdowns explicitly, and the next live reconciliation gate remains sink proof in `W3-SINK-04`; `BP-05` also retains the explicit `src/tui/app.tsx` `LegacyStore` defer and broader non-packet `src/store.ts` spread from prior audits
+- `BP-06`: `mostly_aligned`
+  - active packet: `W2-SINK-02`, `W2-SINK-03`
+  - last review: `2026-04-04-W2-SINK-02-cursor-recheck`
+  - blocker: none — Postgres reference sink handshake misclassification bug is fixed (permission/auth failures on `jin_meta` now surface the real error; regression test at `test/postgres-reference-sink.test.ts`:77-96); informational drift remains on DELETE+INSERT message writes, missing minor-version warning, and the legacy dual-interface bridge
+- `BP-07`: `mostly_aligned`
+  - active packet: `W2-DAEMON-02`, `W3-PRODUCT-01`, `W3-STARTUP-01`, `W3-V2-01`, `W3-PERF-01`, `W3-PERF-02`, `W3-RECOVERY-01`
+  - last review: `2026-04-08-W3-PERF-02-codex`, `2026-04-08-W3-PERF-01-codex-recheck`, `2026-04-07-W3-V2-01-codex-recheck`, `2026-04-07-W3-RECOVERY-01-codex`
+  - blocker: none — `W3-V2-01` recheck confirms the release-prep sequence still centers `jin start` / `jin status`, keeps binary smoke distinct from service install, and does not overclaim beyond the current daemon-first surface; `W3-PERF-01` proved the representative local Codex ingest path stays below the RSS guard, and `W3-PERF-02` extends that evidence to the real long-lived runtime path by showing bounded shutdown now times out after the normal `15s` drain budget instead of failing because `shutdown-flush` hit the RSS hard limit; `W3-RECOVERY-01` keeps poisoned-store startup and one-shot ingest failures on that same lifecycle path by printing explicit reset guidance instead of raw SQLite errors; the remaining `jin init` first-run gap is still the explicit compatibility defer from `W3-PRODUCT-01`
+- `BP-08`: `mostly_aligned`
+  - active packet: `W2-CONFIG-02`, `W2-PIPE-02`, `W3-PRODUCT-01`, `W3-STARTUP-01`
+  - last review: `2026-04-06-W3-STARTUP-01-codex`
+  - blocker: none — `W3-STARTUP-01` keeps protected-source opt-in inside the existing config shim (`allowProtectedSource` / `dataDir`) and startup snapshot flow without reopening frozen contracts; the remaining compatibility surfaces are still the explicit `team-config` / API shims already tracked below, not new packet blockers
+  - surface drift (AUDIT 2026-04-05, W3-PRODUCT-01 scope): `team-config` still encodes a flat pre-union sink payload (`src/commands/team-config.ts`), and `src/api/routes.ts` still carries broader session-like response shims (`sessions` aliases, duplicate field spellings, `tags` / `artifacts` stubs) under the explicit compatibility defer
+- `BP-09`: `aligned`
+  - active packet: `W3-TEAM-01`, `W3-V2-01`
+  - last review: `2026-04-07-W3-V2-01-codex-recheck`
+  - blocker: none — `W3-V2-01` recheck confirms operator actions stay under `jin team schema` / `jin team bridge`, developers still onboard with `jin connect --team=<code>`, and the live `jin team help` / `jin team schema` output still reflects that split
+- `BP-10`: `aligned`
+  - active packet: `W3-BP-01`, `W3-VALIDATE-01`, `W3-ADAPTER-10`
+  - last review: `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-BP-01-codex`
+  - blocker: none — `W3-BP-01` defines the release-validation contract, `W3-VALIDATE-01` contributes the rerunnable live adapter reconciliation harness, and `W3-ADAPTER-10` now closes the last Cursor adapter follow-up with a clean `96`-ref Cursor-only rerun (`96` bundles, `0` null bundles, `0` write errors) without reopening BP-03 ontology or BP-02/BP-04/BP-05 frozen semantics
+- `BP-Product`: `aligned`
+  - active packet: `W3-PRODUCT-01`
+  - last review: `2026-04-04-W3-PRODUCT-01-claude`
+  - blocker: none — the command/help/API surface now reads daemon-first and local-first, keeps workspace onboarding separate from low-level integration wiring, and leaves generic integrations available without making them the product story; retained legacy bridges are explicitly demoted as compatibility-only

@@ -1,0 +1,22 @@
+%% Source: docs/blueprint/BP-07-process-lifecycle.md
+%% Diagram: Runtime Ownership and Startup
+
+flowchart TD
+    Foreground["jin start --foreground"] --> Check
+    Daemon["jin start"] --> Check
+    Service["OS service launch"] --> Check
+
+    Check{"existing long-lived owner?"}
+    Check -->|service active| ServiceOwned["surface service-owned runtime<br/>do not spawn another daemon"]
+    Check -->|daemon or foreground active| AlreadyRunning["surface already-running owner"]
+    Check -->|none| Acquire["acquire runtime ownership<br/>lock + PID/state metadata"]
+
+    Acquire --> Store["open store + run SQLite migrations"]
+    Store --> Config["load config snapshot for this run"]
+    Config --> Build["detect adapters + create sinks"]
+    Build --> Boundary["start local control/status boundary"]
+    Boundary --> Coordinator["start pipeline coordinator"]
+    Coordinator --> Running["runtime running"]
+
+    Desktop["Desktop"] -. uses stable daemon boundary .-> Boundary
+    Query["read-only commands"] -. may open store directly without daemon .-> Store

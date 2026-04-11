@@ -22,11 +22,34 @@ function parseFlags(args: string[]): Record<string, string | boolean> {
   return flags;
 }
 
+function parseIntFlag(value: string | boolean | undefined): number | undefined {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined;
+  }
+  return parseInt(value);
+}
+
+function parseBooleanFlag(value: string | boolean | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === "false") {
+    return false;
+  }
+  if (value === "true") {
+    return true;
+  }
+  return true;
+}
+
 const flags = parseFlags(args.slice(1));
 
 const COMMAND_HELP: Record<string, string> = {
   search: `
-  Full-text search across team conversations
+  Search local conversation content
 
   USAGE
     jin search "query" [flags]
@@ -36,21 +59,17 @@ const COMMAND_HELP: Record<string, string> = {
     --since=<duration> Only search recent conversations (e.g. 7d, 24h, 2w)
     --limit=<n>        Max results (default: 20)
     --json             Output as JSON
-    --local            Search local SQLite (FTS5) instead of Postgres
-    --sink=<id>        Search a specific Postgres sink by ID
-    --all-sinks        Search all configured Postgres sinks
 
   EXAMPLES
     $ jin search "authentication flow"
-    $ jin search "N+1 query" --all-sinks --limit=5
     $ jin search "migration" --adapter=claude-code --since=30d
-    $ jin search "deploy" --local --json
+    $ jin search "deploy" --json
 `,
-  sessions: `
-  List recent sessions across all tools
+  conversations: `
+  List recent local conversations
 
   USAGE
-    jin sessions [flags]
+    jin conversations [flags]
 
   FLAGS
     --adapter=<id>     Filter by adapter (e.g. claude-code, codex)
@@ -59,64 +78,86 @@ const COMMAND_HELP: Record<string, string> = {
     --json             Output as JSON
 
   EXAMPLES
-    $ jin sessions --since=7d
-    $ jin sessions --adapter=claude-code --json
+    $ jin conversations --since=7d
 `,
   show: `
-  Show session messages (local or remote)
-
-  Checks local SQLite first. If not found, searches configured Postgres
-  sinks automatically. Supports prefix matching on session IDs.
+  Show one local conversation, full trace, or conversation tree
 
   USAGE
-    jin show <session-id> [flags]
+    jin show <conversation-id> [flags]
 
   FLAGS
+    --trace            Show the full trace containing this conversation
+    --tree             Show the trace tree rooted at this conversation
     --json             Output as JSON
-    --sink=<id>        Look in a specific Postgres sink
-    --all-sinks        Search all configured Postgres sinks
 
   EXAMPLES
     $ jin show abc12345
+    $ jin show abc12345 --trace
+    $ jin show abc12345 --tree
     $ jin show abc12345 --json
-    $ jin show abc12345 --sink=postgres-1
 `,
   stats: `
-  Token and cost analysis by adapter and model
+  Token and cost analysis by harness and model
 
   USAGE
     jin stats [flags]
 
   FLAGS
-    --adapter=<id>     Filter by adapter
+    --harness=<id>     Filter by harness
+    --adapter=<id>     Compatibility alias for --harness
     --since=<duration> Time range (e.g. 24h, 7d)
     --json             Output as JSON
 
   EXAMPLES
     $ jin stats --since=30d
-    $ jin stats --adapter=claude-code --json
+    $ jin stats --harness=claude-code --json
 `,
   connect: `
-  Wire a project to a sink
+  Connect local repos to a workspace or configured destination
 
   USAGE
-    jin connect [project] [flags]
+    jin connect [repo] [flags]
 
   FLAGS
-    --postgres=<url>   Connect to a Postgres sink
-    --s3=<url>         Connect to an S3 sink
-    --webhook=<url>    Connect to a webhook sink
+    --team=<code>      Add a workspace destination from an onboarding code
     --sink=<id>        Use an existing sink by ID
     --remote=<url>     Match by git remote URL
-    --directory=<path> Match by directory path
     --json             Output as JSON
 
+  LOW-LEVEL BYO INTEGRATION
+    jin sink add <type> ...
+    jin route add --remote="github.com/org/repo" --sink=<id>
+
   EXAMPLES
-    $ jin connect myproject --postgres=postgresql://...
-    $ jin connect --remote=github.com/org/repo --sink=pg-team
+    $ jin connect --team=<workspace-code>
+    $ jin connect my-repo --sink=workspace-main
+    $ jin connect --remote=github.com/org/repo --sink=analytics-webhook
+`,
+  connections: `
+  Show workspace and integration routing for indexed repos
+
+  USAGE
+    jin connections
+
+  EXAMPLES
+    $ jin connections
+`,
+  disconnect: `
+  Remove routing for one indexed repo
+
+  USAGE
+    jin disconnect <repo> [flags]
+
+  FLAGS
+    --remove-sink      Also remove the sink if no routes still reference it
+
+  EXAMPLES
+    $ jin disconnect my-repo
+    $ jin disconnect my-repo --remove-sink
 `,
   benchmark: `
-  Run performance benchmark and measure resource usage
+  Measure local daemon and one-shot ingest budgets
 
   USAGE
     jin benchmark [flags]
@@ -126,7 +167,7 @@ const COMMAND_HELP: Record<string, string> = {
 
   Measures:
     - Source data profile (files, size, lines)
-    - Daemon resource usage (CPU, RSS, FDs, I/O) if running
+    - Local daemon resource usage (CPU, RSS, FDs, I/O) if running
     - Cold ingest time and peak memory
 
   Results saved to ~/.config/jin/benchmarks/
@@ -136,7 +177,7 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin benchmark --json
 `,
   export: `
-  Export sessions to files
+  Export local conversations to files
 
   USAGE
     jin export [flags]
@@ -152,23 +193,8 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin export --format=md --since=7d
     $ jin export --adapter=codex --output=./exports
 `,
-  init: `
-  Detect tools, ingest sessions, and register skills
-
-  USAGE
-    jin init [flags]
-
-  FLAGS
-    --team=<code>      Join a team (base64 config code)
-    --skills           Install jin as a skill/command in detected coding tools
-    --json             Output as JSON
-
-  EXAMPLES
-    $ jin init
-    $ jin init --team=<code> --skills
-`,
   start: `
-  Start the watcher daemon
+  Start the local daemon (bootstraps on first run)
 
   USAGE
     jin start [flags]
@@ -176,17 +202,14 @@ const COMMAND_HELP: Record<string, string> = {
   FLAGS
     --foreground       Run in foreground (no daemon)
     --service          Also install OS service
-    --ui               Also start dashboard
-    --all              Start watcher + UI
-    --port=<n>         Dashboard port (default: 4000)
 
   EXAMPLES
     $ jin start
     $ jin start --foreground
-    $ jin start --all --port=8080
+    $ jin start --service
 `,
   status: `
-  Show status of all components
+  Show local daemon, health, and destination status
 
   USAGE
     jin status [flags]
@@ -199,59 +222,110 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin status
     $ jin status --json
 `,
+  sink: `
+  Manage low-level integration destinations
+
+  USAGE
+    jin sink add <type> [flags]
+    jin sink remove <id> [--yes]
+    jin sink disable <id>
+    jin sink enable <id>
+
+  EXAMPLES
+    $ jin sink add postgres --connection-string=postgres://... --id=team-postgres
+    $ jin sink add webhook --url=https://example.com/jin --id=analytics
+    $ jin sink disable team-postgres
+`,
+  route: `
+  Manage low-level routing rules for local conversations
+
+  USAGE
+    jin route add --sink=<id> [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>]
+    jin route remove [--sink=<id>] [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>]
+
+  EXAMPLES
+    $ jin route add --remote="github.com/acme/*" --sink=team-postgres
+    $ jin route add --adapter=cursor --sink=analytics
+    $ jin route remove --remote="github.com/acme/*" --sink=team-postgres
+`,
+  team: `
+  jin team — workspace bootstrap and operator tools
+
+  Bootstrap:
+    bridge --type=<sink> ...             Generate a developer onboarding code
+
+  Schema (operator escape hatch):
+    schema apply <connection>            Apply jin tables to a Postgres database
+    schema check <connection>            Check schema version compatibility
+    schema version                       Print expected schema version
+
+  Future (deferred until workspace identity is real):
+    init                                 Reserved for guided workspace setup
+    status                               Reserved until workspace identity is real
+
+  These commands are for workspace operators, not everyday developers.
+  Developers join a workspace with: jin connect --team=<code>
+`,
+  ingest: `
+  Run a one-shot local ingest without starting the daemon
+
+  USAGE
+    jin ingest
+
+  EXAMPLES
+    $ jin ingest
+`,
 };
 
 function usage(): void {
   console.log(`
-  jin v${VERSION} — conversation data pipeline for agentic coding tools
+  jin v${VERSION} — local daemon and conversation index for coding-tool activity
 
-  Getting started:
-    jin init [--team=<code>] [--skills]  Detect tools, ingest, register skills
-    jin connect [project]                Interactive project → sink wiring
-    jin start                            Start watcher in background
+  Local-first:
+    start [--foreground|--service]       Start the local daemon
+    stop                                 Stop the local daemon
+    restart                              Restart the local daemon
+    status [--json|--short]              Show daemon, health, and destination status
+    conversations [--adapter=X]          List local conversations
+    search "query" [--since=7d]          Search local conversation content
+    show <id> [--trace|--tree|--json]    Show a conversation, trace, or tree
+    export [--format=json|md]            Export local conversations
 
-  Team one-liner:
-    jin init --team=<code> && jin start
+  Connect:
+    connect --team=<code>                Join a workspace
+    connect <repo> --sink=<id>           Route a repo to a destination
+    connections                          Show current routing
+    disconnect <repo>                    Remove routing
 
-  Connections:
-    connect <project> --postgres=...     Connect project to a sink
-    connect --remote=<url> --sink=<id>   Connect by git remote
-    connect --directory=<path> --sink=   Connect by directory path
-    connections                          List all connections & sinks
-    disconnect <project>                 Remove a project connection
-    team-config --type=<sink>            Generate team onboarding code
+  Integrations:
+    sink add <type> ...                  Add an integration destination
+    sink remove <id>                     Remove a destination
+    sink disable|enable <id>             Durable destination control
+    route add ... --sink=<id>            Add routing rules
+    route remove ...                     Remove routing rules
 
-  Running:
-    start [--service|--ui|--all]         Start watcher in background
-    start --foreground                   Watch + ingest (foreground)
-    stop [--watcher|--ui]                Stop all running components
-    restart                              Restart watcher
-    status [--json|--short]              Status of all components
+  Workspace (operator):
+    team <subcommand>                    Workspace bootstrap, schema, bridge
+                                         Run 'jin team help' for details
 
-  Dashboard:
-    ui [--port=4000]                     Web dashboard (foreground)
-    ui start/stop/status                 Background dashboard management
-    ui --tui                             Terminal UI
-
-  Data:
-    sessions [--adapter=X] [--since=24h] List sessions (--json for JSON)
-    search "query" [--since=7d]          Full-text search across conversations
-    show <id> [--json]                   Show session messages
-    stats [--adapter=X] [--since=24h]    Token/cost analysis (--json for JSON)
-    export [--format=json|md]            Export sessions to files
-
-  Performance:
-    benchmark [--json]                   Measure resource usage & ingest speed
-
-  Admin:
-    service install|uninstall|status     OS service (systemd/launchd)
+  Utility:
+    ingest                               One-shot local ingest
+    benchmark [--json]                   Measure ingest budgets
+    service install|uninstall|status     OS service management
     update [--quiet|--rollback]          Self-update or rollback
     version                              Show version
 
-  Quick start:  jin init && jin connect && jin start
-  Config: ~/.config/jin/config.json
-  Help:   jin help <command> for details (e.g. jin help search)
+  Primary path:  jin start
+  Config:        ~/.config/jin/config.json
+  Help:          jin help <command> for details (e.g. jin help sink)
 `);
+}
+
+function failRemovedSurface(lines: string[]): never {
+  for (const line of lines) {
+    console.error(line);
+  }
+  process.exit(1);
 }
 
 async function main(): Promise<void> {
@@ -264,6 +338,13 @@ async function main(): Promise<void> {
   switch (command) {
     // ── Lifecycle ──────────────────────────────────────────────────────
     case "start": {
+      if (flags.ui || flags.all || flags.port) {
+        failRemovedSurface([
+          "  Error: `jin start` no longer supports dashboard flags.",
+          "  Removed: `--ui`, `--all`, and `--port`.",
+          "  Use `jin start` or `jin start --service` for lifecycle control only.",
+        ]);
+      }
       if (flags.foreground) {
         const { watchCommand } = await import("./commands/watch");
         await watchCommand({ daemon: false });
@@ -271,29 +352,38 @@ async function main(): Promise<void> {
         const { startCommand } = await import("./commands/start");
         await startCommand({
           service: !!flags.service,
-          ui: !!flags.ui,
-          all: !!flags.all,
-          port: flags.port ? parseInt(flags.port as string) : undefined,
         });
       }
       break;
     }
     case "stop": {
+      if (flags.ui) {
+        failRemovedSurface([
+          "  Error: `jin stop --ui` was removed with the dashboard surface.",
+          "  Use `jin stop` to stop the local daemon.",
+        ]);
+      }
       const { stopCommand } = await import("./commands/stop");
-      await stopCommand({
-        watcher: !!flags.watcher,
-        ui: !!flags.ui,
-      });
+      await stopCommand();
       break;
     }
     case "restart": {
+      if (flags.ui || flags.all || flags.port) {
+        failRemovedSurface([
+          "  Error: `jin restart` no longer supports dashboard flags.",
+          "  Removed: `--ui`, `--all`, and `--port`.",
+          "  Use `jin restart` or `jin restart --service` for runtime lifecycle control.",
+        ]);
+      }
       const { restartCommand } = await import("./commands/start");
       await restartCommand({
         service: !!flags.service,
-        ui: !!flags.ui,
-        all: !!flags.all,
-        port: flags.port ? parseInt(flags.port as string) : undefined,
       });
+      break;
+    }
+    case "ingest": {
+      const { ingestCommand } = await import("./commands/ingest");
+      await ingestCommand();
       break;
     }
     case "status": {
@@ -305,41 +395,25 @@ async function main(): Promise<void> {
       break;
     }
 
-    // ── Setup ──────────────────────────────────────────────────────────
-    case "init": {
-      const { initCommand } = await import("./commands/init");
-      await initCommand({
-        team: flags.team as string | undefined,
-        json: !!flags.json,
-        skills: !!flags.skills,
-      });
-      break;
-    }
-
     // ── Connections ───────────────────────────────────────────────────────
     case "connect": {
+      if (flags.postgres || flags.s3 || flags.webhook) {
+        failRemovedSurface([
+          "  Error: `jin connect` no longer creates sinks directly.",
+          "  Removed: `--postgres`, `--s3`, and `--webhook`.",
+          "  Use `jin sink add ...` to configure a destination, then `jin connect <repo> --sink=<id>` or `jin route add ...`.",
+        ]);
+      }
       const { connectCommand } = await import("./commands/connect");
       const project = args[1] && !args[1].startsWith("--") ? args[1] : "";
       await connectCommand(project, {
-        postgres: flags.postgres as string | undefined,
-        s3: flags.s3 as string | undefined,
-        webhook: flags.webhook as string | undefined,
         sink: flags.sink as string | undefined,
         team: flags.team as string | undefined,
         id: flags.id as string | undefined,
-        name: flags.name as string | undefined,
-        "team-id": flags["team-id"] as string | undefined,
         teamId: flags.teamId as string | undefined,
-        region: flags.region as string | undefined,
-        endpoint: flags.endpoint as string | undefined,
-        "access-key-id": flags["access-key-id"] as string | undefined,
-        accessKeyId: flags.accessKeyId as string | undefined,
-        "secret-access-key": flags["secret-access-key"] as string | undefined,
-        secretAccessKey: flags.secretAccessKey as string | undefined,
-        prefix: flags.prefix as string | undefined,
         remote: flags.remote as string | undefined,
-        directory: flags.directory as string | undefined,
         json: !!flags.json,
+        yes: !!flags.yes,
       });
       break;
     }
@@ -354,42 +428,109 @@ async function main(): Promise<void> {
       await disconnectCommand(project, {
         "remove-sink": !!flags["remove-sink"],
         removeSink: !!flags.removeSink,
+        yes: !!flags.yes,
       });
       break;
     }
+    case "sink": {
+      const {
+        sinkAddCommand,
+        sinkRemoveCommand,
+        sinkDisableCommand,
+        sinkEnableCommand,
+      } = await import("./commands/sink");
+      const action = args[1];
+      const sinkId = args[2];
 
-    // ── Interactive / Foreground ────────────────────────────────────────
-    case "ui": {
-      if (flags.tui) {
-        const { launchTui } = await import("./tui/app");
-        await launchTui();
-      } else {
-        const subcommand = args[1];
-        const port = flags.port ? parseInt(flags.port as string) : 4000;
-        if (subcommand === "start") {
-          const { startDetached } = await import("./api/server");
-          await startDetached({ port });
-        } else if (subcommand === "stop") {
-          const { stopServer } = await import("./api/server");
-          stopServer();
-        } else if (subcommand === "status") {
-          const { serverStatus } = await import("./api/server");
-          serverStatus();
-        } else {
-          // Default: foreground mode
-          const { startServer } = await import("./api/server");
-          await startServer({
-            port,
-            dev: !!flags.dev,
-            open: !flags["no-open"],
+      switch (action) {
+        case "add": {
+          const type = args[2] as "postgres" | "s3" | "webhook" | undefined;
+          if (!type || type.startsWith("--")) {
+            console.error("Usage: jin sink add <postgres|s3|webhook> [flags]");
+            process.exit(1);
+          }
+          await sinkAddCommand(type, {
+            id: flags.id as string | undefined,
+            connectionString: (flags["connection-string"] ||
+              flags.connectionString) as string | undefined,
+            url: flags.url as string | undefined,
+            headers: flags.headers
+              ? JSON.parse(flags.headers as string)
+              : undefined,
+            timeoutMs:
+              parseIntFlag(flags["timeout-ms"]) ?? parseIntFlag(flags.timeoutMs),
+            bucket: flags.bucket as string | undefined,
+            region: flags.region as string | undefined,
+            endpoint: flags.endpoint as string | undefined,
+            accessKeyId: (flags["access-key-id"] ||
+              flags.accessKeyId) as string | undefined,
+            secretAccessKey: (flags["secret-access-key"] ||
+              flags.secretAccessKey) as string | undefined,
+            prefix: flags.prefix as string | undefined,
+            pathStyle:
+              parseBooleanFlag(flags["path-style"]) ??
+              parseBooleanFlag(flags.pathStyle),
+            yes: !!flags.yes,
           });
+          break;
         }
+        case "remove":
+          if (!sinkId || sinkId.startsWith("--")) {
+            console.error("Usage: jin sink remove <sink-id> [--yes]");
+            process.exit(1);
+          }
+          await sinkRemoveCommand(sinkId, { yes: !!flags.yes });
+          break;
+        case "disable":
+          if (!sinkId || sinkId.startsWith("--")) {
+            console.error("Usage: jin sink disable <sink-id>");
+            process.exit(1);
+          }
+          await sinkDisableCommand(sinkId);
+          break;
+        case "enable":
+          if (!sinkId || sinkId.startsWith("--")) {
+            console.error("Usage: jin sink enable <sink-id>");
+            process.exit(1);
+          }
+          await sinkEnableCommand(sinkId);
+          break;
+        default:
+          console.error(`Unknown sink action: ${action || "(missing)"}`);
+          console.log(COMMAND_HELP.sink);
+          process.exit(1);
+      }
+      break;
+    }
+    case "route": {
+      const { routeAddCommand, routeRemoveCommand } = await import("./commands/route");
+      const action = args[1];
+      const routeOpts = {
+        sink: flags.sink as string | undefined,
+        remote: flags.remote as string | undefined,
+        adapter: flags.adapter as string | undefined,
+        branch: flags.branch as string | undefined,
+        name: flags.name as string | undefined,
+        yes: !!flags.yes,
+      };
+
+      switch (action) {
+        case "add":
+          await routeAddCommand(routeOpts);
+          break;
+        case "remove":
+          await routeRemoveCommand(routeOpts);
+          break;
+        default:
+          console.error(`Unknown route action: ${action || "(missing)"}`);
+          console.log(COMMAND_HELP.route);
+          process.exit(1);
       }
       break;
     }
 
     // ── Data ───────────────────────────────────────────────────────────
-    case "sessions": {
+    case "conversations": {
       const { listCommand } = await import("./commands/list");
       await listCommand({
         adapter: flags.adapter as string | undefined,
@@ -403,7 +544,7 @@ async function main(): Promise<void> {
       const { searchCommand } = await import("./commands/search");
       const query = args[1] && !args[1].startsWith("--") ? args[1] : "";
       if (!query) {
-        console.error('Usage: jin search "query" [--adapter=X] [--since=7d] [--local] [--sink=<id>]');
+        console.error('Usage: jin search "query" [--adapter=X] [--since=7d] [--limit=<n>] [--json]');
         process.exit(1);
       }
       await searchCommand(query, {
@@ -421,12 +562,14 @@ async function main(): Promise<void> {
       const { showCommand } = await import("./commands/show");
       const sessionId = args[1];
       if (!sessionId || sessionId.startsWith("--") || sessionId === "-h") {
-        console.error("Usage: jin show <session-id> [--json] [--sink=<id>] [--all-sinks]");
+        console.error("Usage: jin show <conversation-id> [--trace|--tree|--json]");
         process.exit(1);
       }
       await showCommand(sessionId, {
         json: !!flags.json,
         markdown: !flags.json,
+        trace: !!flags.trace,
+        tree: !!flags.tree,
         sink: flags.sink as string | undefined,
         allSinks: !!flags["all-sinks"],
       });
@@ -435,7 +578,7 @@ async function main(): Promise<void> {
     case "stats": {
       const { analyzeCommand } = await import("./commands/analyze");
       await analyzeCommand({
-        adapter: flags.adapter as string | undefined,
+        harness: (flags.harness as string | undefined) ?? (flags.adapter as string | undefined),
         since: flags.since as string | undefined,
         json: !!flags.json,
       });
@@ -460,29 +603,80 @@ async function main(): Promise<void> {
       break;
     }
 
+    // ── Team (operator) ─────────────────────────────────────────────
+    case "team": {
+      const teamAction = args[1];
+      const teamFlags = parseFlags(args.slice(2));
+
+      switch (teamAction) {
+        case "bridge": {
+          const { teamBridgeCommand } = await import("./commands/team-bridge");
+          await teamBridgeCommand({
+            name: teamFlags.name as string | undefined,
+            type: teamFlags.type as string | undefined,
+            url: teamFlags.url as string | undefined,
+            connectionString: (teamFlags["connection-string"] || teamFlags.connectionString) as string | undefined,
+            bucket: teamFlags.bucket as string | undefined,
+            region: teamFlags.region as string | undefined,
+            endpoint: teamFlags.endpoint as string | undefined,
+            accessKeyId: (teamFlags["access-key-id"] || teamFlags.accessKeyId) as string | undefined,
+            secretAccessKey: (teamFlags["secret-access-key"] || teamFlags.secretAccessKey) as string | undefined,
+            prefix: teamFlags.prefix as string | undefined,
+            teamId: (teamFlags["team-id"] || teamFlags.teamId) as string | undefined,
+            headers: teamFlags.headers as string | undefined,
+          });
+          break;
+        }
+        case "schema": {
+          const schemaAction = args[2];
+          const schemaFlags = parseFlags(args.slice(3));
+          switch (schemaAction) {
+            case "apply": {
+              const { schemaApplyCommand } = await import("./commands/schema");
+              await schemaApplyCommand({
+                connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+                dryRun: !!schemaFlags["dry-run"] || !!schemaFlags.dryRun,
+              });
+              break;
+            }
+            case "check": {
+              const { schemaCheckCommand } = await import("./commands/schema");
+              await schemaCheckCommand({
+                connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+              });
+              break;
+            }
+            case "version": {
+              const { schemaVersionCommand } = await import("./commands/schema");
+              schemaVersionCommand();
+              break;
+            }
+            default:
+              console.log(`
+  jin team schema — operator escape hatch for Postgres integrations
+
+  USAGE
+    jin team schema apply --connection-string="postgres://..."  [--dry-run]
+    jin team schema check --connection-string="postgres://..."
+    jin team schema version
+`);
+              break;
+          }
+          break;
+        }
+        case "help":
+        default:
+          console.log(COMMAND_HELP.team);
+          break;
+      }
+      break;
+    }
+
     // ── Admin ──────────────────────────────────────────────────────────
     case "service": {
       const { serviceCommand } = await import("./commands/service");
       const action = args[1];
       await serviceCommand(action);
-      break;
-    }
-    case "team-config": {
-      const { teamConfigCommand } = await import("./commands/team-config");
-      await teamConfigCommand({
-        name: flags.name as string | undefined,
-        type: flags.type as string | undefined,
-        url: flags.url as string | undefined,
-        connectionString: (flags["connection-string"] || flags.connectionString) as string | undefined,
-        bucket: flags.bucket as string | undefined,
-        region: flags.region as string | undefined,
-        endpoint: flags.endpoint as string | undefined,
-        accessKeyId: (flags["access-key-id"] || flags.accessKeyId) as string | undefined,
-        secretAccessKey: (flags["secret-access-key"] || flags.secretAccessKey) as string | undefined,
-        prefix: flags.prefix as string | undefined,
-        teamId: (flags["team-id"] || flags.teamId) as string | undefined,
-        headers: flags.headers as string | undefined,
-      });
       break;
     }
     case "update": {
@@ -515,6 +709,26 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "init":
+      failRemovedSurface([
+        "  Error: `jin init` was removed.",
+        "  Use `jin start` for local bootstrap and `jin connect --team=<code>` for workspace onboarding.",
+      ]);
+    case "sessions":
+      failRemovedSurface([
+        "  Error: `jin sessions` was removed.",
+        "  Use `jin conversations`.",
+      ]);
+    case "team-config":
+      failRemovedSurface([
+        "  Error: `jin team-config` was removed.",
+        "  Use `jin team bridge`.",
+      ]);
+    case "ui":
+      failRemovedSurface([
+        "  Error: `jin ui` was removed.",
+        "  Use `jin status`, `jin start`, and `jin stop` for the daemon-first local surface.",
+      ]);
     default:
       console.error(`Unknown command: ${command}`);
       usage();

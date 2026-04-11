@@ -1,0 +1,19 @@
+%% Source: docs/blueprint/BP-05-store-and-migration.md
+%% Diagram: writeBundle and Revision Flow
+
+flowchart TD
+    Bundle["ConversationBundle"] --> Hash["computeBundleHash(bundle)"]
+    Hash --> Prev["read _jin_sync for conversation"]
+    Prev --> Same{"bundle hash unchanged?"}
+
+    Same -->|Yes| NoWrite["update ingested_at only<br/>changed = false<br/>revision unchanged"]
+    NoWrite --> NoPush["no push scheduled"]
+
+    Same -->|No| Upsert["upsert conversation row"]
+    Upsert --> ReplaceMsgs["replace messages"]
+    ReplaceMsgs --> ReplaceTools["replace tool_calls"]
+    ReplaceTools --> Derived["refresh FTS + recompute derived fields"]
+    Derived --> Rev["bump local_revision in _jin_sync<br/>changed = true"]
+    Rev --> Dirty["dirty when local_revision > last_successful_revision"]
+    Dirty --> PushState["_jin_push_state per sink"]
+    PushState --> Eligible["conversationsNeedingPush(sinkId)"]

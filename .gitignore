@@ -13,3 +13,9 @@ site/docs/public/install.sh
 site/docs/public/install.ps1
 site/docs/.vitepress/dist/
 site/package-lock.json
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Live multi-agent control plane
+.execution/

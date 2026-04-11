@@ -1,6 +1,14 @@
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "fs";
+import { join } from "path";
 import { configDir } from "../config";
+import { stopWatcher } from "../daemon/process-state";
+import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "../contracts/lifecycle";
+import {
+  clearRuntimeState,
+  getRuntimeStatus,
+  markRuntimeRunning,
+  markRuntimeStarting,
+} from "../daemon/runtime-state";
 
 const PLATFORM = process.platform;
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
@@ -351,25 +359,25 @@ async function windowsStatus(): Promise<void> {
 
 // ── Entry point ──────────────────────────────────────────────────────
 
-async function stopExistingDaemon(): Promise<void> {
-  const { isDaemonRunning } = await import("../runguard");
-  const { running, pid } = isDaemonRunning();
-  if (!running || !pid) return;
+async function stopExistingRuntimeForServiceInstall(): Promise<boolean> {
+  const runtime = getRuntimeStatus();
+  if (!runtime.owner || runtime.owner.mode === "service") {
+    return true;
+  }
 
-  console.log(`  Stopping existing daemon (PID ${pid}) before installing service...`);
-  try {
-    process.kill(pid, "SIGTERM");
-    // Wait up to 3 seconds
-    for (let i = 0; i < 30; i++) {
-      await Bun.sleep(100);
-      try { process.kill(pid, 0); } catch { break; }
-    }
-  } catch {}
+  console.log(`  Stopping existing runtime (PID ${runtime.owner.pid}) before installing service...`);
+  const result = await stopWatcher({
+    waitForExitMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    forceAfterTimeout: true,
+  });
+  if (!result.completed) {
+    console.log("  The existing runtime is still stopping.");
+    console.log("  Wait for `jin status` to report `stopped`, then try again.");
+    return false;
+  }
 
-  // Clean up PID file
-  const pidFile = join(configDir(), "jin.pid");
-  try { unlinkSync(pidFile); } catch {}
-  console.log(`  Daemon stopped.`);
+  console.log(`  Existing runtime stopped.`);
+  return true;
 }
 
 export async function serviceCommand(action: string | undefined): Promise<void> {
@@ -377,13 +385,20 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
 
   switch (action) {
     case "install": {
-      // Stop any running daemon/foreground instance first
-      await stopExistingDaemon();
+      const canInstall = await stopExistingRuntimeForServiceInstall();
+      if (!canInstall) {
+        return;
+      }
+
+      markRuntimeStarting("service");
 
       if (PLATFORM === "linux") await linuxInstall();
       else if (PLATFORM === "darwin") await darwinInstall();
       else if (PLATFORM === "win32") await windowsInstall();
       else console.log(`  Unsupported platform: ${PLATFORM}`);
+
+      await Bun.sleep(250);
+      markRuntimeRunning("service");
       break;
     }
     case "uninstall": {
@@ -391,6 +406,7 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
       else if (PLATFORM === "darwin") await darwinUninstall();
       else if (PLATFORM === "win32") await windowsUninstall();
       else console.log(`  Unsupported platform: ${PLATFORM}`);
+      clearRuntimeState();
       break;
     }
     case "status": {
@@ -398,6 +414,13 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
       else if (PLATFORM === "darwin") await darwinStatus();
       else if (PLATFORM === "win32") await windowsStatus();
       else console.log(`  Unsupported platform: ${PLATFORM}`);
+
+      const runtime = getRuntimeStatus();
+      if (runtime.owner?.mode === "service") {
+        console.log(``);
+        console.log(`  Runtime owner: service manager (PID ${runtime.owner.pid})`);
+        console.log(`  State:         ${runtime.state}`);
+      }
       break;
     }
     default: {

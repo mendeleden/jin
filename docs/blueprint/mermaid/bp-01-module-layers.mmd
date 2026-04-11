@@ -1,0 +1,20 @@
+%% Source: docs/blueprint/BP-01-module-map.md
+%% Diagram: Module Layers
+
+flowchart TD
+    Source["Source files on disk"]
+    Adapters["adapters/<br/>read-only parsers<br/>change detection, IDs, normalization"]
+    Pipeline["pipeline/<br/>THE BRAIN<br/>ingest, push, watch, schedule"]
+    Store["db/<br/>SQLite buffer<br/>schema, CRUD, sync, search"]
+    Sinks["sinks/<br/>remote delivery<br/>Postgres, S3, webhook"]
+
+    Source --> Adapters --> Pipeline
+    Pipeline --> Store
+    Store --> Pipeline
+    Pipeline --> Sinks
+
+    Daemon["daemon/<br/>process lifecycle"] -. owns runtime state .-> Pipeline
+    Commands["commands/<br/>thin CLI wrappers"] -. call into .-> Pipeline
+    Commands -. control .-> Daemon
+    Config["config.ts<br/>durable user intent<br/>read-only at runtime"] -. loaded at startup .-> Pipeline
+    Routing["routing.ts<br/>pure sink matching"] -. used during push .-> Pipeline

@@ -1,7 +1,24 @@
-// Adapter interface — each coding tool implements this to expose its conversation data
-// and surrounding context artifacts (memory files, configs, rules, etc.).
+// Legacy adapter/conversation surface retained only for compatibility
+// commands that still run the pre-v2 local ingest/store path.
+// Frozen v2 contracts live in src/contracts/adapters.ts and
+// src/contracts/conversations.ts and are Codex-owned during Wave 1.
 
-export interface Adapter {
+export type {
+  Adapter as V2Adapter,
+  ChangeHint,
+  ChangeHintKind,
+} from "../contracts/adapters";
+export type {
+  ConversationBundle,
+  ConversationRef,
+  ConversationRelationship,
+  ConversationSourceFormat,
+  ParsedConversation,
+  ParsedMessage,
+  ParsedToolCall,
+} from "../contracts/conversations";
+
+export interface LegacyAdapter {
   id: string;
   name: string;
   icon: string;
@@ -22,7 +39,9 @@ export interface Adapter {
   artifacts?(): Promise<ContextArtifact[]>;
 }
 
-export interface Session {
+export type Adapter = LegacyAdapter;
+
+export interface LegacySession {
   id: string;
   name: string;
   adapterId: string;
@@ -41,7 +60,9 @@ export interface Session {
   metadata: Record<string, unknown>;
 }
 
-export interface Message {
+export type Session = LegacySession;
+
+export interface LegacyMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -56,6 +77,8 @@ export interface Message {
   /** Record type from source (e.g. "summary", "compact_boundary", "session_meta") */
   recordType: string;
 }
+
+export type Message = LegacyMessage;
 
 export interface ToolUse {
   id: string;
