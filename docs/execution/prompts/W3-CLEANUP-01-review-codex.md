@@ -35,7 +35,7 @@ Required control-plane behavior:
 Commit boundary:
 - include only the cleanup lane and its control-plane artifacts
 - do not stage or commit sink/schema validation files, perf/BP lanes, or unrelated docs
-- if `package.json` is included, keep its current `0.8.4` version and the cleanup build-surface changes together
+- if `package.json` is included, keep its current `0.8.5` version and the cleanup build-surface changes together
 
 Cleanup lane file boundary for staging:
 - `docs/blueprint/BP-09-cli-split.md`

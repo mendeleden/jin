@@ -207,6 +207,7 @@ describe("jin team schema apply", () => {
     expect(ddl).toContain("TIMESTAMPTZ");
     expect(ddl).toContain("BOOLEAN");
     expect(ddl).toContain("DOUBLE PRECISION");
+    expect(ddl).toContain("PRIMARY KEY (conversation_id, message_id, id)");
     // Indexes
     expect(ddl).toContain("idx_jin_conv_trace");
     expect(ddl).toContain("idx_jin_tc_name");
@@ -215,7 +216,7 @@ describe("jin team schema apply", () => {
   test("schema version matches sink expectations", () => {
     const version = getIntegrationSchemaVersion();
     expect(version).toMatch(/^\d+\.\d+$/);
-    expect(version).toBe("2.3");
+    expect(version).toBe("2.4");
   });
 
   test("DDL comment references jin team schema apply (not top-level)", () => {
@@ -256,7 +257,7 @@ describe("jin team schema version", () => {
     schemaVersionCommand();
 
     const output = console_.logs.join("\n").trim();
-    expect(output).toBe("2.3");
+    expect(output).toBe("2.4");
   });
 });
 

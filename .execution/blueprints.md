@@ -5,21 +5,21 @@
   - last review: `2026-04-08-W3-BP-01-codex`, `2026-04-04-W3-MODULE-01-cursor`
   - blocker: none — `W3-BP-01` now makes the cheap `detect()` versus expensive startup discovery split explicit, so rich-adapter startup work points at BP-02/BP-04/BP-10 instead of config; the remaining `src/pipeline/file-watcher.ts` versus `src/pipeline/watcher.ts` wording drift stays informational
 - `BP-02`: `mostly_aligned`
-  - active packet: `W3-PERF-01`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-BP-01`, `W3-PERF-02`, `W3-PERF-03`, `W3-VALIDATE-01`
-  - last review: `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-PERF-03-codex`, `2026-04-08-W3-PERF-02-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-PERF-01-codex-recheck`, `2026-04-08-W3-ADAPTER-06-codex`
-  - blocker: none — `W3-ADAPTER-09` closes the live Claude duplicate-conversation / `messages.id` collision gap without widening frozen contracts, while `W3-VALIDATE-01` continues to provide the disposable-store reconciliation harness that exposes remaining adapter drift before local dogfood. Informationally, `report.summary.verdict` remains an execution verdict while BP-10 owns release-gate policy.
+  - active packet: `W3-PERF-01`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-BP-01`, `W3-PERF-02`, `W3-PERF-03`, `W3-VALIDATE-01`
+  - last review: `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-PERF-03-codex`, `2026-04-08-W3-PERF-02-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-PERF-01-codex-recheck`, `2026-04-08-W3-ADAPTER-06-codex`
+  - blocker: none — `W3-ADAPTER-10` closes the remaining live Cursor null-bundle / content-addressed layer3 collision gap with adapter-local pointer-root decoding, tool-result stitching, and conversation-scoped layer3 IDs, while `W3-VALIDATE-01` continues to provide the disposable-store reconciliation harness that exposes adapter drift before local dogfood. Informationally, `report.summary.verdict` remains an execution verdict while BP-10 owns release-gate policy.
 - `BP-03`: `frozen`
   - active packet: `W2-CMD-01`, `W3-SCALE-01`
   - last review: `2026-04-02-W2-CMD-01-cursor`, `2026-04-08-W3-SCALE-01-codex`
   - blocker: none — all three views (single, trace, tree) remain verified in the read-only command surface, and `W3-SCALE-01` adds deterministic manifest-backed rich-adapter datasets that preserve root/compacted/spawned topology for future perf validation without reopening the frozen conversation model (`test/perf-datasets/README.md:64-80`, `test/perf-datasets/scale-datasets.test.ts:42-82`)
 - `BP-04`: `mostly_aligned`
-  - active packet: `W3-ADAPTER-05`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-SCALE-01`, `W3-BP-01`, `W3-VALIDATE-01`
-  - last review: `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-ADAPTER-06-codex`, `2026-04-08-W3-SCALE-01-codex`
-  - blocker: pending follow-on adapter fixes from `W3-VALIDATE-01` — `W3-ADAPTER-09` clears the Claude Code live duplicate-ID and `messages.id` collision class on the real dataset, so the remaining adapter drift is Cursor `null-bundle` output / DB-open failure rather than a Claude identity bug
+  - active packet: `W3-ADAPTER-05`, `W3-ADAPTER-06`, `W3-ADAPTER-07`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-ADAPTER-11`, `W3-ADAPTER-12`, `W3-SCALE-01`, `W3-BP-01`, `W3-VALIDATE-01`
+  - last review: `2026-04-10-W3-ADAPTER-12-codex`, `2026-04-09-W3-ADAPTER-11-codex`, `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-ADAPTER-07-codex`, `2026-04-08-W3-BP-01-codex`, `2026-04-08-W3-ADAPTER-06-codex`, `2026-04-08-W3-SCALE-01-codex`
+  - blocker: none — the `2026-04-10-W3-ADAPTER-12-codex` re-review confirms exact-`toolCallId`-first Cursor Layer 3 stitching in both inline and cross-message paths, Layer 1 `workspaceUris` / thinking extraction staying inside the existing parsed adapter fields, and leading-prelude-only fallback naming backed by `12/12` focused tests plus live probes (`96` refs, `58` repeated same-name Layer 3 tools with `0` empty outputs, `15` Layer 1 conversations with `cwd`, `140` messages with `thinkingContent`). The remaining control-plane stale state is operational drift for Codex to reconcile, not a BP-04 blocker.
 - `BP-05`: `mostly_aligned`
-  - active packet: `W3-RUNTIME-01`, `W3-V2-01`, `W3-RECOVERY-01`, `W3-VALIDATE-01`, `W3-ADAPTER-09`
-  - last review: `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-07-W3-RUNTIME-01-codex-recheck`, `2026-04-07-W3-V2-01-codex-recheck`, `2026-04-07-W3-RECOVERY-01-codex`
-  - blocker: pending live reconciliation follow-up — `W3-ADAPTER-09` removes the Claude `messages.id` write-time collisions from the disposable-store path, so the remaining live reconciliation blocker is Cursor null-bundle ingest / DB-open failure; `BP-05` also retains the explicit `src/tui/app.tsx` `LegacyStore` defer and broader non-packet `src/store.ts` spread from prior audits
+  - active packet: `W3-RUNTIME-01`, `W3-V2-01`, `W3-RECOVERY-01`, `W3-VALIDATE-01`, `W3-ADAPTER-09`, `W3-ADAPTER-10`, `W3-ADAPTER-11`, `W3-SINK-04`
+  - last review: `2026-04-09-W3-ADAPTER-11-codex`, `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-09-W3-ADAPTER-09-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-07-W3-RUNTIME-01-codex-recheck`, `2026-04-07-W3-V2-01-codex-recheck`, `2026-04-07-W3-RECOVERY-01-codex`
+  - blocker: pending live reconciliation follow-up — `W3-ADAPTER-10` removes the remaining Cursor null-bundle / `messages.id` collision blocker from the disposable-store path, `W3-ADAPTER-11` aligns top-line Claude/query token totals with billed cost while exposing display/cache breakdowns explicitly, and the next live reconciliation gate remains sink proof in `W3-SINK-04`; `BP-05` also retains the explicit `src/tui/app.tsx` `LegacyStore` defer and broader non-packet `src/store.ts` spread from prior audits
 - `BP-06`: `mostly_aligned`
   - active packet: `W2-SINK-02`, `W2-SINK-03`
   - last review: `2026-04-04-W2-SINK-02-cursor-recheck`
@@ -38,9 +38,9 @@
   - last review: `2026-04-07-W3-V2-01-codex-recheck`
   - blocker: none — `W3-V2-01` recheck confirms operator actions stay under `jin team schema` / `jin team bridge`, developers still onboard with `jin connect --team=<code>`, and the live `jin team help` / `jin team schema` output still reflects that split
 - `BP-10`: `aligned`
-  - active packet: `W3-BP-01`, `W3-VALIDATE-01`
-  - last review: `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-BP-01-codex`
-  - blocker: none — `W3-BP-01` defines the release-validation contract and `W3-VALIDATE-01` now contributes a rerunnable live adapter reconciliation harness with exact commands and machine-readable artifacts, making pre-dogfood adapter/store drift explicit without reopening BP-03 ontology or BP-02/BP-04/BP-05 frozen semantics
+  - active packet: `W3-BP-01`, `W3-VALIDATE-01`, `W3-ADAPTER-10`
+  - last review: `2026-04-09-W3-ADAPTER-10-codex`, `2026-04-08-W3-VALIDATE-01-codex`, `2026-04-08-W3-BP-01-codex`
+  - blocker: none — `W3-BP-01` defines the release-validation contract, `W3-VALIDATE-01` contributes the rerunnable live adapter reconciliation harness, and `W3-ADAPTER-10` now closes the last Cursor adapter follow-up with a clean `96`-ref Cursor-only rerun (`96` bundles, `0` null bundles, `0` write errors) without reopening BP-03 ontology or BP-02/BP-04/BP-05 frozen semantics
 - `BP-Product`: `aligned`
   - active packet: `W3-PRODUCT-01`
   - last review: `2026-04-04-W3-PRODUCT-01-claude`

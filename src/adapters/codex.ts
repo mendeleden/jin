@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { createReadStream, existsSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
 import { createInterface } from "readline";
@@ -145,7 +145,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
       }
 
       this.statCache.set(filePath, snapshot);
-      refs.push(...this.refsForFile(filePath, snapshot));
+      refs.push(...(await this.refsForFile(filePath, snapshot)));
       await this.reclaimScanMemory();
     }
 
@@ -194,7 +194,9 @@ export class CodexAdapter implements Adapter, V2Adapter {
   }
 
   async messages(sessionId: string, sourcePath?: string): Promise<Message[]> {
-    const ref = sourcePath ? this.findRefInFile(sessionId, sourcePath) : this.findRef(sessionId);
+    const ref = sourcePath
+      ? await this.findRefInFile(sessionId, sourcePath)
+      : await this.findRef(sessionId);
     if (!ref) {
       return [];
     }
@@ -209,6 +211,15 @@ export class CodexAdapter implements Adapter, V2Adapter {
 
   watchPaths(): string[] {
     return [this.sessionsDir, this.archivedSessionsDir].filter((path) => existsSync(path));
+  }
+
+  releaseTransientMemory(): void {
+    this.loadedFileCache = null;
+  }
+
+  releaseDiscoveryMemory(): void {
+    this.fileIndexCache.clear();
+    this.loadedFileCache = null;
   }
 
   private findAllSessionFiles(): string[] {
@@ -253,11 +264,11 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }
   }
 
-  private refsForFile(
+  private async refsForFile(
     filePath: string,
     snapshot?: FileSnapshot,
-  ): ConversationRef[] {
-    const index = this.getFileIndex(filePath, snapshot);
+  ): Promise<ConversationRef[]> {
+    const index = await this.getFileIndex(filePath, snapshot);
     if (!index) {
       return [];
     }
@@ -269,9 +280,9 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }));
   }
 
-  private findRef(sessionId: string): ConversationRef | null {
+  private async findRef(sessionId: string): Promise<ConversationRef | null> {
     for (const filePath of this.findAllSessionFiles()) {
-      const ref = this.findRefInFile(sessionId, filePath);
+      const ref = await this.findRefInFile(sessionId, filePath);
       if (ref) {
         return ref;
       }
@@ -279,8 +290,11 @@ export class CodexAdapter implements Adapter, V2Adapter {
     return null;
   }
 
-  private findRefInFile(sessionId: string, sourcePath: string): ConversationRef | null {
-    const index = this.getFileIndex(sourcePath);
+  private async findRefInFile(
+    sessionId: string,
+    sourcePath: string,
+  ): Promise<ConversationRef | null> {
+    const index = await this.getFileIndex(sourcePath);
     if (!index || !index.refIds.includes(sessionId)) {
       return null;
     }
@@ -728,7 +742,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }
 
     visited.add(model.sourcePath);
-    const parentPath = this.buildSessionIndex().get(model.parentThreadId);
+    const parentPath = (await this.buildSessionIndex()).get(model.parentThreadId);
     if (!parentPath || !existsSync(parentPath)) {
       return {
         traceId: model.parentThreadId,
@@ -830,10 +844,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }
   }
 
-  private buildSessionIndex(): Map<string, string> {
+  private async buildSessionIndex(): Promise<Map<string, string>> {
     const index = new Map<string, string>();
     for (const filePath of this.findAllSessionFiles()) {
-      const fileIndex = this.getFileIndex(filePath);
+      const fileIndex = await this.getFileIndex(filePath);
       if (fileIndex?.sessionId) {
         index.set(fileIndex.sessionId, filePath);
       }
@@ -841,10 +855,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
     return index;
   }
 
-  private getFileIndex(
+  private async getFileIndex(
     filePath: string,
     snapshot = this.readSnapshot(filePath),
-  ): CachedFileIndex | null {
+  ): Promise<CachedFileIndex | null> {
     if (!snapshot) {
       return null;
     }
@@ -858,7 +872,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
       return cached;
     }
 
-    const index = this.scanFileIndex(filePath, snapshot);
+    const index = await this.scanFileIndex(filePath, snapshot);
     this.fileIndexCache.set(filePath, index);
     return index;
   }
@@ -908,10 +922,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
     return entry;
   }
 
-  private scanFileIndex(
+  private async scanFileIndex(
     filePath: string,
     snapshot: FileSnapshot,
-  ): CachedFileIndex {
+  ): Promise<CachedFileIndex> {
     let sessionId = this.defaultSessionId(filePath);
     let sessionIdLocked = false;
     let currentSegmentId = "";
@@ -919,11 +933,10 @@ export class CodexAdapter implements Adapter, V2Adapter {
     const refIds: string[] = [];
     const fallbackTimestamp = new Date(snapshot.mtimeMs).toISOString();
     try {
-      const text = readFileSync(filePath, "utf8");
-      scanJsonlText(text, (rawLine, index) => {
-        if (rawLine.includes('"type":"session_meta"')) {
-          const line = asObject(parseJsonString(rawLine));
-          const payload = asObject(line?.payload);
+      await this.scanJsonlFile(filePath, (line, index) => {
+        const envelopeType = asString(line.type);
+        if (envelopeType === "session_meta") {
+          const payload = asObject(line.payload);
           const recordSessionId = asString(payload?.id);
           if (recordSessionId && !sessionIdLocked) {
             if (
@@ -940,10 +953,9 @@ export class CodexAdapter implements Adapter, V2Adapter {
           return;
         }
 
-        if (rawLine.includes('"type":"compacted"')) {
-          const line = asObject(parseJsonString(rawLine));
-          const payload = asObject(line?.payload);
-          const timestamp = asString(line?.timestamp) || fallbackTimestamp;
+        if (envelopeType === "compacted") {
+          const payload = asObject(line.payload);
+          const timestamp = asString(line.timestamp) || fallbackTimestamp;
           currentSegmentId = stableHash(
             sessionId,
             `compacted:${refIds.length}:${asString(payload?.id) || asString(payload?.turn_id) || timestamp || index}`,
@@ -952,12 +964,11 @@ export class CodexAdapter implements Adapter, V2Adapter {
           return;
         }
 
-        if (rootSegmentCreated || !rawLine.includes('"type":"response_item"')) {
+        if (rootSegmentCreated || envelopeType !== "response_item") {
           return;
         }
 
-        const line = asObject(parseJsonString(rawLine));
-        const payload = asObject(line?.payload);
+        const payload = asObject(line.payload);
         if (!payload) {
           return;
         }
@@ -1338,27 +1349,5 @@ function parseJsonString(value: string): unknown {
     return JSON.parse(value);
   } catch {
     return null;
-  }
-}
-
-function scanJsonlText(
-  text: string,
-  visit: (line: string, index: number) => void,
-): void {
-  let start = 0;
-  let index = 0;
-
-  while (start < text.length) {
-    const end = text.indexOf("\n", start);
-    const rawLine = end === -1 ? text.slice(start) : text.slice(start, end);
-    start = end === -1 ? text.length : end + 1;
-
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-
-    visit(line, index);
-    index += 1;
   }
 }

@@ -3,7 +3,7 @@ title: "BP-01: Module Map & File Layout"
 status: reviewed
 created: 2026-03-28
 depends-on: []
-informs: [BP-02, BP-03, BP-04, BP-05, BP-06, BP-07, BP-08]
+informs: [BP-02, BP-03, BP-04, BP-05, BP-06, BP-07, BP-08, BP-10]
 ---
 
 # BP-01: Module Map & File Layout
@@ -255,17 +255,25 @@ that loads config, detects adapters, connects sinks, then calls
 Config stores what the **user** decided: which sinks, what routes, watch
 settings. It does not store machine-detected state.
 
-**Adapter detection is ephemeral.** The daemon calls `adapter.detect()`
-on every startup and periodic scan. It does not persist detection results
-to config. If a developer installs a new coding tool, the daemon discovers
-it on the next cycle — no `jin init` required, no config write needed.
+**Adapter presence detection is ephemeral.** The daemon calls
+`adapter.detect()` on every startup and periodic scan. This is only the cheap
+"is this tool installed here?" check. It does not persist detection results to
+config. If a developer installs a new coding tool, the daemon discovers it on
+the next cycle — no `jin init` required, no config write needed.
+
+**Startup discovery is a different phase.** After presence detection, the
+pipeline still runs `findChanged({ kind: "startup-scan" })`, which can be
+expensive for rich adapters and therefore lives under the BP-02/BP-04 memory
+contract and the BP-10 validation gate. Config stays read-only; we do not
+persist discovery output into config as a shortcut.
 
 Config stores adapter **overrides** only: if a user explicitly disables an
 adapter (`{ "claude-code": { "enabled": false } }`), that preference is
 persisted. Everything else is derived at runtime.
 
 ```typescript
-// Adapter resolution: detect() is cheap (existsSync), no caching needed
+// Adapter resolution: detect() is a cheap presence check.
+// Startup discovery happens later in the pipeline.
 for (const adapter of allAdapters()) {
   const pref = config.adapters[adapter.id];
   if (pref?.enabled === false) continue;  // User explicitly disabled
@@ -278,8 +286,9 @@ for (const adapter of allAdapters()) {
 - Eliminates config file write races between daemon and CLI commands
 - Clean ownership: user writes config (via `jin sink add`, `jin route add`,
   manual edit), daemon reads it
-- One-shot commands (`jin show`, `jin search`) also call `detect()` —
-  it's 10 `existsSync()` checks, trivially cheap
+- One-shot commands (`jin show`, `jin search`) also call `detect()` for the
+  same cheap presence check, but any real startup discovery work still belongs
+  to the pipeline path rather than config
 
 ### routing.ts — "Match conversations to sinks"
 
@@ -352,3 +361,5 @@ api/routes.ts → db/ + config.ts
 - BP-06: Sink Contract — how sinks receive and push data
 - BP-07: Process Lifecycle — how daemon/ manages the process
 - BP-08: Routing & Configuration — how conversations match to sinks
+- BP-10: Performance Validation — how release perf validation proves the
+  runtime budgets without persisting discovery state into config

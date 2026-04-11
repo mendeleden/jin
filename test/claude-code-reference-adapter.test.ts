@@ -180,6 +180,46 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     expect(targetedRefs.every((ref) => ref.sourcePath === parentPath)).toBe(true);
   });
 
+  test("exact duplicate Claude usage replays only contribute billed tokens once", async () => {
+    const adapter = new ClaudeCodeAdapter({
+      projectsDir: join(process.cwd(), "test", "fixtures", "claude-code"),
+    });
+
+    const refs = await adapter.findChanged({ kind: "startup-scan" });
+    expect(refs).toHaveLength(1);
+
+    const bundle = await adapter.loadConversation(refs[0]!);
+    expect(bundle).not.toBeNull();
+    expect(bundle!.messages).toHaveLength(3);
+
+    const totals = bundle!.messages.reduce(
+      (sum, message) => ({
+        inputTokens: sum.inputTokens + message.inputTokens,
+        outputTokens: sum.outputTokens + message.outputTokens,
+        cacheRead: sum.cacheRead + message.cacheRead,
+        cacheWrite: sum.cacheWrite + message.cacheWrite,
+      }),
+      { inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0 },
+    );
+
+    expect(
+      bundle!.messages.filter(
+        (message) =>
+          message.role === "assistant" &&
+          message.inputTokens === 0 &&
+          message.outputTokens === 0 &&
+          message.cacheRead === 0 &&
+          message.cacheWrite === 0,
+      ),
+    ).toHaveLength(1);
+    expect(totals).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheRead: 10349,
+      cacheWrite: 14248,
+    });
+  });
+
   test("compacted conversations stay split and linked", async () => {
     const fixture = createFixture();
     const refs = await fixture.adapter.findChanged({ kind: "startup-scan" });
@@ -492,7 +532,7 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     expect(toolMessage!.toolUses[0].output).toContain("Spawned child");
   });
 
-  test("discovery retains only lightweight ref indexes and load keeps one full source model", async () => {
+  test("discovery retains only lightweight ref indexes and load does not retain a full source model after returning a bundle", async () => {
     const fixture = createFixture({ extraRootSessions: 3 });
     const refs = await fixture.adapter.findChanged({ kind: "startup-scan" });
     const caches = fixture.adapter as unknown as {
@@ -547,17 +587,13 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
     expect(childRef).toBeDefined();
 
     await fixture.adapter.loadConversation(rootRef!);
-    expect(caches.loadedFileCache?.path).toBe(fixture.parentPath);
-    expect(caches.loadedFileCache?.model.bundles.map((bundle) => bundle.conversation.id)).toEqual(
-      expect.arrayContaining([PARENT_SESSION_ID, compactedRef!.id]),
-    );
+    expect(caches.loadedFileCache).toBeNull();
 
     await fixture.adapter.loadConversation(compactedRef!);
-    expect(caches.loadedFileCache?.path).toBe(fixture.parentPath);
+    expect(caches.loadedFileCache).toBeNull();
 
     await fixture.adapter.loadConversation(childRef!);
-    expect(caches.loadedFileCache?.path).toBe(fixture.childPath);
-    expect(caches.loadedFileCache?.model.bundles).toHaveLength(1);
+    expect(caches.loadedFileCache).toBeNull();
 
     for (const entry of caches.fileIndexCache.values()) {
       expect((entry.index as { bundles?: unknown }).bundles).toBeUndefined();

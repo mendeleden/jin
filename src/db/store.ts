@@ -25,6 +25,7 @@ import { runMigrations } from "./schema";
 import { getToolCalls } from "./tool-calls";
 
 const STORE_FILENAME = "store.db";
+const DEFAULT_SQLITE_CACHE_SIZE_KIB = 4096;
 const POISONED_LOCAL_STORE_SIGNATURES = [
   "readonly database",
   "unable to open database file",
@@ -51,6 +52,7 @@ export class SqliteConversationStore implements ConversationStore {
     this.database.exec("PRAGMA busy_timeout = 5000");
     this.database.exec("PRAGMA foreign_keys = ON");
     runMigrations(this.database);
+    this.database.exec(`PRAGMA cache_size = -${DEFAULT_SQLITE_CACHE_SIZE_KIB}`);
   }
 
   writeBundle(bundle: ConversationBundle) {

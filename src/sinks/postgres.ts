@@ -13,6 +13,10 @@ import type {
 
 type PostgresSinkConfig = LegacySinkConfig | SnapshotSinkConfig;
 type QueryRow = Record<string, unknown>;
+type QueryRunner = (query: string, params?: unknown[]) => Promise<QueryRow[]>;
+type SqlUnsafeExecutor = {
+  unsafe(query: string, params?: any[]): Promise<unknown>;
+};
 
 type SchemaVersion = {
   raw: string;
@@ -26,9 +30,11 @@ const DEFAULT_CONVERSATIONS_TABLE = "jin_conversations";
 const DEFAULT_MESSAGES_TABLE = "jin_messages";
 const DEFAULT_TOOL_CALLS_TABLE = "jin_tool_calls";
 const META_TABLE = "jin_meta";
-const LOCAL_SCHEMA_VERSION = "2.3";
+const LOCAL_SCHEMA_VERSION = "2.4";
 const LEGACY_PAYLOAD_ERROR =
   "PostgresSink requires v2 push payloads with conversation, messages, and toolCalls.";
+const REQUIRED_TOOL_CALLS_PRIMARY_KEY =
+  "PRIMARY KEY (conversation_id, message_id, id)";
 
 export class PostgresSink implements LegacySink, SnapshotSink {
   id = "postgres";
@@ -119,38 +125,53 @@ export class PostgresSink implements LegacySink, SnapshotSink {
   }
 
   private async pushSnapshot(payload: SnapshotPushPayload): Promise<void> {
-    await this.query("BEGIN");
-
-    try {
-      await this.upsertConversation(payload);
-      await this.query(
+    await this.withSnapshotTransaction(async (query) => {
+      await this.upsertConversation(payload, query);
+      await query(
         `DELETE FROM ${this.toolCallsTable} WHERE conversation_id = $1`,
         [payload.conversation.id],
       );
-      await this.query(
+      await query(
         `DELETE FROM ${this.messagesTable} WHERE conversation_id = $1`,
         [payload.conversation.id],
       );
 
       for (const message of payload.messages) {
-        await this.insertMessage(message);
+        await this.insertMessage(message, query);
       }
 
       for (const toolCall of payload.toolCalls) {
-        await this.insertToolCall(toolCall);
+        await this.insertToolCall(toolCall, query);
       }
-
-      await this.query("COMMIT");
-    } catch (error) {
-      await this.safeRollback();
-      throw error;
-    }
+    });
   }
 
-  private async upsertConversation(payload: SnapshotPushPayload): Promise<void> {
+  private async withSnapshotTransaction(work: (query: QueryRunner) => Promise<void>): Promise<void> {
+    if (
+      this.connectionString.startsWith("https://") ||
+      this.connectionString.startsWith("http://")
+    ) {
+      await this.query("BEGIN");
+      try {
+        await work((query, params) => this.query(query, params));
+        await this.query("COMMIT");
+      } catch (error) {
+        await this.safeRollback();
+        throw error;
+      }
+
+      return;
+    }
+
+    await this.getConn().begin(async (transaction) => {
+      await work((query, params) => this.queryPsqlWith(transaction, query, params));
+    });
+  }
+
+  private async upsertConversation(payload: SnapshotPushPayload, query: QueryRunner): Promise<void> {
     const conversation = payload.conversation;
 
-    await this.query(
+    await query(
       `INSERT INTO ${this.conversationsTable} (
          id,
          trace_id,
@@ -233,8 +254,11 @@ export class PostgresSink implements LegacySink, SnapshotSink {
     );
   }
 
-  private async insertMessage(message: SnapshotPushPayload["messages"][number]): Promise<void> {
-    await this.query(
+  private async insertMessage(
+    message: SnapshotPushPayload["messages"][number],
+    query: QueryRunner,
+  ): Promise<void> {
+    await query(
       `INSERT INTO ${this.messagesTable} (
          id,
          conversation_id,
@@ -278,8 +302,11 @@ export class PostgresSink implements LegacySink, SnapshotSink {
     );
   }
 
-  private async insertToolCall(toolCall: SnapshotPushPayload["toolCalls"][number]): Promise<void> {
-    await this.query(
+  private async insertToolCall(
+    toolCall: SnapshotPushPayload["toolCalls"][number],
+    query: QueryRunner,
+  ): Promise<void> {
+    await query(
       `INSERT INTO ${this.toolCallsTable} (
          id,
          conversation_id,
@@ -353,6 +380,19 @@ export class PostgresSink implements LegacySink, SnapshotSink {
         };
       }
 
+      const toolCallConstraint = await this.readPrimaryKeyDefinition(
+        this.toolCallsTable,
+      );
+      if (toolCallConstraint !== REQUIRED_TOOL_CALLS_PRIMARY_KEY) {
+        return {
+          ok: false,
+          error:
+            `Remote schema is incompatible: ${this.toolCallsTable} must use ` +
+            `${REQUIRED_TOOL_CALLS_PRIMARY_KEY}. Run \`jin team schema apply\` ` +
+            "to repair the Postgres integration schema.",
+        };
+      }
+
       return { ok: true };
     } catch (error) {
       if (looksLikeMissingMetaTable(error)) {
@@ -413,9 +453,53 @@ export class PostgresSink implements LegacySink, SnapshotSink {
   }
 
   private async queryPsql(sql: string, params?: unknown[]): Promise<QueryRow[]> {
-    const rows = await this.getConn().unsafe(sql, (params ?? []) as any[]);
+    return await this.getConn().begin(async (transaction) =>
+      this.queryPsqlWith(transaction, sql, params),
+    );
+  }
+
+  private async queryPsqlWith(
+    executor: SqlUnsafeExecutor,
+    query: string,
+    params?: unknown[],
+  ): Promise<QueryRow[]> {
+    const rows = await executor.unsafe(query, (params ?? []) as any[]);
+    return normalizeQueryRows(rows);
+  }
+
+  private async readPrimaryKeyDefinition(
+    qualifiedTableName: string,
+  ): Promise<string | null> {
+    const rows = await this.query(
+      `SELECT pg_get_constraintdef(oid) AS definition
+         FROM pg_constraint
+        WHERE conrelid = to_regclass($1)
+          AND contype = 'p'
+        LIMIT 1`,
+      [toRegclassName(qualifiedTableName)],
+    );
+
+    const definition = rows[0]?.definition;
+    return typeof definition === "string" && definition.trim() !== ""
+      ? definition
+      : null;
+  }
+}
+
+function normalizeQueryRows(rows: unknown): QueryRow[] {
+  if (!rows) {
+    return [];
+  }
+
+  if (Array.isArray(rows)) {
+    return rows as QueryRow[];
+  }
+
+  if (typeof (rows as Iterable<unknown>)[Symbol.iterator] === "function") {
     return Array.from(rows as Iterable<QueryRow>);
   }
+
+  return [];
 }
 
 function resolveTableNames(schema: string, configuredTable?: string): {
@@ -458,6 +542,10 @@ function resolveTableNames(schema: string, configuredTable?: string): {
 
 function qualifyIdentifier(schema: string, table: string): string {
   return `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
+}
+
+function toRegclassName(qualifiedIdentifier: string): string {
+  return qualifiedIdentifier.replaceAll('"', "");
 }
 
 function quoteIdentifier(identifier: string): string {

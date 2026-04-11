@@ -1,75 +1,33 @@
 flowchart TD
   subgraph Runtime["Runtime / Live blockers"]
-    PERF2["W3-PERF-02<br/>approved<br/>runtime RSS fix landed<br/>guard stays frozen at 200 / 256 MB"]
-    AD07["W3-ADAPTER-07<br/>approved<br/>Claude path precedence fixed<br/>stack overflow fixed<br/>live peak still ~812 MB"]
-    AD09["W3-ADAPTER-09<br/>approved<br/>Claude duplicate-id fix landed<br/>live validation clean"]
-    VALIDATE["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude fixed<br/>Cursor next"]
-    SINK04["W3-SINK-04<br/>needs_codex<br/>transport + schema fixes landed<br/>queued behind Claude/Cursor follow-ups"]
-    E2E["W3-E2E-01<br/>review_ready<br/>wait for stable runtime"]
-    SERVICE["W3-SERVICE-01<br/>in_progress<br/>wait for stable runtime"]
-  end
-
-  subgraph Perf["Repeatable perf system"]
-    SCALE["W3-SCALE-01<br/>approved<br/>1x / 10x / 100x datasets"]
-    PERF3["W3-PERF-03<br/>approved<br/>strict adapter targeting fixed<br/>peak RSS artifacts normalized"]
-    BP01["W3-BP-01<br/>approved<br/>BP-10 + BP hardening"]
-  end
-
-  subgraph Reviews["Review outcomes"]
-    RPERF2["W3-PERF-02 review<br/>approved"]
-    RSCALE["W3-SCALE-01 review<br/>approved"]
-    RPERF3["W3-PERF-03 review<br/>approved"]
-    RBP01["W3-BP-01 review<br/>approved"]
-    RAD07["W3-ADAPTER-07 review<br/>approved"]
-    RVALIDATE["W3-VALIDATE-01 review<br/>approved"]
-  end
-
-  subgraph Rechecks["Recent codex follow-ups"]
-    PERF2FIX["W3-PERF-02 recheck<br/>completed<br/>removed watch.ts RSS env drift"]
-    PERF3FIX["W3-PERF-03 recheck<br/>completed<br/>strict adapter failures + normalized peak RSS"]
-    SINKFIX["W3-SINK-04 review<br/>needs_codex<br/>code fix ready<br/>await local + Railway row proof"]
+    PERF4["W3-PERF-04<br/>in_progress<br/>built no-sink startup still dies in Claude<br/>759/922 at 259 MB vs frozen 256 MB guard"]
+    SINK04["W3-SINK-04<br/>needs_codex<br/>transport + schema fixes landed<br/>waiting on perf closure + clean-start sink proof"]
+    E2E["W3-E2E-01<br/>review_ready<br/>wait for perf closure + sink proof"]
+    SERVICE["W3-SERVICE-01<br/>blocked<br/>wait for perf closure + sink proof"]
   end
 
   subgraph Evidence["Fresh evidence"]
-    CLEAN["Fresh-start litmus<br/>clean config + reprovision<br/>SQLite populated<br/>both Postgres sinks stayed 0/0"]
-    LIVE["W3-VALIDATE-01 audit<br/>Codex clean<br/>Claude fixed by AD09<br/>Cursor null bundles / DB open issue"]
+    BUILT["Built ./jin no-sink run<br/>759 conversations / 31,906 messages / 11,649 tool calls<br/>bounded shutdown at Claude 759/922"]
+    RSS400["Exploratory 400 MB runtime run<br/>all 1270 conversations loaded<br/>~279 MB sampled peak / ~286 MB idle"]
+    PUSHED["Remote checkpoints pushed<br/>0.8.5 + Cursor follow-up + perf/docs slices<br/>feat/rewrite-ontology @ 2d9d14b"]
   end
 
   subgraph Release["Downstream"]
-    PR["W3-PR-01<br/>in_progress<br/>wait for runtime stability"]
-    CLEANUP["W3-CLEANUP-01<br/>approved<br/>cleanup commit landing<br/>userId blockers cleared"]
+    PR["W3-PR-01<br/>blocked<br/>wait for perf + sink stability"]
     UI["W3-UI-01<br/>blocked<br/>superseded by cleanup lane"]
   end
 
   HEAP["jin-heap-inspect<br/>manual diagnostic session"]
 
-  AD07 --> VALIDATE
-  PERF3 --> VALIDATE
-  VALIDATE --> AD09
-  AD09 --> SINK04
-  CLEAN --> SINK04
-  LIVE --> VALIDATE
-  PERF2 --> E2E
-  PERF2 --> SERVICE
-  PERF2 --> SINK04
-  SCALE --> PERF3
-  PERF3 --> BP01
-  PERF2 --> RPERF2
-  SCALE --> RSCALE
-  PERF3 --> RPERF3
-  BP01 --> RBP01
-  AD07 --> RAD07
-  VALIDATE --> RVALIDATE
-  RPERF2 --> PERF2FIX
-  RPERF3 --> PERF3FIX
-  SINK04 --> SINKFIX
-  AD07 --> E2E
+  BUILT --> PERF4
+  RSS400 --> PERF4
+  PUSHED --> PR
+  PERF4 --> E2E
+  PERF4 --> SERVICE
+  PERF4 --> SINK04
   SINK04 --> E2E
-  BP01 --> PR
+  SINK04 --> PR
   E2E --> PR
   SERVICE --> PR
-  SINK04 --> PR
-  PR --> CLEANUP
-  CLEANUP --> UI
-  HEAP -. supports diagnosis .-> AD07
-  HEAP -. supports diagnosis .-> PERF2
+  PR --> UI
+  HEAP -. supports diagnosis .-> PERF4

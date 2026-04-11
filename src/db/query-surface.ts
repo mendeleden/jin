@@ -47,8 +47,19 @@ export interface OverviewSummary {
   toolCalls: number;
   traces: number;
   tokens: number;
+  displayTokens: number;
+  cacheTokens: number;
   cost: number;
   remotes: number;
+}
+
+export interface AdapterAnalysisSummary {
+  conversations: number;
+  messages: number;
+  tokens: number;
+  displayTokens: number;
+  cacheTokens: number;
+  cost: number;
 }
 
 export function parseSinceInput(input: string): string {
@@ -192,7 +203,9 @@ export function getOverviewSummary(db: Database): OverviewSummary {
        COALESCE(SUM(message_count), 0) AS messages,
        COALESCE(SUM(tool_count), 0) AS tool_calls,
        COUNT(DISTINCT trace_id) AS traces,
-       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS tokens,
+       COALESCE(SUM(input_tokens + output_tokens), 0) AS display_tokens,
+       COALESCE(SUM(cache_read + cache_write), 0) AS cache_tokens,
        COALESCE(SUM(est_cost), 0) AS cost,
        COUNT(DISTINCT CASE WHEN git_remote != '' THEN git_remote END) AS remotes
      FROM conversations`,
@@ -202,6 +215,8 @@ export function getOverviewSummary(db: Database): OverviewSummary {
     tool_calls: number;
     traces: number;
     tokens: number;
+    display_tokens: number;
+    cache_tokens: number;
     cost: number;
     remotes: number;
   };
@@ -212,6 +227,8 @@ export function getOverviewSummary(db: Database): OverviewSummary {
     toolCalls: row.tool_calls ?? 0,
     traces: row.traces ?? 0,
     tokens: row.tokens ?? 0,
+    displayTokens: row.display_tokens ?? 0,
+    cacheTokens: row.cache_tokens ?? 0,
     cost: row.cost ?? 0,
     remotes: row.remotes ?? 0,
   };
@@ -219,13 +236,15 @@ export function getOverviewSummary(db: Database): OverviewSummary {
 
 export function analyzeByAdapter(
   db: Database,
-): Record<string, { conversations: number; messages: number; tokens: number; cost: number }> {
+): Record<string, AdapterAnalysisSummary> {
   const rows = db.prepare(
     `SELECT
        adapter_id,
        COUNT(*) AS conversations,
        COALESCE(SUM(message_count), 0) AS messages,
-       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS tokens,
+       COALESCE(SUM(input_tokens + output_tokens), 0) AS display_tokens,
+       COALESCE(SUM(cache_read + cache_write), 0) AS cache_tokens,
        COALESCE(SUM(est_cost), 0) AS cost
      FROM conversations
      GROUP BY adapter_id
@@ -235,6 +254,8 @@ export function analyzeByAdapter(
     conversations: number;
     messages: number;
     tokens: number;
+    display_tokens: number;
+    cache_tokens: number;
     cost: number;
   }>;
 
@@ -245,6 +266,8 @@ export function analyzeByAdapter(
         conversations: row.conversations ?? 0,
         messages: row.messages ?? 0,
         tokens: row.tokens ?? 0,
+        displayTokens: row.display_tokens ?? 0,
+        cacheTokens: row.cache_tokens ?? 0,
         cost: row.cost ?? 0,
       },
     ]),
@@ -311,7 +334,7 @@ export function timelineByDay(
        substr(COALESCE(NULLIF(ended_at, ''), started_at), 1, 10) AS day,
        adapter_id,
        COUNT(*) AS sessions,
-       COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS tokens,
        COALESCE(SUM(est_cost), 0) AS cost
      FROM conversations
      WHERE COALESCE(NULLIF(ended_at, ''), started_at) >= ?
@@ -342,7 +365,7 @@ export function listProjectsByRemote(
     `SELECT
        git_remote,
        COUNT(*) AS conversation_count,
-       COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS total_tokens,
        COALESCE(SUM(est_cost), 0) AS total_cost,
        MAX(COALESCE(NULLIF(ended_at, ''), started_at)) AS last_seen,
        GROUP_CONCAT(DISTINCT adapter_id) AS tools

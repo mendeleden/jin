@@ -3,7 +3,7 @@ title: "BP-04: Adapter Contract"
 status: reviewed
 created: 2026-03-28
 depends-on: [BP-01]
-informs: [BP-02, BP-03, BP-05]
+informs: [BP-02, BP-03, BP-05, BP-10]
 ---
 
 # BP-04: Adapter Contract
@@ -161,6 +161,10 @@ Every rich adapter review must answer:
 5. Do helper caches or timeout wrappers retain successful large results longer
    than the adapter/store boundary needs them?
 
+Rich-adapter fixture tests are not enough on their own. If an adapter packet
+changes discovery, sibling-ref reuse, or startup-scan behavior, it also needs
+the representative local and CI-facing validation described in `BP-10`.
+
 **What's NOT on the interface:**
 - No `conversations()` / `messages()` split — replaced by bundle
 - No snapshot tokens or transaction lifecycle — eventual consistency
@@ -240,8 +244,18 @@ This is acceptable because:
   recovery) for marginal benefit (saving 2-5 minutes on daemon restart)
 
 If cold-start performance becomes a problem at scale, adapter state can be
-persisted to a `_jin_adapter_state` table in the store. This is a future
-optimization, not a launch requirement.
+persisted to a `_jin_adapter_state` table in the store only when:
+- the persisted data is still lightweight checkpoint metadata
+  (offsets, file stats, signatures, source-local ref IDs, parent maps, scan
+  cursors)
+- losing or corrupting that state degrades to a bounded full scan, not wrong
+  conversation data
+- no full bundles, message bodies, tool calls, whole-source parses, or sink
+  payloads are persisted as adapter state
+- representative validation shows the default in-memory startup path no longer
+  meets the `BP-10` release budget
+
+This is a future optimization, not a launch requirement.
 
 ### Deletion Policy
 
@@ -560,6 +574,8 @@ documentation, see:
 - BP-02: Data Flow — how the pipeline calls adapters and writes to the store
 - BP-03: Conversation Model — how trace_id/parent_id/relationship work
 - BP-05: Store & Migration — store write semantics, transaction boundaries
+- BP-10: Performance Validation — how adapter memory changes are proven on
+  representative workloads before release
 - Ontology §4: Adapter capability matrix
 - Ontology §6: Per-adapter field mapping tables
 - Adapter investigations: `docs/adapters/cursor/`, `docs/adapters/codex/`

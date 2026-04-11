@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -34,10 +35,14 @@ describe("v2 db store spine", () => {
     const versionRow = first.database
       .prepare("PRAGMA user_version")
       .get() as { user_version?: number } | undefined;
+    const cacheSizeRow = first.database
+      .prepare("PRAGMA cache_size")
+      .get() as { cache_size?: number } | undefined;
 
     expect(second).toBe(first);
     expect(first.dbPath).toBe(join(dir, "store.db"));
     expect(versionRow?.user_version).toBe(LATEST_USER_VERSION);
+    expect(cacheSizeRow?.cache_size).toBe(-4096);
   });
 
   test("computes a deterministic bundle hash across equivalent ordering", () => {
@@ -81,6 +86,39 @@ describe("v2 db store spine", () => {
 
     expect(computeBundleHash(base)).toBe(computeBundleHash(equivalent));
     expect(computeBundleHash(base)).not.toBe(computeBundleHash(changed));
+  });
+
+  test("matches the legacy canonical JSON hash output", () => {
+    const bundle = makeBundle("legacy-hash", {
+      messages: [
+        makeMessage("legacy-2", {
+          sequence: 2,
+          content: "second",
+          toolUses: [
+            makeToolCall("legacy-tool-b", {
+              name: "tool-b",
+              input: "{\"b\":2}",
+              output: "b",
+              durationMs: 200,
+              timestamp: "2026-03-30T09:00:02.000Z",
+            }),
+            makeToolCall("legacy-tool-a", {
+              name: "tool-a",
+              input: "{\"a\":1}",
+              output: "a",
+              durationMs: 100,
+              timestamp: "2026-03-30T09:00:01.000Z",
+            }),
+          ],
+        }),
+        makeMessage("legacy-1", {
+          sequence: 1,
+          content: "first",
+        }),
+      ],
+    });
+
+    expect(computeBundleHash(bundle)).toBe(legacyBundleHash(bundle));
   });
 
   test("keeps revision stable for unchanged bundles and bumps exactly once for real changes", () => {
@@ -403,4 +441,65 @@ function makeToolCall(
     durationMs: overrides.durationMs ?? 12,
     timestamp: overrides.timestamp ?? "2026-04-01T10:01:01.000Z",
   };
+}
+
+function legacyBundleHash(bundle: ConversationBundle): string {
+  const canonicalConversation = {
+    id: bundle.conversation.id,
+    traceId: bundle.conversation.traceId,
+    parentId: bundle.conversation.parentId,
+    relationship: bundle.conversation.relationship,
+    forkPoint: bundle.conversation.forkPoint,
+    adapterId: bundle.conversation.adapterId,
+    name: bundle.conversation.name,
+    cwd: bundle.conversation.cwd,
+    gitRemote: bundle.conversation.gitRemote,
+    branch: bundle.conversation.branch,
+    model: bundle.conversation.model,
+    startedAt: bundle.conversation.startedAt,
+    endedAt: bundle.conversation.endedAt,
+    sourcePath: bundle.conversation.sourcePath,
+    sourceFormat: bundle.conversation.sourceFormat,
+  } satisfies ParsedConversation;
+
+  const canonicalMessages = [...bundle.messages]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      recordType: message.recordType,
+      model: message.model,
+      sequence: message.sequence,
+      turn: message.turn,
+      isSidechain: message.isSidechain,
+      parentMessageId: message.parentMessageId,
+      inputTokens: message.inputTokens,
+      outputTokens: message.outputTokens,
+      cacheRead: message.cacheRead,
+      cacheWrite: message.cacheWrite,
+      thinkingContent: message.thinkingContent,
+      thinkingTokens: message.thinkingTokens,
+      timestamp: message.timestamp,
+      toolUses: [...message.toolUses]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((toolCall) => ({
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+          output: toolCall.output,
+          isError: toolCall.isError,
+          durationMs: toolCall.durationMs,
+          timestamp: toolCall.timestamp,
+        } satisfies ParsedToolCall)),
+    } satisfies ParsedMessage));
+
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        conversation: canonicalConversation,
+        messages: canonicalMessages,
+      } satisfies ConversationBundle),
+    )
+    .digest("hex");
 }

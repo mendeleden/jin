@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type {
   Conversation,
+  ParsedMessage,
   ParsedConversation,
 } from "../contracts/conversations";
 import { estimateCost } from "../pricing";
@@ -38,6 +39,18 @@ interface MessageCostRow {
   output_tokens: number;
   cache_read: number;
   cache_write: number;
+}
+
+export interface ConversationDerivedFields {
+  durationMs: number;
+  messageCount: number;
+  toolCount: number;
+  turnCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  estCost: number;
 }
 
 export function upsertConversation(
@@ -101,35 +114,6 @@ export function recomputeConversationDerivedFields(
   db: Database,
   conversationId: string,
 ): void {
-  const aggregate = db
-    .prepare(
-      `SELECT
-        COUNT(*) AS message_count,
-        COALESCE(MAX(turn), 0) AS turn_count,
-        COALESCE(SUM(input_tokens), 0) AS input_tokens,
-        COALESCE(SUM(output_tokens), 0) AS output_tokens,
-        COALESCE(SUM(cache_read), 0) AS cache_read,
-        COALESCE(SUM(cache_write), 0) AS cache_write
-       FROM messages
-       WHERE conversation_id = ?`,
-    )
-    .get(conversationId) as {
-    message_count: number;
-    turn_count: number;
-    input_tokens: number;
-    output_tokens: number;
-    cache_read: number;
-    cache_write: number;
-  };
-
-  const toolCountRow = db
-    .prepare(
-      `SELECT COUNT(*) AS tool_count
-       FROM tool_calls
-       WHERE conversation_id = ?`,
-    )
-    .get(conversationId) as { tool_count: number };
-
   const conversationRow = db
     .prepare(
       `SELECT model, started_at, ended_at
@@ -159,40 +143,56 @@ export function recomputeConversationDerivedFields(
     )
     .all(conversationId) as MessageCostRow[];
 
-  const durationMs = computeDurationMs(
-    conversationRow.started_at,
-    conversationRow.ended_at,
-  );
-  const estCost = estimateConversationCost(
-    messageCostRows,
-    conversationRow.model,
-  );
+  const rows = db
+    .prepare(
+      `SELECT
+        turn,
+        input_tokens,
+        output_tokens,
+        cache_read,
+        cache_write
+       FROM messages
+       WHERE conversation_id = ?`,
+    )
+    .all(conversationId) as Array<{
+    turn: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read: number;
+    cache_write: number;
+  }>;
 
-  db.run(
-    `UPDATE conversations
-     SET
-       duration_ms = ?,
-       message_count = ?,
-       tool_count = ?,
-       turn_count = ?,
-       input_tokens = ?,
-       output_tokens = ?,
-       cache_read = ?,
-       cache_write = ?,
-       est_cost = ?
-     WHERE id = ?`,
-    [
-      durationMs,
-      aggregate.message_count,
-      toolCountRow.tool_count,
-      aggregate.turn_count,
-      aggregate.input_tokens,
-      aggregate.output_tokens,
-      aggregate.cache_read,
-      aggregate.cache_write,
-      estCost,
-      conversationId,
-    ],
+  const derived = {
+    durationMs: computeDurationMs(
+      conversationRow.started_at,
+      conversationRow.ended_at,
+    ),
+    messageCount: rows.length,
+    toolCount: db
+      .prepare(
+        `SELECT COUNT(*) AS tool_count
+         FROM tool_calls
+         WHERE conversation_id = ?`,
+      )
+      .get(conversationId) as { tool_count: number },
+    turnCount: rows.reduce((max, row) => Math.max(max, row.turn), 0),
+    inputTokens: rows.reduce((sum, row) => sum + row.input_tokens, 0),
+    outputTokens: rows.reduce((sum, row) => sum + row.output_tokens, 0),
+    cacheRead: rows.reduce((sum, row) => sum + row.cache_read, 0),
+    cacheWrite: rows.reduce((sum, row) => sum + row.cache_write, 0),
+    estCost: estimateConversationCost(
+      messageCostRows,
+      conversationRow.model,
+    ),
+  };
+
+  persistConversationDerivedFields(
+    db,
+    conversationId,
+    {
+      ...derived,
+      toolCount: derived.toolCount.tool_count,
+    },
   );
 }
 
@@ -272,4 +272,75 @@ function estimateConversationCost(
       )
     );
   }, 0);
+}
+
+export function deriveConversationFields(
+  conversation: ParsedConversation,
+  messages: ReadonlyArray<ParsedMessage>,
+): ConversationDerivedFields {
+  return {
+    durationMs: computeDurationMs(conversation.startedAt, conversation.endedAt),
+    messageCount: messages.length,
+    toolCount: messages.reduce(
+      (sum, message) => sum + message.toolUses.length,
+      0,
+    ),
+    turnCount: messages.reduce((max, message) => Math.max(max, message.turn), 0),
+    inputTokens: messages.reduce(
+      (sum, message) => sum + message.inputTokens,
+      0,
+    ),
+    outputTokens: messages.reduce(
+      (sum, message) => sum + message.outputTokens,
+      0,
+    ),
+    cacheRead: messages.reduce((sum, message) => sum + message.cacheRead, 0),
+    cacheWrite: messages.reduce((sum, message) => sum + message.cacheWrite, 0),
+    estCost: messages.reduce((total, message) => {
+      const model = message.model || conversation.model;
+      return (
+        total +
+        estimateCost(
+          model,
+          message.inputTokens,
+          message.outputTokens,
+          message.cacheRead,
+          message.cacheWrite,
+        )
+      );
+    }, 0),
+  };
+}
+
+export function persistConversationDerivedFields(
+  db: Database,
+  conversationId: string,
+  fields: ConversationDerivedFields,
+): void {
+  db.run(
+    `UPDATE conversations
+     SET
+       duration_ms = ?,
+       message_count = ?,
+       tool_count = ?,
+       turn_count = ?,
+       input_tokens = ?,
+       output_tokens = ?,
+       cache_read = ?,
+       cache_write = ?,
+       est_cost = ?
+     WHERE id = ?`,
+    [
+      fields.durationMs,
+      fields.messageCount,
+      fields.toolCount,
+      fields.turnCount,
+      fields.inputTokens,
+      fields.outputTokens,
+      fields.cacheRead,
+      fields.cacheWrite,
+      fields.estCost,
+      conversationId,
+    ],
+  );
 }

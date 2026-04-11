@@ -3,7 +3,7 @@ title: "BP-02: Data Flow — Adapter → Store → Sink"
 status: reviewed
 created: 2026-03-28
 depends-on: [BP-01, BP-04, BP-05]
-informs: [BP-05, BP-06]
+informs: [BP-05, BP-06, BP-10]
 ---
 
 # BP-02: Data Flow
@@ -480,6 +480,21 @@ On first run or after a nuclear migration:
 | Watcher debounce | 500ms per adapterId:filename | Watcher-level, not pipeline-level |
 | Adapter timeout | 30s per loadConversation, 60s per findChanged | Per-call, logged and skipped |
 
+### Release Validation Handoff
+
+The table above defines the **runtime contract**. It is not, by itself, the release verdict.
+
+`BP-10` owns the repeatable validation ladder that proves these limits on the
+paths that actually failed in practice:
+
+- discovery-only for `findChanged({ kind: "startup-scan" })`
+- ingest with representative store shape
+- integrated startup `ingestAll -> pushDirty`
+- real foreground/daemon runtime including shutdown flush
+
+This blueprint owns the budgets and pipeline semantics. `BP-10` owns the
+artifact rules, local-versus-CI split, and release-gate decision.
+
 ---
 
 ## What This Blueprint Does NOT Cover
@@ -492,3 +507,4 @@ On first run or after a nuclear migration:
 | Sink interface, schema handshake, no-DDL rule | BP-06 |
 | PID management, daemon modes, signal handling | BP-07 |
 | Route matching semantics, config shape | BP-08 |
+| Release perf-validation artifacts and packet-review gate | BP-10 |

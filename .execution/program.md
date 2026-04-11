@@ -1,8 +1,8 @@
 # Program State
 
 - phase: `Wave 3 integration`
-- current date: `2026-04-09`
-- current focus: `W3-ADAPTER-09 is approved; open the Cursor null-bundle / DB-open follow-up next, then rerun live validation, then reconcile sinks, then move to workspace-member / userId work`
+- current date: `2026-04-10`
+- current focus: `W3-PERF-04 is now the only active engineering blocker before another E2E pass; Cursor follow-up W3-ADAPTER-12 is approved, while service/PR lanes are blocked pending runtime and sink stability`
 
 ## TL;DR
 
@@ -19,6 +19,7 @@ flowchart LR
   Perf["W3-PERF-01<br/>approved"]
   Perf2["W3-PERF-02<br/>approved"]
   Perf3["W3-PERF-03<br/>approved"]
+  Perf4["W3-PERF-04<br/>in_progress<br/>honest benchmark now fails in runtime/shutdown<br/>latest spillover reaches Cursor after Claude"]
   Scale["W3-SCALE-01<br/>approved"]
   BPPerf["W3-BP-01<br/>approved"]
   Recovery["W3-RECOVERY-01<br/>approved"]
@@ -26,11 +27,14 @@ flowchart LR
   ClaudeHarden["W3-ADAPTER-06<br/>approved"]
   ClaudeLive["W3-ADAPTER-07<br/>approved"]
   ClaudeFix["W3-ADAPTER-09<br/>approved"]
-  Validate["W3-VALIDATE-01<br/>approved"]
+  CursorFix["W3-ADAPTER-10<br/>approved"]
+  ClaudeTokens["W3-ADAPTER-11<br/>approved"]
+  CursorFollow["W3-ADAPTER-12<br/>approved<br/>Cursor follow-up fix landed<br/>detached re-review clean"]
+  Validate["W3-VALIDATE-01<br/>approved<br/>Codex clean<br/>Claude fixed<br/>Cursor fixed"]
   Sink04["W3-SINK-04<br/>needs_codex"]
   Binary["W3-BIN-01<br/>completed"]
-  Service["W3-SERVICE-01<br/>in_progress"]
-  PR["W3-PR-01<br/>in_progress"]
+  Service["W3-SERVICE-01<br/>blocked"]
+  PR["W3-PR-01<br/>blocked"]
 
   Product --> Startup
   Product --> Team
@@ -52,12 +56,16 @@ flowchart LR
   Service --> Perf2
   Binary --> Perf2
   Perf2 --> Scale
+  Perf2 --> Perf4
   Scale --> Perf3
   Perf2 --> BPPerf
   Perf3 --> Validate
   ClaudeLive --> Validate
   Validate --> ClaudeFix
-  ClaudeFix --> Sink04
+  ClaudeFix --> CursorFix
+  ClaudeFix --> ClaudeTokens
+  CursorFix --> CursorFollow
+  CursorFix --> Sink04
   Perf2 --> Sink04
   Sink04 --> E2E
   Sink04 --> PR
@@ -94,6 +102,7 @@ flowchart LR
 - `W3-PERF-01` — `approved`
 - `W3-PERF-02` — `approved`
 - `W3-PERF-03` — `approved`
+- `W3-PERF-04` — `in_progress`
 - `W3-SCALE-01` — `approved`
 - `W3-BP-01` — `approved`
 - `W3-RECOVERY-01` — `approved`
@@ -102,13 +111,16 @@ flowchart LR
 - `W3-ADAPTER-07` — `approved`
 - `W3-ADAPTER-08` — `queued`
 - `W3-ADAPTER-09` — `approved`
+- `W3-ADAPTER-10` — `approved`
+- `W3-ADAPTER-11` — `approved`
+- `W3-ADAPTER-12` — `approved`
 - `W3-VALIDATE-01` — `approved`
 - `W3-SINK-04` — `needs_codex`
 - `W3-SINK-05` — `queued`
 - `W3-BIN-01` — `completed`
-- `W3-SERVICE-01` — `in_progress`
+- `W3-SERVICE-01` — `blocked`
 - `W3-CLEANUP-01` — `approved`
-- `W3-PR-01` — `in_progress`
+- `W3-PR-01` — `blocked`
 - `W3-UI-01` — `blocked`
 
 ## Active Agents
@@ -147,6 +159,9 @@ flowchart LR
 - `codex-WORKER-claude-code-memory-hardening` (external Codex session id: `019d6b44-f001-7f53-adee-998c44b1c7f4`, tmux session: `jin-w3-adapter-06`, log: `.execution/logs/codex-WORKER-claude-code-memory-hardening.jsonl`)
 - `codex-WORKER-claude-code-live-hardening` (external Codex session id: `019d6f49-1124-77d1-aa81-c141272df282`, tmux session: `jin-w3-adapter-07`, log: `.execution/logs/codex-WORKER-claude-code-live-hardening.jsonl`)
 - `codex-WORKER-claude-code-id-collision` (backing heartbeat: `codex-WORKER-claude-code-id-collision.md`, tmux session: `jin-w3-adapter-09`, log: `.execution/logs/codex-WORKER-claude-code-id-collision.jsonl`)
+- `codex-WORKER-cursor-live-layer3` (backing heartbeat: `codex-WORKER-cursor-live-layer3.md`, external Codex session id: `019d7523-fa10-7332-876f-d1f8dccfce0a`, tmux session: `jin-w3-adapter-10`, log: `.execution/logs/codex-WORKER-cursor-live-layer3.jsonl`)
+- `codex-WORKER-cursor-followup` (backing heartbeat: `codex-WORKER-cursor-followup.md`, tmux session: `closed after direct Codex handoff`, log: `.execution/logs/codex-WORKER-cursor-followup.jsonl`)
+- `codex-REVIEWER-cursor-followup` (backing heartbeat: `codex-REVIEWER-cursor-followup.md`, external Codex session id: `019d7760-c883-79e1-a0da-b0afaa9a1d04`, tmux session: `jin-review-w3-adapter-12-codex`, log: `.execution/logs/codex-REVIEWER-cursor-followup.jsonl`)
 - `codex-REVIEWER-claude-code-id-collision` (backing heartbeat: `codex-REVIEWER-claude-code-id-collision.md`, external Codex session id: `019d7513-3071-75f3-9692-4f5f5eb0b39f`, tmux session: `jin-review-w3-adapter-09-codex`, log: `.execution/logs/codex-REVIEWER-claude-code-id-collision.jsonl`)
 - `codex-VERIFIER-claude-code-id-collision` (backing heartbeat: `codex-VERIFIER-claude-code-id-collision.md`, external Codex session id: `019d7513-30f7-7423-8e12-814309f33357`, tmux session: `jin-verify-w3-adapter-09-codex`, log: `.execution/logs/codex-VERIFIER-claude-code-id-collision.jsonl`, Claude stream log: `.execution/logs/claude-VERIFIER-claude-code-id-collision.stream.jsonl`)
 - `codex-WORKER-local-binary-smoke` (external Codex session id: `019d6b4a-7423-7380-9116-5cc407ea95f4`, tmux session: `jin-w3-bin`, log: `.execution/logs/codex-WORKER-local-binary-smoke.jsonl`)
@@ -176,8 +191,10 @@ flowchart LR
 ## Next Dispatches
 
 - use the approved `W3-CLEANUP-01` cleanup baseline to keep new work off the removed UI / v1 surfaces
-- open and execute the Cursor null-bundle / DB-open follow-up next, then rerun live validation
-- reconcile `W3-VALIDATE-01` follow-on state after the Cursor lane lands
+- dispatch a narrow Claude/runtime RSS lane immediately; current service death is no longer a Cursor detection question
+- keep the approved `W3-ADAPTER-11` accounting semantics narrow while `W3-PERF-04` continues on the shared Claude adapter surface
+- treat `W3-ADAPTER-12` as closed from the adapter side; keep remaining Cursor work limited to separately documented out-of-scope gaps
+- treat the `W3-VALIDATE-01` adapter follow-on state as closed unless fresh live data reopens it
 - reconcile `W3-SINK-04` after the adapter follow-ups unless sink proof is needed sooner for a release decision
 - keep `W3-SINK-05` queued as a later observability lane for per-sink routed/synced/pending/error stats in `jin status`
 - dispatch `W3-ADAPTER-08` only if the Claude functional fix needs the internal split to stay safe and reviewable
@@ -218,6 +235,9 @@ flowchart LR
 - `W3-PERF-03` is approved; the narrow recheck now hard-fails when requested adapters disappear, normalizes `highWaterMarkBytes` into byte-valued release artifacts, refreshed the packet-local runbook/audit, and reran focused harness tests plus a wrapper proof run
 - `W3-ADAPTER-07` is approved; the lane fixed Claude default-path precedence, removed the live child-recursion / stack-overflow failure, added focused tests and a packet-local audit, and left the remaining `~812 MB` full-dataset pressure explicitly documented as a separate contract/runtime follow-up
 - `W3-ADAPTER-09` is approved on `2026-04-09-W3-ADAPTER-09-codex`; detached review matched the worker handoff with `13/13` focused tests passing, `919` refs -> `919` unique loaded conversation IDs, `0` duplicate IDs, `0` cross-conversation/internal message-ID collisions, and a clean audit-cited `919`-write disposable-store run
-- `W3-VALIDATE-01` is approved on `2026-04-08-W3-VALIDATE-01-codex`; the reusable live-data sanity harness now cleanly validates Codex and leaves two narrow follow-ups: Claude Code duplicate IDs / `messages.id` collisions, and Cursor null bundles / DB-open failure
+- `W3-ADAPTER-10` is approved on `2026-04-09-W3-ADAPTER-10-codex`; the worker fixed Cursor layer3 pointer-root decoding plus conversation-scoped layer3 ids, and the final Cursor-only live rerun on `2026-04-09` was clean at `96` refs / `96` bundles / `0` null bundles / `0` write errors with `90` layer1 refs and `6` layer3 refs
+- `W3-ADAPTER-11` is approved on `2026-04-09-W3-ADAPTER-11-codex`; detached review confirmed the narrow Claude accounting rule with focused tests, a raw fixture probe, and direct inspection of live exact-replay versus same-id/different-usage rows, while keeping the lane out of runtime/sink/schema scope
+- `W3-ADAPTER-12` is approved on the re-review `2026-04-10-W3-ADAPTER-12-codex`; exact-`toolCallId`-first Layer 3 stitching, Layer 1 `cwd` / `thinkingContent` enrichment, and leading-prelude-only fallback naming all verified cleanly with `12/12` focused tests plus packet-local live probes
+- `W3-VALIDATE-01` is approved on `2026-04-08-W3-VALIDATE-01-codex`; the reusable live-data sanity harness now cleanly validates Codex, and its two April 8 adapter follow-ups are now closed by approved packets `W3-ADAPTER-09` and `W3-ADAPTER-10`
 - `W3-SINK-04` is `needs_codex` after code review: the Bun SQL `sql.begin(...)` transport fix and focused regression coverage are in place, but approval still needs an unrestricted clean-start rerun that records local SQLite counts, local+Railway row counts, and representative `_jin_push_state` success rows
 - repo-wide typecheck still fails in legacy files outside these packet boundaries; later Wave 1 and Wave 2 packets need to absorb that integration debt

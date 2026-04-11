@@ -13,6 +13,8 @@ export interface IngestOptions {
   logger?: PipelineLogger;
   findChangedTimeoutMs?: number;
   loadConversationTimeoutMs?: number;
+  reclaimBetweenAdapters?: boolean;
+  trackChangedConversationIds?: boolean;
   onBatchProcessed?: (info: {
     adapterId: string;
     processedRefs: number;
@@ -45,7 +47,7 @@ export async function ingestOne(
     DEFAULT_INGEST_BATCH_SIZE,
   );
   const batchSize =
-    adapter.id === "codex" ? 1 : configuredBatchSize;
+    needsSingleRefIngestBatch(adapter.id) ? 1 : configuredBatchSize;
   const findChangedTimeoutMs = normalizeTimeoutMs(
     options.findChangedTimeoutMs,
     DEFAULT_FIND_CHANGED_TIMEOUT_MS,
@@ -78,7 +80,14 @@ export async function ingestOne(
     return EMPTY_INGEST_RESULT;
   }
 
-  const changedConversationIds = new Set<string>();
+  releaseAdapterDiscoveryMemory(adapter);
+
+  const trackChangedConversationIds =
+    options.trackChangedConversationIds !== false;
+  const changedConversationIds = trackChangedConversationIds
+    ? new Set<string>()
+    : null;
+  let anyChanged = false;
   let loadedConversationCount = 0;
 
   for (let start = 0; start < refs.length; start += batchSize) {
@@ -104,7 +113,8 @@ export async function ingestOne(
 
         const result = store.writeBundle(bundle);
         if (result.changed) {
-          changedConversationIds.add(bundle.conversation.id);
+          anyChanged = true;
+          changedConversationIds?.add(bundle.conversation.id);
         }
       } catch (error) {
         if (error instanceof AdapterCallTimeoutError) {
@@ -123,8 +133,8 @@ export async function ingestOne(
 
     const hasMoreRefs = start + batch.length < refs.length;
 
-    if (adapter.id === "codex") {
-      await reclaimCodexBatchMemory();
+    if (needsAggressiveBatchReclaim(adapter.id)) {
+      await reclaimAdapterBatchMemory(adapter, store, start + batch.length);
     }
 
     if (hasMoreRefs) {
@@ -145,8 +155,8 @@ export async function ingestOne(
   return {
     scannedRefCount: refs.length,
     loadedConversationCount,
-    changedConversationIds: [...changedConversationIds],
-    anyChanged: changedConversationIds.size > 0,
+    changedConversationIds: changedConversationIds ? [...changedConversationIds] : [],
+    anyChanged,
   };
 }
 
@@ -156,25 +166,37 @@ export async function ingestAll(
   hint?: ChangeHint,
   options: IngestOptions = {},
 ): Promise<IngestResult> {
-  const changedConversationIds = new Set<string>();
+  const trackChangedConversationIds =
+    options.trackChangedConversationIds !== false;
+  const changedConversationIds = trackChangedConversationIds
+    ? new Set<string>()
+    : null;
   let scannedRefCount = 0;
   let loadedConversationCount = 0;
+  let anyChanged = false;
 
   for (const adapter of adapters) {
     const result = await ingestOne(adapter, store, hint, options);
     scannedRefCount += result.scannedRefCount;
     loadedConversationCount += result.loadedConversationCount;
+    anyChanged ||= result.anyChanged;
 
-    for (const conversationId of result.changedConversationIds) {
-      changedConversationIds.add(conversationId);
+    if (changedConversationIds) {
+      for (const conversationId of result.changedConversationIds) {
+        changedConversationIds.add(conversationId);
+      }
+    }
+
+    if (options.reclaimBetweenAdapters) {
+      await reclaimAdapterBoundaryMemory();
     }
   }
 
   return {
     scannedRefCount,
     loadedConversationCount,
-    changedConversationIds: [...changedConversationIds],
-    anyChanged: changedConversationIds.size > 0,
+    changedConversationIds: changedConversationIds ? [...changedConversationIds] : [],
+    anyChanged,
   };
 }
 
@@ -250,7 +272,79 @@ class AdapterCallTimeoutError extends Error {
   }
 }
 
-async function reclaimCodexBatchMemory(): Promise<void> {
+function needsSingleRefIngestBatch(adapterId: string): boolean {
+  return (
+    adapterId === "codex" ||
+    adapterId === "claude-code" ||
+    adapterId === "cursor"
+  );
+}
+
+function needsAggressiveBatchReclaim(adapterId: string): boolean {
+  return (
+    adapterId === "codex" ||
+    adapterId === "claude-code" ||
+    adapterId === "cursor"
+  );
+}
+
+async function reclaimAdapterBatchMemory(
+  adapter: Adapter,
+  store: ConversationStore,
+  _processedRefs: number,
+): Promise<void> {
+  const releasableAdapter = adapter as Adapter & {
+    releaseTransientMemory?: () => void;
+  };
+  releasableAdapter.releaseTransientMemory?.();
+  if (needsAggressiveBatchReclaim(adapter.id)) {
+    reclaimSqliteStoreMemory(store);
+  }
+  await collectProcessGarbage(true);
+}
+
+function releaseAdapterDiscoveryMemory(adapter: Adapter): void {
+  const releasableAdapter = adapter as Adapter & {
+    releaseDiscoveryMemory?: () => void;
+  };
+  releasableAdapter.releaseDiscoveryMemory?.();
+}
+
+function reclaimSqliteStoreMemory(store: ConversationStore): void {
+  const sqliteStore = store as ConversationStore & {
+    database?: {
+      exec?: (sql: string) => unknown;
+    };
+  };
+  const exec = sqliteStore.database?.exec;
+  if (typeof exec !== "function") {
+    return;
+  }
+
+  try {
+    exec.call(sqliteStore.database, "PRAGMA wal_checkpoint(PASSIVE)");
+    exec.call(sqliteStore.database, "PRAGMA shrink_memory");
+  } catch {
+    // Skip SQLite-specific reclaim when the active store does not support it.
+  }
+}
+
+async function reclaimProcessMemory(
+  store: ConversationStore,
+  doubleCollect = true,
+): Promise<void> {
+  reclaimSqliteStoreMemory(store);
+  await collectProcessGarbage(doubleCollect);
+}
+
+async function reclaimAdapterBoundaryMemory(): Promise<void> {
+  await collectProcessGarbage(true);
+}
+
+async function collectProcessGarbage(doubleCollect = true): Promise<void> {
   Bun.gc(true);
   await Bun.sleep(0);
+  if (doubleCollect) {
+    Bun.gc(true);
+  }
 }

@@ -17,17 +17,51 @@ afterEach(() => {
 });
 
 describe("PostgresSink", () => {
-  test("healthCheck succeeds when the schema version matches", async () => {
+  test("healthCheck succeeds when the schema version and tool-call key match", async () => {
     const calls: SqlCall[] = [];
 
-    setSqlTransport(calls, async () => ({ rows: [{ value: "2.3" }] }));
+    setSqlTransport(calls, async (call) => {
+      if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
+        return { rows: [{ value: "2.4" }] };
+      }
+
+      if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
+        return { rows: [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }] };
+      }
+
+      return { rows: [] };
+    });
 
     const result = (await makeSink().healthCheck()) as SinkHealth;
 
     expect(result).toEqual({ ok: true });
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.query).toContain(`SELECT value FROM "public"."jin_meta"`);
     expect(calls[0]?.params).toEqual(["schema_version"]);
+    expect(calls[1]?.query).toContain(`SELECT pg_get_constraintdef(oid) AS definition`);
+  });
+
+  test("healthCheck refuses the sink when the remote tool-call key is still legacy-shaped", async () => {
+    const calls: SqlCall[] = [];
+
+    setSqlTransport(calls, async (call) => {
+      if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
+        return { rows: [{ value: "2.4" }] };
+      }
+
+      if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
+        return { rows: [{ definition: "PRIMARY KEY (id)" }] };
+      }
+
+      return { rows: [] };
+    });
+
+    const result = (await makeSink().healthCheck()) as SinkHealth;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain(`"public"."jin_tool_calls"`);
+    expect(result.error).toContain("PRIMARY KEY (conversation_id, message_id, id)");
+    expect(result.error).toContain("jin team schema apply");
   });
 
   test("push pauses every payload when the remote schema major version is incompatible", async () => {
@@ -101,7 +135,11 @@ describe("PostgresSink", () => {
 
     setSqlTransport(calls, async (call) => {
       if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
-        return { rows: [{ value: "2.3" }] };
+        return { rows: [{ value: "2.4" }] };
+      }
+
+      if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
+        return { rows: [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }] };
       }
 
       if (
@@ -138,14 +176,71 @@ describe("PostgresSink", () => {
     expect(calls.some((call) => call.query.includes(`INSERT INTO "public"."jin_messages"`))).toBe(true);
     expect(calls.some((call) => call.query.includes(`INSERT INTO "public"."jin_tool_calls"`))).toBe(true);
   });
+
+  test("push uses sql.begin for postgres:// schema and DML queries when root-client unsafe is disallowed", async () => {
+    const connectionCalls: SqlCall[] = [];
+    const transactionCalls: SqlCall[] = [];
+    const payloads = [makePayload("conv-psql", 3)];
+
+    const transactionExecutor = {
+      unsafe: async (query: string, params: unknown[] = []) => {
+        transactionCalls.push({ query, params });
+        if (query.includes(`SELECT value FROM "public"."jin_meta"`)) {
+          return [{ value: "2.4" }];
+        }
+        if (query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
+          return [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }];
+        }
+        return [];
+      },
+    };
+
+    const fakeConn = {
+      begin: async <T>(work: (tx: typeof transactionExecutor) => Promise<T>) => {
+        return await work(transactionExecutor);
+      },
+      unsafe: async (query: string, params: unknown[] = []) => {
+        connectionCalls.push({ query, params });
+        throw new Error("Only use sql.begin, sql.reserved or max: 1");
+      },
+      close: async () => {},
+    };
+
+    const sink = makeSink("postgres://postgres.example/jin");
+    (sink as unknown as { conn: unknown }).conn = fakeConn;
+
+    const result = (await sink.push(payloads)) as PushResult;
+
+    expect(result).toEqual({
+      pushed: 1,
+      failed: 0,
+      errors: [],
+    });
+    expect(connectionCalls).toHaveLength(0);
+    expect(
+      transactionCalls.some((call) =>
+        /^\s*(BEGIN|COMMIT|ROLLBACK)\b/i.test(call.query),
+      ),
+    ).toBe(false);
+    expect(
+      transactionCalls.some((call) =>
+        call.query.includes(`SELECT value FROM "public"."jin_meta"`),
+      ),
+    ).toBe(true);
+    expect(
+      transactionCalls.some((call) =>
+        call.query.includes(`INSERT INTO "public"."jin_conversations"`),
+      ),
+    ).toBe(true);
+  });
 });
 
-function makeSink(): PostgresSink {
+function makeSink(connectionString = "https://postgres.example/sql"): PostgresSink {
   return new PostgresSink({
     type: "postgres",
     id: "postgres-ref",
     enabled: true,
-    connectionString: "https://postgres.example/sql",
+    connectionString,
   } as ConstructorParameters<typeof PostgresSink>[0]);
 }
 

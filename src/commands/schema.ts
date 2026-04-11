@@ -11,7 +11,7 @@
  * Lives under `jin team schema ...` per BP-09 (not top-level `jin schema`).
  */
 
-const INTEGRATION_SCHEMA_VERSION = "2.3";
+const INTEGRATION_SCHEMA_VERSION = "2.4";
 
 const POSTGRES_INTEGRATION_DDL = `
 -- Jin Postgres Integration Schema v${INTEGRATION_SCHEMA_VERSION}
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS jin_messages (
 );
 
 CREATE TABLE IF NOT EXISTS jin_tool_calls (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   message_id TEXT NOT NULL REFERENCES jin_messages(id) ON DELETE CASCADE,
   conversation_id TEXT NOT NULL REFERENCES jin_conversations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -85,8 +85,36 @@ CREATE TABLE IF NOT EXISTS jin_tool_calls (
   output TEXT DEFAULT '',
   is_error BOOLEAN DEFAULT FALSE,
   duration_ms INTEGER DEFAULT -1,
-  timestamp TIMESTAMPTZ
+  timestamp TIMESTAMPTZ,
+  PRIMARY KEY (conversation_id, message_id, id)
 );
+
+DO $jin$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'public.jin_tool_calls'::regclass
+       AND conname = 'jin_tool_calls_pkey'
+       AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)'
+  ) THEN
+    ALTER TABLE public.jin_tool_calls
+      DROP CONSTRAINT jin_tool_calls_pkey;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'public.jin_tool_calls'::regclass
+       AND contype = 'p'
+       AND pg_get_constraintdef(oid) = 'PRIMARY KEY (conversation_id, message_id, id)'
+  ) THEN
+    ALTER TABLE public.jin_tool_calls
+      ADD CONSTRAINT jin_tool_calls_pkey
+      PRIMARY KEY (conversation_id, message_id, id);
+  END IF;
+END
+$jin$;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_jin_conv_trace ON jin_conversations(trace_id);
