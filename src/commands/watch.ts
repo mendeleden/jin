@@ -10,6 +10,7 @@ import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
+import { appendDiagnosticEvent } from "../pipeline/diagnostic";
 import { runPipeline } from "../pipeline/loop";
 import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
@@ -63,8 +64,10 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const config = await loadConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
+  const diagnosticPath =
+    process.env.JIN_DIAGNOSTIC_LOG || join(configDir(), "debug.jsonl");
   const sinks = await createActiveSinks(config, log);
-  const activeAdapters = await detectActiveAdapters(config);
+  const activeAdapters = await detectActiveAdapters(config, diagnosticPath);
 
   if (activeAdapters.length === 0) {
     log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
@@ -107,7 +110,14 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   console.log("");
 
   Bun.gc(true);
-  const pipelineHandle = await startPipeline(config, store, sinks, log, activeAdapters);
+  const pipelineHandle = await startPipeline(
+    config,
+    store,
+    sinks,
+    log,
+    activeAdapters,
+    diagnosticPath,
+  );
   await runUntilShutdown(pipelineHandle, store, log);
 }
 
@@ -117,6 +127,7 @@ async function startPipeline(
   sinks: V2Sink[],
   log: RuntimeLog,
   initialAdapters: V2Adapter[],
+  diagnosticPath: string,
 ): Promise<PipelineHandle> {
   let useInitialAdapters = true;
 
@@ -127,7 +138,7 @@ async function startPipeline(
           useInitialAdapters = false;
           return initialAdapters;
         }
-        return detectActiveAdapters(config);
+        return detectActiveAdapters(config, diagnosticPath);
       },
       store,
       sinks,
@@ -140,6 +151,7 @@ async function startPipeline(
       scheduleStartupWork: false,
       deferWatcherStart: true,
       logger: toPipelineLogger(log),
+      diagnosticLogPath: diagnosticPath,
     });
     for (const adapter of initialAdapters) {
       handle.enqueue({
@@ -265,23 +277,75 @@ async function createActiveSinks(
   return sinks;
 }
 
-async function detectActiveAdapters(config: JinConfig): Promise<V2Adapter[]> {
+async function detectActiveAdapters(
+  config: JinConfig,
+  diagnosticPath?: string,
+): Promise<V2Adapter[]> {
   const adapters = allAdapters(config.adapters);
   const activeAdapters: V2Adapter[] = [];
+  const startedAt = performance.now();
+
+  if (diagnosticPath) {
+    appendDiagnosticEvent(diagnosticPath, {
+      event: "detect:start",
+      candidateIds: adapters.map((adapter) => adapter.id),
+    });
+  }
 
   for (const adapter of adapters) {
     if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "disabled",
+        });
+      }
       continue;
     }
     if (startupProbeBlocked(adapter.id, config.adapters)) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "blocked",
+          reason: "protected-source-startup-blocked",
+        });
+      }
       continue;
     }
 
     try {
-      if (await adapter.detect()) {
+      const detected = await adapter.detect();
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: detected ? "detected" : "missing",
+        });
+      }
+      if (detected) {
         activeAdapters.push(adapter as unknown as V2Adapter);
       }
-    } catch {}
+    } catch (error) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  if (diagnosticPath) {
+    appendDiagnosticEvent(diagnosticPath, {
+      event: "detect:result",
+      activeAdapterIds: activeAdapters.map((adapter) => adapter.id),
+      activeAdapterCount: activeAdapters.length,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
   }
 
   return activeAdapters;

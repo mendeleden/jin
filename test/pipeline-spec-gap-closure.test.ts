@@ -160,7 +160,7 @@ describe("pipeline spec gap closure", () => {
       { logger },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       sinkAttempts: 1,
       pushedConversations: 1,
       failedConversations: 0,

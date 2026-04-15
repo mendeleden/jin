@@ -19,6 +19,13 @@ export interface IngestOptions {
     adapterId: string;
     processedRefs: number;
     totalRefs: number;
+    batchRefIds?: string[];
+    batchSourcePaths?: string[];
+    reclaim?: {
+      beforeRssMb: number;
+      afterRssMb: number;
+      deltaMb: number;
+    };
   }) => void | Promise<void>;
 }
 
@@ -133,9 +140,9 @@ export async function ingestOne(
 
     const hasMoreRefs = start + batch.length < refs.length;
 
-    if (needsAggressiveBatchReclaim(adapter.id)) {
-      await reclaimAdapterBatchMemory(adapter, store, start + batch.length);
-    }
+    const reclaim = needsAggressiveBatchReclaim(adapter.id)
+      ? await reclaimAdapterBatchMemory(adapter, store)
+      : undefined;
 
     if (hasMoreRefs) {
       if (options.onBatchProcessed) {
@@ -143,6 +150,9 @@ export async function ingestOne(
           adapterId: adapter.id,
           processedRefs: start + batch.length,
           totalRefs: refs.length,
+          batchRefIds: batch.map((ref) => ref.id),
+          batchSourcePaths: batch.map((ref) => ref.sourcePath),
+          reclaim,
         });
       }
 
@@ -188,7 +198,7 @@ export async function ingestAll(
     }
 
     if (options.reclaimBetweenAdapters) {
-      await reclaimAdapterBoundaryMemory();
+      await reclaimAdapterBoundaryMemory(store);
     }
   }
 
@@ -291,8 +301,12 @@ function needsAggressiveBatchReclaim(adapterId: string): boolean {
 async function reclaimAdapterBatchMemory(
   adapter: Adapter,
   store: ConversationStore,
-  _processedRefs: number,
-): Promise<void> {
+): Promise<{
+  beforeRssMb: number;
+  afterRssMb: number;
+  deltaMb: number;
+}> {
+  const beforeRssMb = currentRssMb();
   const releasableAdapter = adapter as Adapter & {
     releaseTransientMemory?: () => void;
   };
@@ -301,6 +315,12 @@ async function reclaimAdapterBatchMemory(
     reclaimSqliteStoreMemory(store);
   }
   await collectProcessGarbage(true);
+  const afterRssMb = currentRssMb();
+  return {
+    beforeRssMb,
+    afterRssMb,
+    deltaMb: afterRssMb - beforeRssMb,
+  };
 }
 
 function releaseAdapterDiscoveryMemory(adapter: Adapter): void {
@@ -337,8 +357,24 @@ async function reclaimProcessMemory(
   await collectProcessGarbage(doubleCollect);
 }
 
-async function reclaimAdapterBoundaryMemory(): Promise<void> {
+export async function reclaimAdapterBoundaryMemory(
+  store?: ConversationStore,
+): Promise<{
+  beforeRssMb: number;
+  afterRssMb: number;
+  deltaMb: number;
+}> {
+  const beforeRssMb = currentRssMb();
+  if (store) {
+    reclaimSqliteStoreMemory(store);
+  }
   await collectProcessGarbage(true);
+  const afterRssMb = currentRssMb();
+  return {
+    beforeRssMb,
+    afterRssMb,
+    deltaMb: afterRssMb - beforeRssMb,
+  };
 }
 
 async function collectProcessGarbage(doubleCollect = true): Promise<void> {
@@ -347,4 +383,8 @@ async function collectProcessGarbage(doubleCollect = true): Promise<void> {
   if (doubleCollect) {
     Bun.gc(true);
   }
+}
+
+function currentRssMb(): number {
+  return Math.round(process.memoryUsage().rss / (1024 * 1024));
 }

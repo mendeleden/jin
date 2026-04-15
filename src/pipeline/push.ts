@@ -4,10 +4,12 @@ import type { RouteConfig } from "../contracts/config";
 import type { PushError, PushPayload, Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
 import type { PipelineLogger, PushSummary } from "./types";
+import type { DiagnosticLogger } from "./diagnostic";
 
 export interface PushOptions {
   batchSize?: number;
   logger?: PipelineLogger;
+  diag?: DiagnosticLogger | null;
 }
 
 const NOOP_LOGGER: PipelineLogger = {
@@ -23,6 +25,7 @@ export async function pushDirty(
   options: PushOptions = {},
 ): Promise<PushSummary> {
   const logger = options.logger ?? NOOP_LOGGER;
+  const diag = options.diag ?? null;
   const batchSize = normalizeBatchSize(
     options.batchSize,
     DEFAULT_PUSH_BATCH_SIZE,
@@ -31,6 +34,7 @@ export async function pushDirty(
   let sinkAttempts = 0;
   let pushedConversations = 0;
   let failedConversations = 0;
+  const sinkBreakdown: { sinkId: string; pushed: number; failed: number }[] = [];
 
   for (const sink of sinks) {
     if (!isSinkEnabled(sink)) {
@@ -38,10 +42,14 @@ export async function pushDirty(
       continue;
     }
 
+    let sinkPushed = 0;
+    let sinkFailed = 0;
     const dirtyConversationIds = store.conversationsNeedingPush(sink.id);
     if (dirtyConversationIds.length === 0) {
       continue;
     }
+
+    diag?.pushStart(sink.id, dirtyConversationIds.length);
 
     for (
       let start = 0;
@@ -65,6 +73,7 @@ export async function pushDirty(
         continue;
       }
 
+      diag?.pushBatch(sink.id, payloads.length, payloads.map(p => p.conversation.id));
       sinkAttempts += 1;
 
       try {
@@ -81,6 +90,8 @@ export async function pushDirty(
           const error = errorsByConversation.get(payload.conversation.id);
           if (error) {
             failedConversations += 1;
+            sinkFailed += 1;
+            diag?.pushConversation(sink.id, payload.conversation.id, false, error);
             store.recordPushResult(
               payload.conversation.id,
               sink.id,
@@ -91,6 +102,8 @@ export async function pushDirty(
           }
 
           pushedConversations += 1;
+          sinkPushed += 1;
+          diag?.pushConversation(sink.id, payload.conversation.id, true);
           store.recordPushResult(
             payload.conversation.id,
             sink.id,
@@ -104,6 +117,8 @@ export async function pushDirty(
 
         for (const payload of payloads) {
           failedConversations += 1;
+          sinkFailed += 1;
+          diag?.pushConversation(sink.id, payload.conversation.id, false, message);
           store.recordPushResult(
             payload.conversation.id,
             sink.id,
@@ -117,12 +132,15 @@ export async function pushDirty(
         await Bun.sleep(0);
       }
     }
+
+    sinkBreakdown.push({ sinkId: sink.id, pushed: sinkPushed, failed: sinkFailed });
   }
 
   return {
     sinkAttempts,
     pushedConversations,
     failedConversations,
+    sinkBreakdown,
   };
 }
 

@@ -26,6 +26,7 @@ export interface PushSummary {
   sinkAttempts: number;
   pushedConversations: number;
   failedConversations: number;
+  sinkBreakdown?: { sinkId: string; pushed: number; failed: number }[];
 }
 
 export interface PipelineLogger {
@@ -73,6 +74,7 @@ export interface RunPipelineOptions {
   onShutdownTimeout?: (
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
+  diagnosticLogPath?: string;
 }
 
 export interface PipelineShutdownResult {
