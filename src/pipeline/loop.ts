@@ -261,6 +261,7 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
+                workerIngest: options.workerIngest,
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -298,6 +299,7 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
+                workerIngest: options.workerIngest,
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -335,6 +337,7 @@ export async function runPipeline(
                 loadConversationTimeoutMs,
                 trackChangedConversationIds: false,
                 logger,
+                workerIngest: options.workerIngest,
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
                     `shutdown ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,

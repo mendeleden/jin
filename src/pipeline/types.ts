@@ -1,5 +1,5 @@
 import type { Adapter, ChangeHint } from "../contracts/adapters";
-import type { RouteConfig } from "../contracts/config";
+import type { AdapterConfig, RouteConfig } from "../contracts/config";
 import type { Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
 
@@ -75,6 +75,10 @@ export interface RunPipelineOptions {
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
   diagnosticLogPath?: string;
+  workerIngest?: {
+    command: string[];
+    adapterConfigs: Record<string, AdapterConfig>;
+  };
 }
 
 export interface PipelineShutdownResult {

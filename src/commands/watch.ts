@@ -16,6 +16,7 @@ import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
+import { resolveSelfCommand } from "../runtime/self-command";
 
 type RuntimeLog = (message: string) => void;
 
@@ -152,6 +153,10 @@ async function startPipeline(
       deferWatcherStart: true,
       logger: toPipelineLogger(log),
       diagnosticLogPath: diagnosticPath,
+      workerIngest: {
+        command: resolveSelfCommand(),
+        adapterConfigs: config.adapters,
+      },
     });
     for (const adapter of initialAdapters) {
       handle.enqueue({

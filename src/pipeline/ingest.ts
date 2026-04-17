@@ -4,8 +4,10 @@ import {
   DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
 } from "../contracts/pipeline";
 import type { Adapter, ChangeHint } from "../contracts/adapters";
+import type { AdapterConfig } from "../contracts/config";
 import type { ConversationRef } from "../contracts/conversations";
 import type { ConversationStore } from "../contracts/store";
+import { ingestConversationViaWorker } from "./ingest-worker";
 import type { IngestResult, PipelineLogger } from "./types";
 
 export interface IngestOptions {
@@ -27,6 +29,10 @@ export interface IngestOptions {
       deltaMb: number;
     };
   }) => void | Promise<void>;
+  workerIngest?: {
+    command: string[];
+    adapterConfigs: Record<string, AdapterConfig>;
+  };
 }
 
 const EMPTY_INGEST_RESULT: IngestResult = {
@@ -41,6 +47,8 @@ const NOOP_LOGGER: PipelineLogger = {
   warn() {},
   error() {},
 };
+
+const WORKER_INGEST_ADAPTERS = new Set(["claude-code", "codex"]);
 
 export async function ingestOne(
   adapter: Adapter,
@@ -96,37 +104,76 @@ export async function ingestOne(
     : null;
   let anyChanged = false;
   let loadedConversationCount = 0;
+  const workerSnapshot = resolveWorkerIngestSnapshot(
+    adapter.id,
+    hint,
+    options,
+  );
 
   for (let start = 0; start < refs.length; start += batchSize) {
     const batch = refs.slice(start, start + batchSize);
 
     for (const ref of batch) {
       try {
-        const bundle = await withTimeout(
-          () => adapter.loadConversation(ref),
-          loadConversationTimeoutMs,
-          new AdapterCallTimeoutError({
-            adapterId: adapter.id,
-            operation: "loadConversation",
-            ref,
-            timeoutMs: loadConversationTimeoutMs,
-          }),
-        );
-        if (!bundle) {
-          continue;
-        }
+        if (workerSnapshot) {
+          const result = await ingestConversationViaWorker(
+            options.workerIngest!.command,
+            store,
+            {
+              ref,
+              adapter: workerSnapshot,
+            },
+            {
+              timeoutMs: loadConversationTimeoutMs,
+            },
+          );
+          if (result.kind === "missing") {
+            continue;
+          }
 
-        loadedConversationCount += 1;
+          loadedConversationCount += 1;
+          if (result.changed) {
+            anyChanged = true;
+            changedConversationIds?.add(result.conversationId);
+          }
+        } else {
+          const bundle = await withTimeout(
+            () => adapter.loadConversation(ref),
+            loadConversationTimeoutMs,
+            new AdapterCallTimeoutError({
+              adapterId: adapter.id,
+              operation: "loadConversation",
+              ref,
+              timeoutMs: loadConversationTimeoutMs,
+            }),
+          );
+          if (!bundle) {
+            continue;
+          }
 
-        const result = store.writeBundle(bundle);
-        if (result.changed) {
-          anyChanged = true;
-          changedConversationIds?.add(bundle.conversation.id);
+          loadedConversationCount += 1;
+
+          const result = store.writeBundle(bundle);
+          if (result.changed) {
+            anyChanged = true;
+            changedConversationIds?.add(bundle.conversation.id);
+          }
         }
       } catch (error) {
         if (error instanceof AdapterCallTimeoutError) {
           logger.warn(
             `Adapter ${adapter.id} loadConversation timed out for ${ref.id} after ${loadConversationTimeoutMs}ms; skipping ref`,
+          );
+          continue;
+        }
+
+        if (
+          workerSnapshot &&
+          error instanceof Error &&
+          error.message.includes("worker timed out after")
+        ) {
+          logger.warn(
+            `Adapter ${adapter.id} worker loadConversation timed out for ${ref.id} after ${loadConversationTimeoutMs}ms; skipping ref`,
           );
           continue;
         }
@@ -207,6 +254,34 @@ export async function ingestAll(
     loadedConversationCount,
     changedConversationIds: changedConversationIds ? [...changedConversationIds] : [],
     anyChanged,
+  };
+}
+
+function resolveWorkerIngestSnapshot(
+  adapterId: string,
+  hint: ChangeHint | undefined,
+  options: IngestOptions,
+): {
+  adapterId: string;
+  adapterConfig: AdapterConfig;
+} | null {
+  if (!options.workerIngest) {
+    return null;
+  }
+
+  if (!WORKER_INGEST_ADAPTERS.has(adapterId)) {
+    return null;
+  }
+
+  if (!hint || hint.kind === "fs-change") {
+    return null;
+  }
+
+  return {
+    adapterId,
+    adapterConfig: options.workerIngest.adapterConfigs[adapterId] ?? {
+      enabled: true,
+    },
   };
 }
 

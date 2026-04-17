@@ -19,6 +19,25 @@ The store never communicates with external systems. It doesn't know about
 adapters, sinks, or the pipeline. It provides typed CRUD operations and
 lets callers compose them.
 
+The store owns one canonical write engine for conversation data. Callers may
+arrive with either:
+
+- a fully materialized `ConversationBundle`
+- a staged sequence of conversation metadata + messages
+
+but both routes must converge on the same persistence, hash, revision, and
+derived-field semantics.
+
+Those staged inputs may come from:
+
+- an in-process pipeline caller
+- or a worker subprocess transport owned by the pipeline
+
+In both cases, the store remains parent-owned and subprocess transport stays
+outside the store contract. The preferred pipeline-owned worker transport is
+JSON-RPC 2.0 over stdio with `Content-Length` framing; the store does not
+depend on that transport directly.
+
 ---
 
 ## Access Pattern
@@ -77,54 +96,61 @@ are impossible.
 
 ## Write Semantics
 
-The pipeline calls `store.writeBundle(bundle)` to persist a
-`ConversationBundle`. This is the only write path for conversation data.
+The pipeline persists conversation data through a **store-owned canonical
+write engine**. `writeBundle(bundle)` remains the convenience wrapper for
+callers that already have a full `ConversationBundle`, but it is no longer a
+separate write implementation.
+
+### Canonical Write Session
+
+```typescript
+interface ConversationWriteSession {
+  appendMessage(message: ParsedMessage): void;
+  finish(bundleHash: string): { changed: boolean; revision: number };
+  abort(): void;
+}
+
+interface Store {
+  beginWrite(conversation: ParsedConversation): ConversationWriteSession;
+  writeBundle(bundle: ConversationBundle): { changed: boolean; revision: number };
+}
+```
+
+Contract:
+
+- `beginWrite(...)` opens a store-owned session for one conversation
+- `appendMessage(...)` records the message set for that conversation in
+  canonical order
+- `finish(bundleHash)` applies hash-gated replace/upsert semantics and returns
+  the canonical `{ changed, revision }` result
+- `abort()` discards any staged work for that conversation
+
+The store still owns:
+
+- conversation upsert
+- message/tool-call replacement
+- derived-field recomputation
+- FTS refresh
+- sync-state update
+- revision bump logic
+
+Callers do not get a second persistence engine.
 
 ### writeBundle
 
 ```typescript
 function writeBundle(bundle: ConversationBundle): { changed: boolean; revision: number } {
-  return this.transaction(() => {
-    const convId = bundle.conversation.id;
+  const session = this.beginWrite(bundle.conversation);
 
-    // 1. Compute hash of the normalized bundle
-    const nextHash = computeBundleHash(bundle);
-    const prev = this.getSync(convId);
-
-    // 2. If hash unchanged, data is identical — skip writes
-    if (prev && prev.bundleHash === nextHash) {
-      this.updateSyncTimestamp(convId);  // update ingested_at only
-      return { changed: false, revision: prev.localRevision };
+  try {
+    for (const msg of orderedMessages(bundle.messages)) {
+      session.appendMessage(msg);
     }
-
-    // 3. Data changed — full write
-    this.upsertConversation(bundle.conversation);
-
-    this.db.run("DELETE FROM messages WHERE conversation_id = ?", convId);
-    for (const msg of bundle.messages) {
-      this.insertMessage(convId, msg);
-    }
-
-    this.db.run("DELETE FROM tool_calls WHERE conversation_id = ?", convId);
-    for (const msg of bundle.messages) {
-      for (const tc of msg.toolUses) {
-        this.insertToolCall(convId, msg.id, tc);
-      }
-    }
-
-    this.refreshFts(convId);
-    this.recomputeDerived(convId);
-
-    // 4. Bump revision
-    const revision = prev ? prev.localRevision + 1 : 1;
-    this.upsertSync(convId, {
-      bundleHash: nextHash,
-      localRevision: revision,
-      ingestedAt: now(),
-    });
-
-    return { changed: true, revision };
-  });
+    return session.finish(computeBundleHash(bundle));
+  } catch (error) {
+    session.abort();
+    throw error;
+  }
 }
 ```
 
@@ -338,14 +364,15 @@ CREATE TABLE _jin_push_attempts (
 
 ## Bundle Hash
 
-The bundle hash is a deterministic content hash of all adapter-provided
-data in a `ConversationBundle`. It is the mechanism that prevents false
-dirty state: if the source file hasn't changed, the hash is the same,
-the revision doesn't bump, and no push is scheduled.
+The bundle hash is a deterministic content hash of the canonical normalized
+conversation content. It is the mechanism that prevents false dirty state:
+if the source file hasn't changed, the hash is the same, the revision doesn't
+bump, and no push is scheduled.
 
 ### Algorithm
 
-Full JSON serialization of a canonical object, then SHA-256.
+The canonical definition is full JSON serialization of a canonical object,
+then SHA-256.
 
 ```typescript
 import { createHash } from "crypto";
@@ -412,18 +439,21 @@ function computeBundleHash(bundle: ConversationBundle): string {
 
 ### Why This Approach
 
-**Full JSON + SHA-256** was chosen over incremental streaming or
-structural fingerprinting:
+**Canonical JSON + SHA-256** is the contract. Callers may realize that
+contract either by hashing a fully materialized canonical object or by an
+equivalent incremental encoder that preserves the same field set and
+ordering.
+
+Why this definition was chosen:
 
 - **Compile-time safety.** The canonical object is a typed literal. When
   a field is added to `ParsedConversation` or `ParsedMessage`, TypeScript
-  can enforce its inclusion via `Required<ParsedConversation>`.
-  An incremental approach (manual `.update()` calls) has no such
-  enforcement — a forgotten field is a silent correctness bug.
-- **Simplicity.** ~40 lines. One object, one stringify, one hash.
+  can enforce its inclusion.
 - **Correctness.** Every field is hashed by value. Content-only changes
   (same length, different text) are always detected. A structural
   fingerprint that hashes content *lengths* would miss these.
+- **Implementation flexibility.** Full-bundle callers and future staged
+  writers can share one hash contract without redefining revision semantics.
 
 **Performance:** JSON.stringify on a 5MB bundle takes ~10-20ms. SHA-256
 on the result takes ~2-3ms. At cold start with 500 bundles, that's
@@ -455,10 +485,10 @@ platforms, and Bun versions. This is guaranteed by:
   turn, durationMs) are integers. No floating-point formatting variance.
 - **Defined sort order.** Messages sorted by `sequence` (integer comparison).
   Tool calls sorted by `id` (string comparison).
-- **Hash computed before store writes.** The hash covers adapter output,
-  not stored form. If the store ever normalizes data during writes, the
-  hash must move to after-write or normalization must be applied before
-  hashing.
+- **Hash must match canonical stored content.** If the store normalizes data
+  during staged writes, the final hash input must reflect that same canonical
+  content. A convenience `writeBundle()` caller and a staged writer must
+  converge on the same hash for the same logical conversation.
 
 ---
 
@@ -535,12 +565,14 @@ src/db/
   tool-calls.ts      insertToolCall, getToolCalls (no upsert — replace semantics)
   sync.ts            _jin_sync + _jin_push_state CRUD, conversationsNeedingPush
   search.ts          FTS5 full-text search setup and queries
-  bundle.ts          writeBundle() — composes the above into one transaction
+  write-session.ts   canonical store-owned write session + staged apply engine
+  bundle.ts          writeBundle() convenience wrapper over write-session.ts
 ```
 
-**bundle.ts is the composition point.** It imports from conversations.ts,
-messages.ts, tool-calls.ts, and sync.ts. It is the only file that knows
-the full write sequence (including hash computation and revision logic).
+**The store write session is the composition point.** One implementation
+owns the full write sequence (message/tool-call replacement, FTS refresh,
+derived-field recomputation, sync update, and revision logic). `writeBundle()`
+is the convenience wrapper over that same engine.
 
 **No business logic in db/.** The store doesn't know about adapters,
 sinks, or the pipeline. It provides typed operations; the pipeline

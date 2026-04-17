@@ -170,6 +170,20 @@ the representative local and CI-facing validation described in `BP-10`.
 - No snapshot tokens or transaction lifecycle — eventual consistency
 - No `newMessages()` — delta logic is internal to the adapter
 - No `artifacts()` — deferred, not core to the conversation model
+- No worker/subprocess lifecycle hooks
+- No worker transport protocol surface (no JSON-RPC, frame, or NDJSON methods)
+- No `streamConversation()` or equivalent streaming method in this blueprint
+
+The adapter contract ends at normalized output. The pipeline/store side may
+persist that output either through `writeBundle(bundle)` or through a
+store-owned staged write session, but that persistence choice is outside the
+adapter contract. Adapters remain read-only.
+
+If the pipeline chooses to run adapter work inside a subprocess worker, that is
+an execution detail owned by BP-02/BP-01. The preferred worker transport is
+JSON-RPC 2.0 over stdio with `Content-Length` framing, but that transport is
+still outside the adapter contract. The adapter contract remains
+`findChanged()` plus `loadConversation()`.
 
 ---
 

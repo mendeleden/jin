@@ -20,6 +20,39 @@ The pipeline module (BP-01) owns this flow. It calls adapters, writes to
 the store, and pushes to sinks. The store is the **buffer** between ingest
 and push — they never communicate directly.
 
+Execution strategy is also pipeline-owned. The pipeline MAY execute adapter
+work inline or in a subprocess worker, but that is an internal execution
+policy, not an adapter contract change.
+
+If subprocess workers are used, parent/worker communication is an internal
+pipeline transport. It is not adapter API surface and is not part of BP-04.
+
+### Worker Transport Standard
+
+When the pipeline uses subprocess workers for adapter execution, the preferred
+transport is:
+
+- **JSON-RPC 2.0**
+- over **stdio**
+- with **header-delimited framing** using `Content-Length`
+
+This follows the same general transport shape used by LSP/DAP-style local tool
+protocols: structured requests/responses/notifications over stdio, with logs
+written to `stderr` and protocol traffic reserved for `stdin` / `stdout`.
+
+Transport rules:
+
+- `stdin` / `stdout` are reserved for protocol traffic
+- `stderr` is reserved for logs and diagnostics
+- the parent owns worker lifecycle, request IDs, timeout handling, and process
+  cleanup
+- the worker owns only the execution of the requested adapter operation
+
+Ad hoc newline-delimited frame formats may exist as transitional internal
+implementations, but they are not the architectural target. External
+contributors should treat **JSON-RPC 2.0 over stdio with `Content-Length`
+framing** as the intended standard for parent/worker IPC.
+
 ---
 
 ## The Loop
@@ -87,7 +120,8 @@ pipeline/ingest.ts:
         bundle = adapter.loadConversation(ref)
         if bundle is null: continue        // source disappeared
         const { changed } = store.writeBundle(bundle)
-        // writeBundle returns { changed, revision }.
+        // writeBundle is the convenience wrapper over the store's
+        // canonical write engine and returns { changed, revision }.
         // If hash unchanged, changed=false, no revision bump, no push needed.
         // See BP-05 for write semantics and revision tracking.
         if (changed) needsPush = true
@@ -107,7 +141,17 @@ rolls back entirely. Push never sees partial data.
 |------|----|------|----------|
 | Pipeline | Adapter | `ChangeHint` (optional) | Pipeline calls `findChanged(hint?)`. Adapter returns `ConversationRef[]`. |
 | Pipeline | Adapter | `ConversationRef` | Pipeline calls `loadConversation(ref)`. Adapter returns `ConversationBundle \| null`. |
-| Pipeline | Store | `ConversationBundle` | Pipeline writes bundle within a transaction. Store handles upsert/replace. Derived fields recomputed after writes. |
+| Pipeline | Store | `ConversationBundle` or staged conversation/messages | Pipeline persists through the store-owned canonical write engine. `writeBundle()` is the convenience wrapper for full bundles; staged writers use the same engine and return the same `{ changed, revision }` result. |
+
+Execution note:
+- the pipeline MAY call adapters directly in-process
+- or the pipeline MAY delegate a `findChanged()` / `loadConversation()` call to
+  a worker subprocess
+- if a worker subprocess is used, the preferred transport is JSON-RPC 2.0 over
+  stdio with `Content-Length` framing
+- any emitted frames/messages are internal pipeline transport only
+- adapters still conceptually return refs and bundles; the worker transport
+  does not widen the BP-04 adapter interface
 
 ### Adapter Memory Contract
 
@@ -192,9 +236,11 @@ The store sits between ingest and push. Neither side reaches into the
 other. The store provides:
 
 **For ingest (write side):**
-- `writeBundle(bundle)` — writes a complete `ConversationBundle` atomically.
-  Internally handles conversation upsert, message/tool_call replacement,
-  derived field recomputation, and sync tracking. See BP-05 for details.
+- `writeBundle(bundle)` — convenience wrapper for callers that already
+  materialize a complete `ConversationBundle`.
+- `beginWrite(...)` / write session — canonical store-owned write engine for
+  staged callers. The store still owns replacement, derived recomputation,
+  sync tracking, and the final `{ changed, revision }` decision. See BP-05.
 
 **For push (read side):**
 - `conversationsNeedingPush(sinkId)` — returns IDs where `local_revision > last_successful_revision`
@@ -265,8 +311,9 @@ per-family semantics.
 
 ### Push Scheduling
 
-Push is **change-gated and queue-coalesced.** When `writeBundle()` reports
-`changed: true`, the coordinator enqueues a `{ kind: "push" }` work item.
+Push is **change-gated and queue-coalesced.** When a canonical store write
+completes with `changed: true` — whether via `writeBundle()` or a staged
+write session — the coordinator enqueues a `{ kind: "push" }` work item.
 If multiple ingest events fire before the coordinator drains the queue,
 adjacent push items coalesce into a single push — the coordinator only
 runs `pushDirty()` once for the batch.
@@ -342,8 +389,11 @@ function runPipeline(config, store, registry, sinks, log): PipelineHandle {
       // Stop preempts: skip all normal work once stopping is set
       if (stopping && work.kind !== "shutdown-flush") continue;
       if (work.kind === "shutdown-flush") {
-        // Final best-effort: one ingest scan + one push
-        await ingestAll(activeAdapters, store, { kind: "shutdown-scan" }, log);
+        // Final best-effort: one full ingest scan + one push.
+        // The frozen adapter hint contract does not define `shutdown-scan`,
+        // so runtime reuses `periodic-scan` here as the shutdown full-scan
+        // alias.
+        await ingestAll(activeAdapters, store, { kind: "periodic-scan" }, log);
         await pushDirty(store, sinks, config.routes, log);
         return;  // coordinator exits
       }
@@ -427,10 +477,10 @@ bounds stop latency to the cost of one in-flight work item plus the final
 flush, not the full queue depth. The 15-second drain budget (BP-07) caps
 worst-case shutdown time.
 
-**Push is change-gated:** Push is only enqueued when `writeBundle()` reports
-`changed: true` for at least one conversation. Unchanged re-ingests (cold
-restart, periodic scan of stable data) do not trigger pushes. The queue
-can coalesce adjacent push items into one push.
+**Push is change-gated:** Push is only enqueued when the store's canonical
+write engine reports `changed: true` for at least one conversation.
+Unchanged re-ingests (cold restart, periodic scan of stable data) do not
+trigger pushes. The queue can coalesce adjacent push items into one push.
 
 **One-shot mode:** `jin ingest` (no daemon) calls `detectAdapters()` +
 `ingestAll()` + `pushDirty()` directly, without the queue, watcher, or

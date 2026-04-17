@@ -6,26 +6,11 @@ import type {
   ParsedToolCall,
 } from "../contracts/conversations";
 import type { WriteBundleResult } from "../contracts/store";
+import { orderedMessages, orderedToolCalls } from "./ordering";
 import {
-  deriveConversationFields,
-  persistConversationDerivedFields,
-  upsertConversation,
-} from "./conversations";
-import {
-  deleteMessagesForConversation,
-  getMessageFtsRows,
-  insertMessage,
-} from "./messages";
-import { refreshConversationFts } from "./search";
-import {
-  getSyncState,
-  updateSyncIngestedAt,
-  upsertSyncState,
-} from "./sync";
-import {
-  deleteToolCallsForConversation,
-  insertToolCall,
-} from "./tool-calls";
+  abortConversationWriteSession,
+  beginConversationWriteSession,
+} from "./write-session";
 
 export function computeBundleHash(bundle: ConversationBundle): string {
   const hash = createHash("sha256");
@@ -64,77 +49,21 @@ export function writeBundle(
   db: Database,
   bundle: ConversationBundle,
 ): WriteBundleResult {
-  const write = db.transaction((input: ConversationBundle) => {
-    const conversationId = input.conversation.id;
-    const messages = orderedMessages(input.messages);
-    const nextHash = computeBundleHash(input);
-    const previousSync = getSyncState(db, conversationId);
-    const ingestedAt = new Date().toISOString();
+  const session = beginConversationWriteSession(db, bundle.conversation);
 
-    if (previousSync && previousSync.bundleHash === nextHash) {
-      updateSyncIngestedAt(db, conversationId, ingestedAt);
-      return {
-        changed: false,
-        revision: previousSync.localRevision,
-      };
+  try {
+    for (const message of orderedMessages(bundle.messages)) {
+      session.appendMessage(message);
     }
 
-    upsertConversation(db, input.conversation);
-
-    const previousMessageRows = getMessageFtsRows(db, conversationId);
-    deleteToolCallsForConversation(db, conversationId);
-    deleteMessagesForConversation(db, conversationId);
-
-    for (const message of messages) {
-      insertMessage(db, conversationId, message);
-
-      for (const toolCall of orderedToolCalls(message.toolUses)) {
-        insertToolCall(db, conversationId, message.id, toolCall);
-      }
-    }
-
-    refreshConversationFts(db, conversationId, previousMessageRows);
-    persistConversationDerivedFields(
-      db,
-      conversationId,
-      deriveConversationFields(input.conversation, messages),
+    return session.finish(computeBundleHash(bundle));
+  } catch (error) {
+    abortConversationWriteSession(
+      session,
+      `store writeBundle(${bundle.conversation.id})`,
     );
-
-    const revision = previousSync ? previousSync.localRevision + 1 : 1;
-    upsertSyncState(db, {
-      conversationId,
-      bundleHash: nextHash,
-      localRevision: revision,
-      ingestedAt,
-    });
-
-    return {
-      changed: true,
-      revision,
-    };
-  });
-
-  return write(bundle);
-}
-
-function orderedMessages(messages: ConversationBundle["messages"]): ParsedMessage[] {
-  for (let index = 1; index < messages.length; index += 1) {
-    if (messages[index - 1].sequence > messages[index].sequence) {
-      return [...messages].sort((left, right) => left.sequence - right.sequence);
-    }
+    throw error;
   }
-
-  return messages;
-}
-
-function orderedToolCalls(toolCalls: ParsedToolCall[]): ParsedToolCall[] {
-  for (let index = 1; index < toolCalls.length; index += 1) {
-    if (toolCalls[index - 1].id.localeCompare(toolCalls[index].id) > 0) {
-      return [...toolCalls].sort((left, right) => left.id.localeCompare(right.id));
-    }
-  }
-
-  return toolCalls;
 }
 
 function appendMessageHashEntry(hash: Hash, message: ParsedMessage): void {

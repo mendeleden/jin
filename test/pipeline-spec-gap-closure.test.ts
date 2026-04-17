@@ -380,6 +380,43 @@ class InMemoryConversationStore implements ConversationStore {
     >
   >();
 
+  beginWrite(conversation: ParsedConversation) {
+    const store = this;
+    const messages: ParsedMessage[] = [];
+    let active = true;
+    let finished = false;
+
+    return {
+      appendMessage(message: ParsedMessage) {
+        assertActive();
+        messages.push(cloneMessage(message));
+      },
+      finish(_bundleHash: string) {
+        assertActive();
+        finished = true;
+        active = false;
+        return store.writeBundle({
+          conversation: { ...conversation },
+          messages,
+        });
+      },
+      abort() {
+        if (!active) {
+          return;
+        }
+        active = false;
+        finished = false;
+        messages.length = 0;
+      },
+    };
+
+    function assertActive(): void {
+      if (!active || finished) {
+        throw new Error("in-memory write session is no longer active");
+      }
+    }
+  }
+
   writeBundle(bundle: ConversationBundle) {
     const conversationId = bundle.conversation.id;
     const bundleKey = JSON.stringify(bundle);

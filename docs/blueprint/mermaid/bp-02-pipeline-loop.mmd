@@ -19,7 +19,7 @@ sequenceDiagram
     loop each changed ref
         Coordinator->>Adapter: loadConversation(ref)
         Adapter-->>Coordinator: ConversationBundle | null
-        Coordinator->>Store: writeBundle(bundle)
+        Coordinator->>Store: persist via canonical write engine
         Store-->>Coordinator: { changed, revision }
     end
 

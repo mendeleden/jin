@@ -129,6 +129,62 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS _jin_stage_sessions (
+          session_id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          staged_bytes INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS _jin_stage_messages (
+          session_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+          content TEXT NOT NULL DEFAULT '',
+          record_type TEXT NOT NULL DEFAULT '',
+          model TEXT NOT NULL DEFAULT '',
+          sequence INTEGER NOT NULL,
+          turn INTEGER NOT NULL,
+          is_sidechain INTEGER NOT NULL DEFAULT 0,
+          parent_message_id TEXT NOT NULL DEFAULT '',
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read INTEGER NOT NULL DEFAULT 0,
+          cache_write INTEGER NOT NULL DEFAULT 0,
+          thinking_content TEXT NOT NULL DEFAULT '',
+          thinking_tokens INTEGER NOT NULL DEFAULT 0,
+          timestamp TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (session_id, message_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS _jin_stage_tool_calls (
+          session_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          input TEXT NOT NULL DEFAULT '',
+          output TEXT NOT NULL DEFAULT '',
+          is_error INTEGER NOT NULL DEFAULT 0,
+          duration_ms INTEGER NOT NULL DEFAULT 0,
+          timestamp TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (session_id, message_id, id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_stage_sessions_conversation
+          ON _jin_stage_sessions(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_stage_messages_session
+          ON _jin_stage_messages(session_id, sequence, message_id);
+        CREATE INDEX IF NOT EXISTS idx_stage_tool_calls_session
+          ON _jin_stage_tool_calls(session_id, message_id, id);
+      `);
+    },
+  },
 ];
 
 export const LATEST_USER_VERSION =

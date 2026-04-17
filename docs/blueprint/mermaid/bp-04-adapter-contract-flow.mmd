@@ -22,7 +22,7 @@ sequenceDiagram
     loop each changed ref
         Coordinator->>Adapter: loadConversation(ref)
         Adapter-->>Coordinator: ConversationBundle | null
-        Coordinator->>Store: writeBundle(bundle)
+        Coordinator->>Store: persist via canonical store engine
     end
 
     Note over Coordinator,Store: Pipeline owns watching, store writes, routing, push scheduling, and sink delivery

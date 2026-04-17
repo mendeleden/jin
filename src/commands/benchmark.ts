@@ -1300,6 +1300,25 @@ function createStoreTracker(
   return {
     store: {
       database: store.database,
+      beginWrite(conversation: ConversationBundle["conversation"]) {
+        const session = store.beginWrite(conversation);
+        return {
+          appendMessage(message: ConversationBundle["messages"][number]) {
+            return session.appendMessage(message);
+          },
+          finish(bundleHash: string) {
+            metrics.writeCalls += 1;
+            const result = session.finish(bundleHash);
+            if (result.changed) {
+              metrics.changedWrites += 1;
+            }
+            return result;
+          },
+          abort() {
+            return session.abort();
+          },
+        };
+      },
       writeBundle(bundle: ConversationBundle) {
         metrics.writeCalls += 1;
         const result = store.writeBundle(bundle);
@@ -1347,9 +1366,6 @@ function createStoreTracker(
       },
       findConversationsMissingSync() {
         return store.findConversationsMissingSync();
-      },
-      searchMessages(options) {
-        return store.searchMessages(options);
       },
     } satisfies BenchmarkTrackedStore,
     summary() {
@@ -1406,7 +1422,7 @@ function createSinkTracker(
         const metric = metrics.get(sink.id)!;
         metric.pushCalls += 1;
         metric.payloadsAttempted += payloads.length;
-        const result = await sink.push(payloads);
+        const result = await sink.push([...payloads]);
         metric.payloadsPushed += result.pushed;
         metric.payloadsFailed += result.failed;
         return result;

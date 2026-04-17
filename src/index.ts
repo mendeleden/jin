@@ -350,9 +350,7 @@ async function main(): Promise<void> {
         await watchCommand({ daemon: false });
       } else {
         const { startCommand } = await import("./commands/start");
-        await startCommand({
-          service: !!flags.service,
-        });
+        await startCommand({ service: !!flags.service });
       }
       break;
     }
@@ -376,14 +374,17 @@ async function main(): Promise<void> {
         ]);
       }
       const { restartCommand } = await import("./commands/start");
-      await restartCommand({
-        service: !!flags.service,
-      });
+      await restartCommand({ service: !!flags.service });
       break;
     }
     case "ingest": {
       const { ingestCommand } = await import("./commands/ingest");
       await ingestCommand();
+      break;
+    }
+    case "__worker": {
+      const { runWorkerServerCommand } = await import("./pipeline/ingest-worker");
+      await runWorkerServerCommand();
       break;
     }
     case "status": {
