@@ -20,4 +20,15 @@ export interface Adapter {
   findChanged(hint?: ChangeHint): Promise<ConversationRef[]>;
   loadConversation(ref: ConversationRef): Promise<ConversationBundle | null>;
   watchPaths(): string[];
+  /**
+   * Optional heavy-adapter hook to drop temporary per-load state after a batch.
+   * Safe no-op for adapters that do not retain transient parse state.
+   */
+  releaseTransientMemory?(): void;
+  /**
+   * Optional heavy-adapter hook to drop discovery-only temporary state after a
+   * discovery cycle while preserving any lightweight durable index that must
+   * survive into cache export or the next scan.
+   */
+  releaseDiscoveryMemory?(): void;
 }

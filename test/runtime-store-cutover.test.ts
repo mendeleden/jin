@@ -6,7 +6,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -42,6 +42,10 @@ mock.module("../src/daemon/runtime-state", () => ({
 
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
+  createAdapter: () => {
+    throw new Error("createAdapter is not used in runtime-store-cutover tests");
+  },
+  detectAdapters: async () => mockAdapters,
   protectedSourceStartupNotices: () => [],
   startupProbeBlocked: () => false,
 }));
@@ -149,6 +153,24 @@ describe("W3-RUNTIME-01 live cutover", () => {
     expect(adapters).toHaveLength(1);
     expect(typeof adapters[0].findChanged).toBe("function");
     expect(typeof adapters[0].loadConversation).toBe("function");
+  });
+
+  test("watchCommand disables a corrupt discovery cache instead of crashing startup", async () => {
+    mockAdapters = [createV2CapableAdapter("watch-discovery-cache-corrupt")];
+    exitMock = mockProcessExit();
+    writeFileSync(join(tempDir, "discovery-cache.db"), "not a sqlite db", "utf8");
+
+    const watchPromise = watchCommand({ daemon: false });
+    await Bun.sleep(30);
+    process.emit("SIGTERM");
+
+    await expect(watchPromise).rejects.toBeInstanceOf(ExitError);
+    expect(runPipelineCalls).toHaveLength(1);
+    const options = runPipelineCalls[0] as {
+      discoveryCache?: unknown;
+    };
+    expect(options.discoveryCache).toBeUndefined();
+    expect(console_.logs.join("\n")).toContain("Discovery cache disabled:");
   });
 
   test("ingestCommand writes through the v2 db store and pushes v2 payloads", async () => {

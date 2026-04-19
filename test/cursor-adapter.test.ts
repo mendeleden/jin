@@ -31,14 +31,14 @@ describe("W2-ADAPTER-03 Cursor reference adapter", () => {
     rmSync(rootDir, { recursive: true, force: true });
   });
 
-  it("detects both Cursor storage roots and reports the watch paths", async () => {
+  it("detects both Cursor storage roots and stays periodic-only", async () => {
     seedLayer1ParentAndChild(stateDbPath, { includeChild: false });
     seedLayer3Session(join(chatsDir, "workspace-a", "cli-session"));
 
     const adapter = makeAdapter(chatsDir, stateDbPath);
 
     expect(await adapter.detect()).toBe(true);
-    expect(adapter.watchPaths().sort()).toEqual([chatsDir, rootDir].sort());
+    expect(adapter.watchPaths()).toEqual([]);
   });
 
   it("tracks shared-db changes without assuming pipeline cache state", async () => {
@@ -107,6 +107,109 @@ describe("W2-ADAPTER-03 Cursor reference adapter", () => {
     expect(changedRefs.map((ref) => ref.id).sort()).toEqual(
       [childId, parentId].sort(),
     );
+    expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
+  });
+
+  it("ignores Layer 1 fs-change hints and waits for periodic scan to surface shared-db changes", async () => {
+    const parentId = seedLayer1ParentAndChild(stateDbPath, { includeChild: false });
+    const adapter = makeAdapter(chatsDir, stateDbPath);
+
+    const startupRefs = await adapter.findChanged({ kind: "startup-scan" });
+    expect(startupRefs.map((ref) => ref.id)).toEqual([parentId]);
+    expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
+
+    expect(
+      await adapter.findChanged({
+        kind: "fs-change",
+        changedPaths: [`${stateDbPath}-wal`, `${stateDbPath}-shm`],
+      }),
+    ).toEqual([]);
+
+    const childId = "child-session";
+    upsertCursorKv(stateDbPath, `composerData:${parentId}`, {
+      name: "Parent session",
+      createdAt: "2026-04-02T00:00:00.000Z",
+      lastUpdatedAt: "2026-04-02T00:06:00.000Z",
+      modelConfig: { modelName: "composer-2-fast" },
+      subagentComposerIds: [childId],
+      fullConversationHeadersOnly: [
+        { bubbleId: "parent-user", type: 1 },
+        { bubbleId: "parent-spawn", type: 2 },
+      ],
+    });
+    upsertCursorKv(stateDbPath, "bubbleId:parent-session:parent-spawn", {
+      type: 2,
+      text: "",
+      createdAt: "2026-04-02T00:05:00.000Z",
+      toolFormerData: {
+        name: "task_v2",
+        rawArgs: "{\"prompt\":\"Investigate child\"}",
+        status: "completed",
+        result: { agentId: childId },
+        additionalData: { subagentComposerId: childId, status: "success" },
+      },
+    });
+    upsertCursorKv(stateDbPath, `composerData:${childId}`, {
+      name: "Child session",
+      createdAt: "2026-04-02T00:05:00.000Z",
+      lastUpdatedAt: "2026-04-02T00:05:30.000Z",
+      modelConfig: { modelName: "composer-2" },
+      subagentComposerIds: [],
+      fullConversationHeadersOnly: [
+        { bubbleId: "child-user", type: 1 },
+        { bubbleId: "child-assistant", type: 2 },
+      ],
+    });
+
+    expect(
+      await adapter.findChanged({
+        kind: "fs-change",
+        changedPaths: [stateDbPath],
+      }),
+    ).toEqual([]);
+
+    const changedRefs = await adapter.findChanged({
+      kind: "periodic-scan",
+    });
+    expect(changedRefs.map((ref) => ref.id).sort()).toEqual(
+      [childId, parentId].sort(),
+    );
+
+    expect(
+      await adapter.findChanged({
+        kind: "fs-change",
+        changedPaths: [stateDbPath],
+      }),
+    ).toEqual([]);
+    expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
+  });
+
+  it("ignores Layer 3 fs-change hints and waits for periodic scan to surface chat-db changes", async () => {
+    const sessionPath = join(chatsDir, "workspace-a", "cli-session");
+    const dbPath = seedLayer3Session(sessionPath);
+    const adapter = makeAdapter(chatsDir, stateDbPath);
+
+    const startupRefs = await adapter.findChanged({ kind: "startup-scan" });
+    expect(startupRefs.map((ref) => ref.id)).toEqual(["cli-session"]);
+    expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
+
+    touchFile(dbPath);
+
+    expect(
+      await adapter.findChanged({
+        kind: "fs-change",
+        changedPaths: [dbPath],
+      }),
+    ).toEqual([]);
+
+    updateLayer3AssistantMessage(dbPath, {
+      role: "assistant",
+      content: [{ type: "text", text: "Layer 3 changed" }],
+    });
+    touchFile(dbPath);
+
+    const changedRefs = await adapter.findChanged({ kind: "periodic-scan" });
+    expect(changedRefs.map((ref) => ref.id)).toEqual(["cli-session"]);
     expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
   });
 
@@ -1029,6 +1132,11 @@ function updateLayer3AssistantMessage(
     LAYER3_ASSISTANT_ID,
   ]);
   db.close();
+}
+
+function touchFile(path: string): void {
+  const now = new Date();
+  utimesSync(path, now, now);
 }
 
 function encodeHexJson(value: Record<string, unknown>): string {

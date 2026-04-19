@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, statSync } from "fs";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, sep } from "path";
 import { homedir } from "os";
+import type { DiscoveryCacheState } from "./discovery-cache";
 import type {
   V2Adapter,
   ChangeHint,
@@ -89,6 +90,8 @@ export class CursorAdapter implements V2Adapter {
   id = "cursor";
   name = "Cursor";
   icon = "▌";
+  discoveryCacheContractVersion = 1;
+  discoveryCachePayloadVersion = 1;
 
   private chatsDir: string;
   private globalStorageDbPath: string;
@@ -119,9 +122,14 @@ export class CursorAdapter implements V2Adapter {
   async findChanged(hint?: ChangeHint): Promise<ConversationRef[]> {
     const changeKind = hint?.kind ?? "periodic-scan";
     const startupScan = changeKind === "startup-scan";
+    const warmStartupScan =
+      startupScan &&
+      (this.layer1Signatures.size > 0 ||
+        this.layer1ParentByChild.size > 0 ||
+        this.layer3Signatures.size > 0);
     const changedPaths = new Set(hint?.changedPaths ?? []);
 
-    if (startupScan) {
+    if (startupScan && !warmStartupScan) {
       this.layer1Signatures.clear();
       this.layer1ParentByChild.clear();
       this.layer3Signatures.clear();
@@ -130,11 +138,11 @@ export class CursorAdapter implements V2Adapter {
     const refs = new Map<string, ConversationRef>();
 
     if (startupScan || this.shouldScanLayer1(changedPaths, changeKind)) {
-      this.collectLayer1Changes(refs, startupScan);
+      this.collectLayer1Changes(refs, startupScan && !warmStartupScan);
     }
 
     if (startupScan || this.shouldScanLayer3(changedPaths, changeKind)) {
-      this.collectLayer3Changes(refs, startupScan);
+      this.collectLayer3Changes(refs, startupScan && !warmStartupScan);
     }
 
     return Array.from(refs.values()).sort(sortConversationRefs);
@@ -155,17 +163,7 @@ export class CursorAdapter implements V2Adapter {
   }
 
   watchPaths(): string[] {
-    const paths = new Set<string>();
-
-    if (existsSync(this.globalStorageDbPath)) {
-      paths.add(dirname(this.globalStorageDbPath));
-    }
-
-    if (existsSync(this.chatsDir)) {
-      paths.add(this.chatsDir);
-    }
-
-    return Array.from(paths.values());
+    return [];
   }
 
   // Legacy v1 shim retained inside the owned file so the packet stays isolated.
@@ -198,12 +196,78 @@ export class CursorAdapter implements V2Adapter {
     return bundle.messages.map((message) => this.toLegacyMessage(message));
   }
 
+  exportDiscoveryState(): DiscoveryCacheState {
+    const sources: DiscoveryCacheState["sources"] = [];
+    const layer1Stat = safeStat(this.globalStorageDbPath);
+    if (
+      this.globalStorageDbPath &&
+      (this.layer1Signatures.size > 0 || this.layer1ParentByChild.size > 0)
+    ) {
+      sources.push({
+        sourcePath: this.globalStorageDbPath,
+        sourceKind: "sqlite-layer1",
+        sizeBytes: layer1Stat?.size ?? 0,
+        mtimeMs: layer1Stat?.mtimeMs ?? 0,
+        signature: stableJson({
+          signatures: Array.from(this.layer1Signatures.entries()).sort(sortMapEntries),
+          parents: Array.from(this.layer1ParentByChild.entries()).sort(sortMapEntries),
+        }),
+        payload: {
+          signatures: Array.from(this.layer1Signatures.entries()).sort(sortMapEntries),
+          parents: Array.from(this.layer1ParentByChild.entries()).sort(sortMapEntries),
+        },
+      });
+    }
+
+    for (const [sourcePath, signature] of Array.from(this.layer3Signatures.entries()).sort(
+      ([leftPath], [rightPath]) => leftPath.localeCompare(rightPath),
+    )) {
+      const stat = safeStat(sourcePath);
+      sources.push({
+        sourcePath,
+        sourceKind: "sqlite-layer3",
+        sizeBytes: stat?.size ?? 0,
+        mtimeMs: stat?.mtimeMs ?? 0,
+        signature,
+        payload: {},
+      });
+    }
+
+    return { sources };
+  }
+
+  importDiscoveryState(state: DiscoveryCacheState): void {
+    this.layer1Signatures = new Map<string, string>();
+    this.layer1ParentByChild = new Map<string, string>();
+    this.layer3Signatures = new Map<string, string>();
+
+    for (const source of state.sources) {
+      if (source.sourceKind === "sqlite-layer1") {
+        const payload = source.payload as {
+          signatures?: unknown;
+          parents?: unknown;
+        };
+        this.layer1Signatures = deserializeStringMap(payload.signatures);
+        this.layer1ParentByChild = deserializeStringMap(payload.parents);
+        continue;
+      }
+
+      if (source.sourceKind === "sqlite-layer3") {
+        this.layer3Signatures.set(source.sourcePath, source.signature);
+      }
+    }
+  }
+
   private shouldScanLayer1(
     changedPaths: Set<string>,
     changeKind: ChangeHint["kind"],
   ): boolean {
     if (changeKind === "periodic-scan") {
       return true;
+    }
+
+    if (changeKind === "fs-change") {
+      return false;
     }
 
     if (changedPaths.size === 0) {
@@ -223,6 +287,10 @@ export class CursorAdapter implements V2Adapter {
       return true;
     }
 
+    if (changeKind === "fs-change") {
+      return false;
+    }
+
     if (changedPaths.size === 0) {
       return existsSync(this.chatsDir);
     }
@@ -234,7 +302,7 @@ export class CursorAdapter implements V2Adapter {
 
   private collectLayer1Changes(
     refs: Map<string, ConversationRef>,
-    startupScan: boolean,
+    forceReturnAll: boolean,
   ): void {
     const snapshots = this.listLayer1Snapshots();
     const nextSignatures = new Map<string, string>();
@@ -251,13 +319,13 @@ export class CursorAdapter implements V2Adapter {
 
       nextSignatures.set(snapshot.id, signature);
 
-      if (startupScan || this.layer1Signatures.get(snapshot.id) !== signature) {
+      if (forceReturnAll || this.layer1Signatures.get(snapshot.id) !== signature) {
         refs.set(snapshot.id, this.makeRef(snapshot.id, snapshot.sourcePath));
       }
     }
 
     for (const [childId, parentId] of Array.from(nextParents.entries())) {
-      if (startupScan) {
+      if (forceReturnAll) {
         continue;
       }
 
@@ -272,7 +340,7 @@ export class CursorAdapter implements V2Adapter {
 
   private collectLayer3Changes(
     refs: Map<string, ConversationRef>,
-    startupScan: boolean,
+    forceReturnAll: boolean,
   ): void {
     const snapshots = this.listLayer3Snapshots();
     const nextSignatures = new Map<string, string>();
@@ -282,10 +350,7 @@ export class CursorAdapter implements V2Adapter {
       const signature = `${snapshot.id}:${stat?.mtimeMs ?? 0}:${stat?.size ?? 0}`;
       nextSignatures.set(snapshot.sourcePath, signature);
 
-      if (
-        startupScan ||
-        this.layer3Signatures.get(snapshot.sourcePath) !== signature
-      ) {
+      if (forceReturnAll || this.layer3Signatures.get(snapshot.sourcePath) !== signature) {
         refs.set(snapshot.id, this.makeRef(snapshot.id, snapshot.sourcePath));
       }
     }
@@ -1682,12 +1747,38 @@ function stableObjectKeys(_key: string, value: unknown): unknown {
   return value;
 }
 
+function deserializeStringMap(value: unknown): Map<string, string> {
+  if (!Array.isArray(value)) {
+    return new Map<string, string>();
+  }
+
+  const entries = value.flatMap((entry) => {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      return [];
+    }
+    const [key, mapValue] = entry;
+    if (typeof key !== "string" || typeof mapValue !== "string") {
+      return [];
+    }
+    return [[key, mapValue] as const];
+  });
+
+  return new Map(entries);
+}
+
 function pathTouches(changedPath: string, targetPath: string): boolean {
-  return samePath(changedPath, targetPath) || changedPath.startsWith(targetPath);
+  return (
+    samePath(changedPath, targetPath) ||
+    changedPath.startsWith(`${targetPath}${sep}`)
+  );
 }
 
 function samePath(left: string, right: string): boolean {
   return left === right;
+}
+
+function sortMapEntries(left: readonly [string, string], right: readonly [string, string]): number {
+  return left[0] === right[0] ? left[1].localeCompare(right[1]) : left[0].localeCompare(right[0]);
 }
 
 function sortConversationRefs(left: ConversationRef, right: ConversationRef): number {

@@ -1,6 +1,6 @@
-# Proposal: Disk-Backed Parent Write Session
+# Disk-Backed Parent Write Session
 
-**Status:** Draft  
+**Status:** Implemented  
 **Created:** 2026-04-16  
 **Relates to:** BP-02, BP-04, BP-05, W3-PERF-10
 
@@ -8,28 +8,14 @@
 
 ## Problem
 
-We fixed the contract shape, but not the final memory shape.
+This proposal's core implementation is landed. The staged parent write session
+now exists in code and backs both bundle writes and worker writes.
 
-Current direction is:
+The remaining problem is the next memory boundary beyond that work:
 
-- adapters stay read-only
-- heavy ingest can run in worker subprocesses
-- parent owns persistence through `beginWrite(...)` / `finish(bundleHash)`
-
-That is directionally correct. The remaining issue is implementation:
-
-- child still builds a full `ConversationBundle`
-- parent currently buffers all streamed messages in memory until
-  `finish(bundleHash)`
-
-So if worker ingest is wired into live runtime now, one large conversation can
-exist in memory twice:
-
-- once in the child
-- once again in the parent write session
-
-This keeps the architecture cleaner than adapter-to-store shortcuts, but it is
-still the wrong low-memory end state.
+- child workers still build a full `ConversationBundle`
+- the parent write path is fixed, but total family RSS can still spike on very
+  large sources
 
 ## Invariants
 
@@ -43,17 +29,16 @@ These should not change:
 - `writeBundle()` remains a convenience wrapper over the same canonical store
   engine
 
-## Proposal
+## Landed Shape
 
-Keep the current store contract:
+The current store contract is:
 
 - `beginWrite(conversation)`
 - `appendMessage(message)`
 - `finish(bundleHash)`
 - `abort()`
 
-But replace the in-memory buffered implementation with a **disk-backed staged
-write session** in the parent.
+The implementation is a **disk-backed staged write session** in the parent.
 
 ### Implementation shape
 
@@ -97,7 +82,7 @@ Flow:
 4. `abort()`
    - delete staging rows for that session
 
-## Why This Unlocks The Design
+## Why This Unlocked The Design
 
 This keeps the good parts of the current direction:
 
@@ -105,7 +90,7 @@ This keeps the good parts of the current direction:
 - parent still owns SQLite
 - worker subprocesses still provide a real OS memory boundary
 
-And removes the main remaining parent-side smell:
+It removed the parent-side full-conversation buffering smell:
 
 - parent no longer needs to hold a full conversation in memory just because
   the final hash arrives at the end
@@ -132,14 +117,14 @@ about.
 Rust workers may still be the right later move, but this parent-side staging fix
 is needed even if the child becomes native.
 
-## Rollout Plan
+## Follow-On
 
-1. Replace buffered `ConversationWriteSession` with staging-backed session.
-2. Keep `writeBundle()` as the same wrapper surface.
-3. Keep worker transport as JSON-RPC over stdio.
-4. Do **not** wire worker ingest into live runtime until the staging-backed
-   session lands.
-5. After that, test live worker ingest on heavy adapters.
+This is no longer a rollout plan. The follow-on work is:
+
+1. keep worker transport as JSON-RPC over stdio
+2. continue measuring family RSS under heavy live runs
+3. decide whether heavy child parsing needs a lower-level implementation or
+   finer-grained stream-first loading
 
 ## Success Criteria
 
@@ -157,3 +142,12 @@ parent and keep iterating.
 If child worker peaks are still the dominant problem after that, move heavy
 workers (`claude-code`, `codex`) to Rust without changing the parent/store
 boundary.
+
+## Related Follow-On
+
+This proposal fixes parent-side write buffering. It does **not** solve restart
+replay of heavy adapter discovery by itself.
+
+That follow-on is captured in:
+
+- [durable-discovery-cache.md](/Users/edenmendel/Documents/GitHub/jin/docs/proposals/durable-discovery-cache.md)

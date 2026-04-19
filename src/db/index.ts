@@ -1,5 +1,6 @@
 export * from "./bundle";
 export * from "./conversations";
+export * from "./discovery-cache";
 export * from "./messages";
 export * from "./ordering";
 export * from "./schema";

@@ -113,6 +113,7 @@ interface ConversationWriteSession {
 interface Store {
   beginWrite(conversation: ParsedConversation): ConversationWriteSession;
   writeBundle(bundle: ConversationBundle): { changed: boolean; revision: number };
+  hasLocalData?(): boolean;
 }
 ```
 
@@ -124,6 +125,9 @@ Contract:
 - `finish(bundleHash)` applies hash-gated replace/upsert semantics and returns
   the canonical `{ changed, revision }` result
 - `abort()` discards any staged work for that conversation
+- `hasLocalData?()` is an optional warm-state probe the pipeline may use to
+  distinguish empty local stores from warm restarts without reaching into
+  SQLite internals
 
 The store still owns:
 

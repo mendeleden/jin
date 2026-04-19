@@ -12,7 +12,10 @@ Bun.serve({
 
     if (url.pathname === "/" || url.pathname === "/diagnostic-viewer.html") {
       return new Response(Bun.file(HTML_PATH), {
-        headers: { "content-type": "text/html" },
+        headers: {
+          "content-type": "text/html",
+          "cache-control": "no-store",
+        },
       });
     }
 
@@ -21,6 +24,7 @@ Bun.serve({
         headers: {
           "content-type": "application/x-ndjson",
           "access-control-allow-origin": "*",
+          "cache-control": "no-store",
         },
       });
     }

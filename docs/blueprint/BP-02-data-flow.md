@@ -147,6 +147,9 @@ Execution note:
 - the pipeline MAY call adapters directly in-process
 - or the pipeline MAY delegate a `findChanged()` / `loadConversation()` call to
   a worker subprocess
+- when worker discovery is used, the parent still owns durable discovery cache
+  load/save; the worker only executes `findChanged()` against the cache-hydrated
+  state it was sent
 - if a worker subprocess is used, the preferred transport is JSON-RPC 2.0 over
   stdio with `Content-Length` framing
 - any emitted frames/messages are internal pipeline transport only
@@ -163,6 +166,8 @@ discovery bounded.
 - `findChanged()` returns `ConversationRef[]`, not retained `ConversationBundle`s
 - adapter-side checkpoint state may live in memory, but it must stay small
   (stats, offsets, signatures, source-local ref IDs, parent maps)
+- for heavy adapters, the pipeline may hydrate that lightweight state from a
+  separate durable discovery cache before calling `findChanged()`
 - if discovery must inspect source content to derive stable ref IDs or
   compaction boundaries, it must do so one source unit at a time and release
   that temporary parse before scanning the next source
@@ -507,7 +512,9 @@ the shutdown handle. On SIGINT/SIGTERM, it calls `shutdown()`, which:
 ### Cold Start (Initial Ingest)
 
 On first run or after a nuclear migration:
-- Adapter state is empty — `findChanged()` returns all conversations
+- Empty discovery cache: `findChanged()` returns all conversations
+- Warm durable discovery cache: `findChanged(startup-scan)` may return only the
+  refs whose normalized output may have changed
 - Full ingest of all adapters runs
 - Duration: 2-5 minutes for a typical developer machine (500+ conversations)
 - Then full push to all sinks

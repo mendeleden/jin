@@ -71,6 +71,19 @@ interface Adapter {
 
   /** Directories the file watcher should monitor for this tool */
   watchPaths(): string[];
+
+  /**
+   * Optional heavy-adapter hook to drop temporary per-load state after a batch.
+   * Safe no-op for adapters that do not retain transient parse state.
+   */
+  releaseTransientMemory?(): void;
+
+  /**
+   * Optional heavy-adapter hook to drop discovery-only temporary state after a
+   * discovery cycle while preserving any lightweight durable index that must
+   * survive into cache export or the next scan.
+   */
+  releaseDiscoveryMemory?(): void;
 }
 ```
 
@@ -185,6 +198,25 @@ JSON-RPC 2.0 over stdio with `Content-Length` framing, but that transport is
 still outside the adapter contract. The adapter contract remains
 `findChanged()` plus `loadConversation()`.
 
+### Optional Heavy-Adapter Extensions
+
+Some adapters keep lightweight discovery indexes or temporary parse state to
+stay within runtime RSS budgets. Those adapters may also implement:
+
+- `releaseTransientMemory?()`
+- `releaseDiscoveryMemory?()`
+
+These are optional lifecycle hooks, not part of the required simple-adapter
+surface. They exist so the pipeline can ask a heavy adapter to drop temporary
+state after a batch or after discovery without taking ownership of adapter
+internals.
+
+Heavy adapters may also implement the separate durable discovery-cache
+extension (`exportDiscoveryState`, `importDiscoveryState`,
+`discoveryCacheContractVersion`, `discoveryCachePayloadVersion`). That
+extension is an adapter-owned performance contract, not a change to the core
+`findChanged()` / `loadConversation()` shape.
+
 ---
 
 ## Consistency Model
@@ -245,31 +277,30 @@ treated as a follow-on hardening target.
 
 ### Checkpoint Persistence
 
-Adapters maintain change detection state (byte offsets, file stats, last-seen
-timestamps) **in memory**. On daemon restart, this state is lost, and the
-next `findChanged()` call with `kind: "startup-scan"` triggers a full scan.
+Adapters may keep change detection state in memory during a daemon lifetime.
+For heavy adapters, the pipeline may also persist **lightweight discovery
+state** in a separate performance cache so a fresh daemon restart does not
+replay full startup discovery for unchanged sources.
 
-This is acceptable because:
-- Full scan is idempotent — deterministic IDs + replace semantics mean
-  re-ingesting unchanged conversations is a no-op (same data replaces itself)
-- Full scan is bounded — a typical machine has 500-1000 conversations total,
-  taking 2-5 minutes on cold start
-- Persisting adapter state adds complexity (schema, migration, corruption
-  recovery) for marginal benefit (saving 2-5 minutes on daemon restart)
+Rules:
+- the public adapter contract is still only `findChanged()` plus
+  `loadConversation()`
+- persisted discovery state is adapter-scoped performance state, not
+  source-of-truth data
+- persisted discovery state must stay lightweight: stats, signatures,
+  source-local ref ids, parent maps
+- full bundles, parsed messages, tool calls, or raw source payloads must not
+  be persisted as discovery cache
 
-If cold-start performance becomes a problem at scale, adapter state can be
-persisted to a `_jin_adapter_state` table in the store only when:
-- the persisted data is still lightweight checkpoint metadata
-  (offsets, file stats, signatures, source-local ref IDs, parent maps, scan
-  cursors)
-- losing or corrupting that state degrades to a bounded full scan, not wrong
-  conversation data
-- no full bundles, message bodies, tool calls, whole-source parses, or sink
-  payloads are persisted as adapter state
-- representative validation shows the default in-memory startup path no longer
-  meets the `BP-10` release budget
+If a heavy adapter participates in durable discovery cache, it may implement
+internal import/export helpers for its own lightweight state. Those helpers are
+real internal contract surface for heavy-adapter maintainers, but they are not
+part of the public BP-04 adapter interface.
 
-This is a future optimization, not a launch requirement.
+If durable discovery cache is used, it should live in a separate cache DB, not
+the canonical conversation store, and it must obey the same safety rule:
+losing or corrupting that state degrades to a bounded full scan, not wrong
+conversation data.
 
 ### Deletion Policy
 

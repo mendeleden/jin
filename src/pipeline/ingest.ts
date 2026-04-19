@@ -7,7 +7,15 @@ import type { Adapter, ChangeHint } from "../contracts/adapters";
 import type { AdapterConfig } from "../contracts/config";
 import type { ConversationRef } from "../contracts/conversations";
 import type { ConversationStore } from "../contracts/store";
-import { ingestConversationViaWorker } from "./ingest-worker";
+import {
+  isDiscoveryCacheCapableAdapter,
+  type DiscoveryCacheState,
+} from "../adapters/discovery-cache";
+import type { DiscoveryCacheRunSummary } from "../db/discovery-cache";
+import {
+  findChangedViaWorker,
+  ingestConversationViaWorker,
+} from "./ingest-worker";
 import type { IngestResult, PipelineLogger } from "./types";
 
 export interface IngestOptions {
@@ -33,6 +41,19 @@ export interface IngestOptions {
     command: string[];
     adapterConfigs: Record<string, AdapterConfig>;
   };
+  discoveryCache?: {
+    store: import("../db/discovery-cache").SqliteDiscoveryCache;
+    adapterConfigs: Record<string, AdapterConfig>;
+  };
+  onDiscoveryResult?: (info: {
+    adapterId: string;
+    hintKind?: ChangeHint["kind"];
+    cachedSources: number;
+    invalidatedSources: number;
+    freshSources: number;
+    cacheDisabledReason?: string;
+    invalidationReason?: string;
+  }) => void | Promise<void>;
 }
 
 const EMPTY_INGEST_RESULT: IngestResult = {
@@ -48,7 +69,13 @@ const NOOP_LOGGER: PipelineLogger = {
   error() {},
 };
 
-const WORKER_INGEST_ADAPTERS = new Set(["claude-code", "codex"]);
+const WORKER_INGEST_ADAPTERS = new Set(["claude-code", "codex", "cursor"]);
+const DISCOVERY_CACHE_ADAPTERS = new Set(["claude-code", "codex", "cursor"]);
+
+interface LoadedDiscoveryCacheSummary extends DiscoveryCacheRunSummary {
+  importedSourcePaths: string[];
+  state: DiscoveryCacheState | null;
+}
 
 export async function ingestOne(
   adapter: Adapter,
@@ -71,20 +98,59 @@ export async function ingestOne(
     options.loadConversationTimeoutMs,
     DEFAULT_LOAD_CONVERSATION_TIMEOUT_MS,
   );
+  let discoverySummary: LoadedDiscoveryCacheSummary = {
+    cachedSources: 0,
+    invalidatedSources: 0,
+    freshSources: 0,
+    importedSourcePaths: [],
+    state: null,
+  };
 
-  let refs;
+  let refs: ConversationRef[];
+  let discoveryStateSnapshot: DiscoveryCacheState | null = null;
+  const workerDiscoverySnapshot = resolveWorkerDiscoverySnapshot(
+    adapter.id,
+    options,
+  );
   try {
-    refs = await withTimeout(
-      () => adapter.findChanged(hint),
-      findChangedTimeoutMs,
-      new AdapterCallTimeoutError({
-        adapterId: adapter.id,
-        operation: "findChanged",
-        timeoutMs: findChangedTimeoutMs,
-      }),
-    );
+    discoverySummary = restoreAdapterDiscoveryState(adapter, hint, store, options);
+    if (workerDiscoverySnapshot) {
+      const result = await findChangedViaWorker(
+        options.workerIngest!.command,
+        {
+          hint,
+          adapter: workerDiscoverySnapshot,
+          discoveryState: discoverySummary.state,
+        },
+        {
+          timeoutMs: findChangedTimeoutMs,
+        },
+      );
+      refs = result.refs;
+      discoveryStateSnapshot = result.discoveryState;
+    } else {
+      if (discoverySummary.state && isDiscoveryCacheCapableAdapter(adapter)) {
+        adapter.importDiscoveryState(discoverySummary.state);
+      }
+      refs = await withTimeout(
+        () => adapter.findChanged(hint),
+        findChangedTimeoutMs,
+        new AdapterCallTimeoutError({
+          adapterId: adapter.id,
+          operation: "findChanged",
+          timeoutMs: findChangedTimeoutMs,
+        }),
+      );
+      discoveryStateSnapshot = snapshotAdapterDiscoveryState(adapter, options);
+      releaseAdapterDiscoveryMemory(adapter);
+    }
   } catch (error) {
-    if (error instanceof AdapterCallTimeoutError) {
+    if (
+      error instanceof AdapterCallTimeoutError ||
+      (workerDiscoverySnapshot &&
+        error instanceof Error &&
+        error.message.includes("worker timed out after"))
+    ) {
       logger.warn(
         `Adapter ${adapter.id} findChanged timed out after ${findChangedTimeoutMs}ms; skipping adapter for this cycle`,
       );
@@ -95,8 +161,6 @@ export async function ingestOne(
     return EMPTY_INGEST_RESULT;
   }
 
-  releaseAdapterDiscoveryMemory(adapter);
-
   const trackChangedConversationIds =
     options.trackChangedConversationIds !== false;
   const changedConversationIds = trackChangedConversationIds
@@ -104,12 +168,12 @@ export async function ingestOne(
     : null;
   let anyChanged = false;
   let loadedConversationCount = 0;
-  const workerSnapshot = resolveWorkerIngestSnapshot(
+  const excludedDiscoverySourcePaths = new Set<string>();
+  const workerSnapshot = resolveWorkerLoadSnapshot(
     adapter.id,
     hint,
     options,
   );
-
   for (let start = 0; start < refs.length; start += batchSize) {
     const batch = refs.slice(start, start + batchSize);
 
@@ -128,6 +192,7 @@ export async function ingestOne(
             },
           );
           if (result.kind === "missing") {
+            excludedDiscoverySourcePaths.add(ref.sourcePath);
             continue;
           }
 
@@ -148,6 +213,7 @@ export async function ingestOne(
             }),
           );
           if (!bundle) {
+            excludedDiscoverySourcePaths.add(ref.sourcePath);
             continue;
           }
 
@@ -164,6 +230,7 @@ export async function ingestOne(
           logger.warn(
             `Adapter ${adapter.id} loadConversation timed out for ${ref.id} after ${loadConversationTimeoutMs}ms; skipping ref`,
           );
+          excludedDiscoverySourcePaths.add(ref.sourcePath);
           continue;
         }
 
@@ -175,6 +242,7 @@ export async function ingestOne(
           logger.warn(
             `Adapter ${adapter.id} worker loadConversation timed out for ${ref.id} after ${loadConversationTimeoutMs}ms; skipping ref`,
           );
+          excludedDiscoverySourcePaths.add(ref.sourcePath);
           continue;
         }
 
@@ -182,6 +250,7 @@ export async function ingestOne(
           `Adapter ${adapter.id} failed to load conversation ${ref.id}`,
           error,
         );
+        excludedDiscoverySourcePaths.add(ref.sourcePath);
       }
     }
 
@@ -207,6 +276,27 @@ export async function ingestOne(
         await Bun.sleep(0);
       }
     }
+  }
+
+  const persistedSummary = persistAdapterDiscoveryState(
+    adapter,
+    options,
+    discoverySummary,
+    {
+      state: discoveryStateSnapshot,
+      excludedSourcePaths: excludedDiscoverySourcePaths,
+    },
+  );
+  if (options.onDiscoveryResult) {
+    await options.onDiscoveryResult({
+      adapterId: adapter.id,
+      hintKind: hint?.kind,
+      cachedSources: persistedSummary.cachedSources,
+      invalidatedSources: persistedSummary.invalidatedSources,
+      freshSources: persistedSummary.freshSources,
+      cacheDisabledReason: persistedSummary.disabledReason,
+      invalidationReason: persistedSummary.invalidationReason,
+    });
   }
 
   return {
@@ -257,9 +347,8 @@ export async function ingestAll(
   };
 }
 
-function resolveWorkerIngestSnapshot(
+function resolveWorkerAdapterSnapshot(
   adapterId: string,
-  hint: ChangeHint | undefined,
   options: IngestOptions,
 ): {
   adapterId: string;
@@ -273,16 +362,190 @@ function resolveWorkerIngestSnapshot(
     return null;
   }
 
-  if (!hint || hint.kind === "fs-change") {
-    return null;
-  }
-
   return {
     adapterId,
     adapterConfig: options.workerIngest.adapterConfigs[adapterId] ?? {
       enabled: true,
     },
   };
+}
+
+function resolveWorkerDiscoverySnapshot(
+  adapterId: string,
+  options: IngestOptions,
+): {
+  adapterId: string;
+  adapterConfig: AdapterConfig;
+} | null {
+  return resolveWorkerAdapterSnapshot(adapterId, options);
+}
+
+function resolveWorkerLoadSnapshot(
+  adapterId: string,
+  hint: ChangeHint | undefined,
+  options: IngestOptions,
+): {
+  adapterId: string;
+  adapterConfig: AdapterConfig;
+} | null {
+  const snapshot = resolveWorkerAdapterSnapshot(adapterId, options);
+  if (!snapshot) {
+    return null;
+  }
+
+  if (!hint || hint.kind === "fs-change") {
+    return null;
+  }
+
+  return snapshot;
+}
+
+function restoreAdapterDiscoveryState(
+  adapter: Adapter,
+  hint: ChangeHint | undefined,
+  store: ConversationStore,
+  options: IngestOptions,
+): LoadedDiscoveryCacheSummary {
+  const cacheOptions = options.discoveryCache;
+  if (!cacheOptions || !DISCOVERY_CACHE_ADAPTERS.has(adapter.id)) {
+    return {
+      cachedSources: 0,
+      invalidatedSources: 0,
+      freshSources: 0,
+      importedSourcePaths: [],
+      state: null,
+    };
+  }
+
+  if (hint?.kind === "startup-scan" && !storeHasWarmLocalState(store)) {
+    return {
+      cachedSources: 0,
+      invalidatedSources: 0,
+      freshSources: 0,
+      importedSourcePaths: [],
+      state: null,
+    };
+  }
+
+  if (!isDiscoveryCacheCapableAdapter(adapter)) {
+    return {
+      cachedSources: 0,
+      invalidatedSources: 0,
+      freshSources: 0,
+      disabledReason: "adapter-missing-cache-hooks",
+      importedSourcePaths: [],
+      state: null,
+    };
+  }
+
+  const result = cacheOptions.store.loadForAdapter(
+    adapter,
+    cacheOptions.adapterConfigs[adapter.id] ?? { enabled: true },
+  );
+
+  return {
+    cachedSources: result.cachedSources,
+    invalidatedSources: 0,
+    freshSources: 0,
+    invalidationReason: result.invalidationReason,
+    disabledReason: result.disabledReason,
+    importedSourcePaths: result.state?.sources.map((source) => source.sourcePath) ?? [],
+    state: result.state,
+  };
+}
+
+function persistAdapterDiscoveryState(
+  adapter: Adapter,
+  options: IngestOptions,
+  baseline: LoadedDiscoveryCacheSummary,
+  overrides?: {
+    state?: DiscoveryCacheState | null;
+    excludedSourcePaths?: ReadonlySet<string>;
+  },
+): DiscoveryCacheRunSummary {
+  const cacheOptions = options.discoveryCache;
+  if (!cacheOptions || !DISCOVERY_CACHE_ADAPTERS.has(adapter.id)) {
+    return baseline;
+  }
+
+  if (!isDiscoveryCacheCapableAdapter(adapter)) {
+    return {
+      ...baseline,
+      disabledReason: baseline.disabledReason ?? "adapter-missing-cache-hooks",
+    };
+  }
+
+  const state =
+    overrides?.state ?? snapshotAdapterDiscoveryState(adapter, options);
+  if (!state) {
+    return baseline;
+  }
+  const excludedSourcePaths = overrides?.excludedSourcePaths ?? new Set<string>();
+  const filteredState =
+    excludedSourcePaths.size === 0
+      ? state
+      : {
+          sources: state.sources.filter(
+            (source) => !excludedSourcePaths.has(source.sourcePath),
+          ),
+        };
+  const importedPaths = new Set<string>(baseline.importedSourcePaths);
+  const exportedPaths = new Set<string>(
+    filteredState.sources.map((source) => source.sourcePath),
+  );
+  let invalidatedSources = 0;
+  let freshSources = 0;
+
+  for (const sourcePath of exportedPaths) {
+    if (!importedPaths.has(sourcePath)) {
+      freshSources += 1;
+    }
+  }
+  for (const sourcePath of importedPaths) {
+    if (!exportedPaths.has(sourcePath)) {
+      invalidatedSources += 1;
+    }
+  }
+
+  const summary: DiscoveryCacheRunSummary = {
+    cachedSources: baseline.cachedSources,
+    invalidatedSources,
+    freshSources,
+    invalidationReason:
+      excludedSourcePaths.size > 0
+        ? "partial-load-failure-excluded-sources"
+        : baseline.invalidationReason,
+    disabledReason: baseline.disabledReason,
+  };
+
+  cacheOptions.store.saveForAdapter(
+    adapter,
+    cacheOptions.adapterConfigs[adapter.id] ?? { enabled: true },
+    filteredState,
+    summary,
+  );
+
+  return summary;
+}
+
+function snapshotAdapterDiscoveryState(
+  adapter: Adapter,
+  options: IngestOptions,
+): DiscoveryCacheState | null {
+  const cacheOptions = options.discoveryCache;
+  if (!cacheOptions || !DISCOVERY_CACHE_ADAPTERS.has(adapter.id)) {
+    return null;
+  }
+
+  if (!isDiscoveryCacheCapableAdapter(adapter)) {
+    return null;
+  }
+
+  return adapter.exportDiscoveryState();
+}
+
+function storeHasWarmLocalState(store: ConversationStore): boolean {
+  return store.hasLocalData?.() ?? false;
 }
 
 function normalizeBatchSize(
@@ -382,10 +645,7 @@ async function reclaimAdapterBatchMemory(
   deltaMb: number;
 }> {
   const beforeRssMb = currentRssMb();
-  const releasableAdapter = adapter as Adapter & {
-    releaseTransientMemory?: () => void;
-  };
-  releasableAdapter.releaseTransientMemory?.();
+  adapter.releaseTransientMemory?.();
   if (needsAggressiveBatchReclaim(adapter.id)) {
     reclaimSqliteStoreMemory(store);
   }
@@ -399,10 +659,7 @@ async function reclaimAdapterBatchMemory(
 }
 
 function releaseAdapterDiscoveryMemory(adapter: Adapter): void {
-  const releasableAdapter = adapter as Adapter & {
-    releaseDiscoveryMemory?: () => void;
-  };
-  releasableAdapter.releaseDiscoveryMemory?.();
+  adapter.releaseDiscoveryMemory?.();
 }
 
 function reclaimSqliteStoreMemory(store: ConversationStore): void {

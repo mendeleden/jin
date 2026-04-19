@@ -1,6 +1,11 @@
 import { heapStats } from "bun:jsc";
+import {
+  isDiscoveryCacheCapableAdapter,
+  type DiscoveryCacheState,
+} from "../adapters/discovery-cache";
 import { createAdapter } from "../adapters/registry";
 import type { AdapterConfig } from "../config";
+import type { ChangeHint } from "../contracts/adapters";
 import type {
   ConversationBundle,
   ConversationRef,
@@ -18,6 +23,7 @@ import { abortConversationWriteSession } from "../db/write-session";
 const MB = 1024 * 1024;
 const JSON_RPC_VERSION = "2.0";
 const INITIALIZE_METHOD = "initialize";
+const FIND_CHANGED_METHOD = "jin.ingest.findChanged";
 const LOAD_CONVERSATION_METHOD = "jin.ingest.loadConversation";
 const WORKER_STARTED_METHOD = "jin.worker.started";
 const WORKER_SAMPLE_METHOD = "jin.worker.sample";
@@ -71,6 +77,17 @@ export type WorkerAdapterSnapshot = {
 export type WorkerLoadConversationRequest = {
   ref: ConversationRef;
   adapter: WorkerAdapterSnapshot;
+};
+
+export type WorkerFindChangedRequest = {
+  hint?: ChangeHint;
+  adapter: WorkerAdapterSnapshot;
+  discoveryState?: DiscoveryCacheState | null;
+};
+
+type WorkerFindChangedResult = {
+  refs: ConversationRef[];
+  discoveryState: DiscoveryCacheState | null;
 };
 
 type WorkerLoadConversationResult =
@@ -159,7 +176,7 @@ export async function runWorkerServerCommand(): Promise<void> {
             id: message.id,
             result: {
               protocolVersion: 1,
-              methods: [LOAD_CONVERSATION_METHOD],
+              methods: [FIND_CHANGED_METHOD, LOAD_CONVERSATION_METHOD],
               notifications: [
                 WORKER_STARTED_METHOD,
                 WORKER_SAMPLE_METHOD,
@@ -170,6 +187,16 @@ export async function runWorkerServerCommand(): Promise<void> {
             },
           });
           return;
+        case FIND_CHANGED_METHOD: {
+          const params = parseFindChangedParams(message.params);
+          const result = await findChangedAndSnapshot(params);
+          writeJsonRpcMessage(process.stdout, {
+            jsonrpc: JSON_RPC_VERSION,
+            id: message.id,
+            result,
+          });
+          return;
+        }
         case LOAD_CONVERSATION_METHOD: {
           const params = parseLoadConversationParams(message.params);
           const result = await loadConversationAndNotify(params);
@@ -377,13 +404,13 @@ export async function ingestConversationViaWorker(
     await readLoop;
 
     const stderr = (await stderrPromise).trim();
-      if (exitCode !== 0) {
-        abortSession(session, ref);
-        if (!timedOut) {
-          failNotified = true;
-          await options.onWorkerEvent?.("fail", {
-            adapterId: ref.adapterId,
-            refId: ref.id,
+    if (exitCode !== 0) {
+      abortSession(session, ref);
+      if (!timedOut) {
+        failNotified = true;
+        await options.onWorkerEvent?.("fail", {
+          adapterId: ref.adapterId,
+          refId: ref.id,
           exitCode,
           stderr,
         });
@@ -497,6 +524,142 @@ export async function ingestConversationViaWorker(
   }
 }
 
+export async function findChangedViaWorker(
+  workerCommand: string[],
+  request: WorkerFindChangedRequest,
+  options: {
+    timeoutMs?: number;
+  } = {},
+): Promise<WorkerFindChangedResult> {
+  const subprocess = Bun.spawn({
+    cmd: [...workerCommand, "__worker"],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderrPromise = readStreamText(subprocess.stderr);
+  let nextRequestId = 1;
+  const pending = new Map<JsonRpcId, PendingRequest>();
+
+  const readLoop = readJsonRpcMessages(subprocess.stdout, async (message) => {
+    if (!isJsonRpcResponse(message)) {
+      return;
+    }
+
+    const entry = pending.get(message.id);
+    if (!entry) {
+      return;
+    }
+
+    pending.delete(message.id);
+    if ("error" in message) {
+      entry.reject(
+        new Error(
+          `worker rpc error ${message.error.code}: ${message.error.message}`,
+        ),
+      );
+    } else {
+      entry.resolve(message.result);
+    }
+  }).finally(() => {
+    if (pending.size === 0) {
+      return;
+    }
+
+    const error = new Error("worker stream ended before pending responses arrived");
+    for (const entry of pending.values()) {
+      entry.reject(error);
+    }
+    pending.clear();
+  });
+
+  const sendRequest = (method: string, params?: unknown): Promise<unknown> => {
+    const id = nextRequestId;
+    nextRequestId += 1;
+    const promise = new Promise<unknown>((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+    });
+    writeJsonRpcMessage(subprocess.stdin, {
+      jsonrpc: JSON_RPC_VERSION,
+      id,
+      method,
+      params,
+    });
+    return promise;
+  };
+
+  const work = (async () => {
+    const initializeResult = await sendRequest(INITIALIZE_METHOD, {
+      client: "jin",
+      protocolVersion: 1,
+    });
+    assertInitializeResult(initializeResult);
+
+    const findChangedPromise = sendRequest(FIND_CHANGED_METHOD, request);
+    subprocess.stdin.end();
+
+    const result = parseFindChangedResult(await findChangedPromise);
+    const exitCode = await subprocess.exited;
+    await readLoop;
+
+    const stderr = (await stderrPromise).trim();
+    if (exitCode !== 0) {
+      throw new Error(
+        `worker exited with code ${exitCode}${
+          stderr ? `: ${stderr.slice(0, 400)}` : ""
+        }`,
+      );
+    }
+
+    return result;
+  })();
+
+  const timeoutMs = options.timeoutMs ?? 0;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout =
+    timeoutMs > 0
+      ? new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(async () => {
+            try {
+              subprocess.kill();
+            } catch {
+              // Best-effort kill for timed-out workers.
+            }
+            const stderr = (await stderrPromise).trim();
+            reject(
+              new Error(
+                `worker timed out after ${timeoutMs}ms${
+                  stderr ? `: ${stderr.slice(0, 400)}` : ""
+                }`,
+              ),
+            );
+          }, timeoutMs);
+        })
+      : null;
+
+  try {
+    return await (timeout ? Promise.race([work, timeout]) : work);
+  } catch (error) {
+    try {
+      subprocess.stdin.end();
+    } catch {
+      // Best-effort close for protocol/setup failures.
+    }
+    if (subprocess.exitCode === null) {
+      try {
+        subprocess.kill();
+      } catch {
+        // Best-effort kill for failed workers.
+      }
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 async function loadConversationAndNotify(
   request: WorkerLoadConversationRequest,
 ): Promise<WorkerLoadConversationResult> {
@@ -508,14 +671,7 @@ async function loadConversationAndNotify(
   }
 
   const created = createAdapter(adapter.adapterId, adapter.adapterConfig);
-  const v2Adapter = created as typeof created & {
-    loadConversation?: (
-      nextRef: ConversationRef,
-    ) => Promise<ConversationBundle | null>;
-    releaseTransientMemory?: () => void;
-    releaseDiscoveryMemory?: () => void;
-  };
-  if (typeof v2Adapter.loadConversation !== "function") {
+  if (typeof created.loadConversation !== "function") {
     throw new Error(`adapter ${adapter.adapterId} does not support loadConversation`);
   }
 
@@ -527,7 +683,7 @@ async function loadConversationAndNotify(
   }));
   writeSample(created.id, ref.id, "before-load");
 
-  const bundle = await v2Adapter.loadConversation(ref);
+  const bundle = await created.loadConversation(ref);
   writeSample(created.id, ref.id, "after-load");
 
   if (!bundle) {
@@ -560,8 +716,8 @@ async function loadConversationAndNotify(
 
   bundle.messages.length = 0;
   messages.length = 0;
-  v2Adapter.releaseTransientMemory?.();
-  v2Adapter.releaseDiscoveryMemory?.();
+  created.releaseTransientMemory?.();
+  created.releaseDiscoveryMemory?.();
   Bun.gc(true);
   await Bun.sleep(0);
   Bun.gc(true);
@@ -573,14 +729,78 @@ async function loadConversationAndNotify(
   };
 }
 
+async function findChangedAndSnapshot(
+  request: WorkerFindChangedRequest,
+): Promise<WorkerFindChangedResult> {
+  const { adapter, hint, discoveryState } = request;
+  const created = createAdapter(adapter.adapterId, adapter.adapterConfig);
+
+  if (discoveryState && isDiscoveryCacheCapableAdapter(created)) {
+    created.importDiscoveryState(discoveryState);
+  }
+
+  const refs = await created.findChanged(hint);
+  const nextDiscoveryState = isDiscoveryCacheCapableAdapter(created)
+    ? created.exportDiscoveryState()
+    : null;
+
+  created.releaseDiscoveryMemory?.();
+  created.releaseTransientMemory?.();
+  Bun.gc(true);
+  await Bun.sleep(0);
+  Bun.gc(true);
+
+  return {
+    refs,
+    discoveryState: nextDiscoveryState,
+  };
+}
+
 function assertInitializeResult(result: unknown): void {
   if (
     !isRecord(result) ||
     !Array.isArray(result.methods) ||
+    !result.methods.includes(FIND_CHANGED_METHOD) ||
     !result.methods.includes(LOAD_CONVERSATION_METHOD)
   ) {
     throw new Error("worker initialize handshake failed");
   }
+}
+
+function parseFindChangedParams(
+  value: unknown,
+): WorkerFindChangedRequest {
+  if (!isRecord(value) || !isRecord(value.adapter)) {
+    throw new Error("invalid worker findChanged params");
+  }
+
+  const adapter = value.adapter;
+  const snapshotAdapterId = asString(adapter.adapterId);
+  const adapterConfig = adapter.adapterConfig;
+
+  if (!snapshotAdapterId || !isRecord(adapterConfig)) {
+    throw new Error("worker findChanged params missing required fields");
+  }
+
+  return {
+    hint: parseChangeHint(value.hint),
+    adapter: {
+      adapterId: snapshotAdapterId,
+      adapterConfig: {
+        enabled:
+          typeof adapterConfig.enabled === "boolean"
+            ? adapterConfig.enabled
+            : true,
+        ...(typeof adapterConfig.dataDir === "string"
+          ? { dataDir: adapterConfig.dataDir }
+          : {}),
+        ...(typeof adapterConfig.allowProtectedSource === "boolean"
+          ? { allowProtectedSource: adapterConfig.allowProtectedSource }
+          : {}),
+      },
+    },
+    discoveryState: parseDiscoveryCacheState(value.discoveryState),
+  };
 }
 
 function parseLoadConversationParams(
@@ -650,6 +870,32 @@ function parseLoadConversationResult(
   }
 
   throw new Error("invalid worker loadConversation result");
+}
+
+function parseFindChangedResult(
+  value: unknown,
+): WorkerFindChangedResult {
+  if (!isRecord(value) || !Array.isArray(value.refs)) {
+    throw new Error("invalid worker findChanged result");
+  }
+
+  const refs: ConversationRef[] = value.refs.map((ref) => {
+    if (!isRecord(ref)) {
+      throw new Error("invalid worker findChanged ref");
+    }
+    const id = asString(ref.id);
+    const adapterId = asString(ref.adapterId);
+    const sourcePath = asString(ref.sourcePath);
+    if (!id || !adapterId || !sourcePath) {
+      throw new Error("invalid worker findChanged ref");
+    }
+    return { id, adapterId, sourcePath };
+  });
+
+  return {
+    refs,
+    discoveryState: parseDiscoveryCacheState(value.discoveryState),
+  };
 }
 
 function notification(method: string, params: unknown): JsonRpcNotification {
@@ -846,4 +1092,73 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function parseChangeHint(value: unknown): ChangeHint | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error("invalid worker change hint");
+  }
+
+  const kind = asString(value.kind);
+  if (
+    kind !== "startup-scan" &&
+    kind !== "fs-change" &&
+    kind !== "periodic-scan"
+  ) {
+    throw new Error("invalid worker change hint");
+  }
+
+  const changedPaths = Array.isArray(value.changedPaths)
+    ? value.changedPaths.flatMap((entry) =>
+        typeof entry === "string" ? [entry] : [],
+      )
+    : undefined;
+
+  return changedPaths ? { kind, changedPaths } : { kind };
+}
+
+function parseDiscoveryCacheState(value: unknown): DiscoveryCacheState | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (!isRecord(value) || !Array.isArray(value.sources)) {
+    throw new Error("invalid worker discovery cache state");
+  }
+
+  return {
+    sources: value.sources.map((source) => {
+      if (!isRecord(source)) {
+        throw new Error("invalid worker discovery cache source");
+      }
+      const sourcePath = asString(source.sourcePath);
+      const sourceKind = asString(source.sourceKind);
+      const signature = asString(source.signature);
+      const sizeBytes =
+        typeof source.sizeBytes === "number" ? source.sizeBytes : NaN;
+      const mtimeMs =
+        typeof source.mtimeMs === "number" ? source.mtimeMs : NaN;
+      if (
+        !sourcePath ||
+        !sourceKind ||
+        !signature ||
+        !Number.isFinite(sizeBytes) ||
+        !Number.isFinite(mtimeMs)
+      ) {
+        throw new Error("invalid worker discovery cache source");
+      }
+      return {
+        sourcePath,
+        sourceKind,
+        sizeBytes,
+        mtimeMs,
+        signature,
+        payload: source.payload as DiscoveryCacheState["sources"][number]["payload"],
+      };
+    }),
+  };
 }

@@ -1,5 +1,8 @@
 # Worker Ingest Flow Guide
 
+Standalone Mermaid source:
+- [worker-ingest-flow.mmd](/Users/edenmendel/Documents/GitHub/jin/docs/worker-ingest-flow.mmd)
+
 This guide explains two different paths that currently coexist:
 
 1. the **default live runtime path** that `jin start --foreground` and `jin start --service` use

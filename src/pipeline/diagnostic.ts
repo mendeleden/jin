@@ -6,9 +6,32 @@ export interface DiagnosticEvent {
   ts: string;
   event: string;
   rssMb: number;
+  cpuPct: number;
   queueSize: number;
   queueItems?: string[];
   [key: string]: unknown;
+}
+
+let lastCpuUsage = process.cpuUsage();
+let lastCpuAtNs = process.hrtime.bigint();
+
+function sampleCpuPct(): number {
+  const nowNs = process.hrtime.bigint();
+  const usage = process.cpuUsage();
+  const elapsedMs = Number(nowNs - lastCpuAtNs) / 1_000_000;
+  const deltaMicros =
+    usage.user +
+    usage.system -
+    (lastCpuUsage.user + lastCpuUsage.system);
+
+  lastCpuUsage = usage;
+  lastCpuAtNs = nowNs;
+
+  if (elapsedMs <= 0) {
+    return 0;
+  }
+
+  return Math.round(((deltaMicros / 1000) / elapsedMs) * 1000) / 10;
 }
 
 export function appendDiagnosticEvent(
@@ -33,6 +56,7 @@ export function appendDiagnosticEvent(
     ts: new Date().toISOString(),
     event: String(fields.event ?? "diagnostic:unknown"),
     rssMb: Math.round(getRssBytes() / (1024 * 1024)),
+    cpuPct: sampleCpuPct(),
     queueSize: getQueueSize(),
     queueItems: getQueueSnapshot(),
     ...fields,
@@ -109,6 +133,31 @@ export class DiagnosticLogger {
       changedCount: result.changedConversationIds.length,
       changedIds: result.changedConversationIds.slice(0, 20),
       durationMs: Math.round(durationMs),
+    });
+  }
+
+  discoveryResult(info: {
+    adapterId: string;
+    hintKind?: string;
+    cachedSources: number;
+    invalidatedSources: number;
+    freshSources: number;
+    cacheDisabledReason?: string;
+    invalidationReason?: string;
+  }): void {
+    this.emit({
+      event: "discovery:result",
+      adapterId: info.adapterId,
+      ...(info.hintKind ? { hint: info.hintKind } : {}),
+      cachedSources: info.cachedSources,
+      invalidatedSources: info.invalidatedSources,
+      freshSources: info.freshSources,
+      ...(info.cacheDisabledReason
+        ? { cacheDisabledReason: info.cacheDisabledReason }
+        : {}),
+      ...(info.invalidationReason
+        ? { invalidationReason: info.invalidationReason }
+        : {}),
     });
   }
 
@@ -256,9 +305,22 @@ export class DiagnosticLogger {
 function workMeta(work: PipelineWorkItem): Record<string, unknown> {
   switch (work.kind) {
     case "ingest-adapter":
-      return { adapterId: work.adapterId, hint: work.hint.kind };
+      return {
+        adapterId: work.adapterId,
+        hint: work.hint.kind,
+        ...(Array.isArray(work.hint.changedPaths) &&
+        work.hint.changedPaths.length > 0
+          ? { changedPaths: work.hint.changedPaths.slice(0, 8) }
+          : {}),
+      };
     case "ingest-all":
-      return { hint: work.hint.kind };
+      return {
+        hint: work.hint.kind,
+        ...(Array.isArray(work.hint.changedPaths) &&
+        work.hint.changedPaths.length > 0
+          ? { changedPaths: work.hint.changedPaths.slice(0, 8) }
+          : {}),
+      };
     default:
       return {};
   }

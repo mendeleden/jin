@@ -229,6 +229,12 @@ On a fresh machine with no config, `jin start` auto-detects adapters,
 creates default config, and starts the runtime. There is no separate
 `jin init` command.
 
+On an existing machine, `jin start` may also materialize missing default
+config stanzas into `config.json` before taking the runtime snapshot.
+This is additive only: startup may write newly introduced adapter keys or
+missing default sections, but it must not silently flip explicit user
+choices or overwrite runtime/telemetry state into config.
+
 This keeps the getting-started flow to one command:
 ```
 jin start

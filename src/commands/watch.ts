@@ -1,13 +1,15 @@
 import {
   configDir,
   configPath,
-  loadConfig,
+  discoveryCachePath,
+  loadStartupConfig,
   resolveAdapterConfig,
   type JinConfig,
 } from "../config";
 import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
+import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
 import { appendDiagnosticEvent } from "../pipeline/diagnostic";
@@ -62,7 +64,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     process.exit(1);
   }
 
-  const config = await loadConfig();
+  const config = await loadStartupConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
   const diagnosticPath =
@@ -95,6 +97,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   const runtimePaths = getRuntimePaths();
   const store = openStoreAtPath(runtimePaths.storePath);
+  const discoveryCache = openDiscoveryCache(log);
   writeFileSync(pidFilePath(), String(process.pid));
 
   console.log(
@@ -114,17 +117,19 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const pipelineHandle = await startPipeline(
     config,
     store,
+    discoveryCache,
     sinks,
     log,
     activeAdapters,
     diagnosticPath,
   );
-  await runUntilShutdown(pipelineHandle, store, log);
+  await runUntilShutdown(pipelineHandle, store, discoveryCache, log);
 }
 
 async function startPipeline(
   config: JinConfig,
   store: SqliteConversationStore,
+  discoveryCache: SqliteDiscoveryCache | null,
   sinks: V2Sink[],
   log: RuntimeLog,
   initialAdapters: V2Adapter[],
@@ -157,6 +162,14 @@ async function startPipeline(
         command: resolveSelfCommand(),
         adapterConfigs: config.adapters,
       },
+      ...(discoveryCache
+        ? {
+            discoveryCache: {
+              store: discoveryCache,
+              adapterConfigs: config.adapters,
+            },
+          }
+        : {}),
     });
     for (const adapter of initialAdapters) {
       handle.enqueue({
@@ -169,6 +182,7 @@ async function startPipeline(
   } catch (error) {
     await closeSinks(sinks);
     store.close();
+    discoveryCache?.close();
     cleanup();
     throw error;
   }
@@ -177,6 +191,7 @@ async function startPipeline(
 async function runUntilShutdown(
   pipelineHandle: PipelineHandle,
   store: SqliteConversationStore,
+  discoveryCache: SqliteDiscoveryCache | null,
   log: RuntimeLog,
 ): Promise<void> {
   let shuttingDown = false;
@@ -210,6 +225,7 @@ async function runUntilShutdown(
     try {
       const result = await pipelineHandle.shutdown();
       store.close();
+      discoveryCache?.close();
       cleanup();
 
       if (result.timedOut) {
@@ -221,6 +237,7 @@ async function runUntilShutdown(
       return;
     } catch (error) {
       store.close();
+      discoveryCache?.close();
       cleanup();
       log(`Shutdown failed: ${formatError(error)}`);
       finishWithExit(1, error);
@@ -242,6 +259,17 @@ async function runUntilShutdown(
     } catch (error) {
       rejectStopped(fallbackError ?? error);
     }
+  }
+}
+
+function openDiscoveryCache(log: RuntimeLog): SqliteDiscoveryCache | null {
+  try {
+    return new SqliteDiscoveryCache(discoveryCachePath());
+  } catch (error) {
+    log(
+      `Discovery cache disabled: ${formatError(error)}`,
+    );
+    return null;
   }
 }
 

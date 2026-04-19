@@ -222,6 +222,15 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin status
     $ jin status --json
 `,
+  cache: `
+  Manage local performance caches
+
+  USAGE
+    jin cache clear
+
+  EXAMPLES
+    $ jin cache clear
+`,
   sink: `
   Manage low-level integration destinations
 
@@ -310,6 +319,7 @@ function usage(): void {
 
   Utility:
     ingest                               One-shot local ingest
+    cache clear                          Clear the local discovery cache
     benchmark [--json]                   Measure ingest budgets
     service install|uninstall|status     OS service management
     update [--quiet|--rollback]          Self-update or rollback
@@ -393,6 +403,21 @@ async function main(): Promise<void> {
         json: !!flags.json,
         short: !!flags.short,
       });
+      break;
+    }
+    case "cache": {
+      const action = args[1];
+      switch (action) {
+        case "clear": {
+          const { cacheClearCommand } = await import("./commands/cache");
+          await cacheClearCommand();
+          break;
+        }
+        default:
+          console.error(`Unknown cache action: ${action || "(missing)"}`);
+          console.log(COMMAND_HELP.cache);
+          process.exit(1);
+      }
       break;
     }
 

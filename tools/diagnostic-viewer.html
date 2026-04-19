@@ -157,6 +157,31 @@
   }
   #controls button:hover { border-color: var(--accent); }
   #controls button.active { background: rgba(88, 166, 255, 0.15); border-color: var(--accent); }
+  .refresh-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .refresh-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(88, 166, 255, 0.08);
+  }
+  .refresh-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+  .refresh-dot.paused {
+    background: var(--text-dim);
+  }
 </style>
 </head>
 <body>
@@ -174,6 +199,14 @@
     <h1>jin diagnostic viewer</h1>
     <span class="meta" id="timeRange"></span>
     <div id="controls">
+      <div class="refresh-meta" id="refreshMeta" style="display:none">
+        <span class="refresh-badge">
+          <span class="refresh-dot" id="refreshDot"></span>
+          <span id="refreshStatus">Live</span>
+        </span>
+        <span id="refreshTime">Waiting for first refresh</span>
+      </div>
+      <button id="btn-refresh-toggle" onclick="toggleAutoRefresh()" style="display:none">Pause</button>
       <button id="btn-all" class="active" onclick="setFilter('all')">All</button>
       <button id="btn-1m" onclick="setFilter('1m')">1m</button>
       <button id="btn-5m" onclick="setFilter('5m')">5m</button>
@@ -248,9 +281,21 @@
 <script>
 let allEvents = [];
 let currentFilter = 'all';
+let currentSource = 'file';
+let autoRefreshEnabled = true;
+let autoRefreshTimer = null;
+let lastRemoteFingerprint = '';
+let lastRefreshAt = null;
+
+const AUTO_REFRESH_INTERVAL_MS = 2000;
 
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
+const refreshMeta = document.getElementById('refreshMeta');
+const refreshDot = document.getElementById('refreshDot');
+const refreshStatus = document.getElementById('refreshStatus');
+const refreshTime = document.getElementById('refreshTime');
+const refreshToggleButton = document.getElementById('btn-refresh-toggle');
 
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('active'); });
@@ -263,13 +308,11 @@ dropZone.addEventListener('drop', e => {
 fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
 
 function loadFile(file) {
+  stopAutoRefresh();
+  currentSource = 'file';
   const reader = new FileReader();
   reader.onload = e => {
-    const lines = e.target.result.trim().split('\n');
-    allEvents = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-    document.getElementById('drop-view').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    render();
+    applyLogText(e.target.result, { source: 'file', fingerprint: null });
   };
   reader.readAsText(file);
 }
@@ -305,6 +348,94 @@ function render() {
   renderTimelineChart(events);
   renderTrace(events);
   renderTable(events);
+}
+
+function applyLogText(text, { source, fingerprint }) {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const lines = trimmed.split('\n');
+  const parsed = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  if (parsed.length === 0) return false;
+  allEvents = parsed;
+  currentSource = source;
+  if (source === 'remote') {
+    lastRemoteFingerprint = fingerprint || buildFingerprint(trimmed);
+    lastRefreshAt = new Date();
+  }
+  document.getElementById('drop-view').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  updateRefreshUi();
+  render();
+  return true;
+}
+
+function buildFingerprint(text) {
+  return `${text.length}:${text.slice(-256)}`;
+}
+
+function startAutoRefresh() {
+  if (currentSource !== 'remote') return;
+  stopAutoRefresh();
+  if (!autoRefreshEnabled) {
+    updateRefreshUi();
+    return;
+  }
+  autoRefreshTimer = window.setInterval(refreshRemoteLog, AUTO_REFRESH_INTERVAL_MS);
+  updateRefreshUi();
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer !== null) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+  updateRefreshUi();
+}
+
+function toggleAutoRefresh() {
+  autoRefreshEnabled = !autoRefreshEnabled;
+  if (autoRefreshEnabled) {
+    startAutoRefresh();
+    void refreshRemoteLog();
+    return;
+  }
+  stopAutoRefresh();
+}
+
+function updateRefreshUi() {
+  const remote = currentSource === 'remote';
+  refreshMeta.style.display = remote ? 'flex' : 'none';
+  refreshToggleButton.style.display = remote ? 'inline-block' : 'none';
+  if (!remote) return;
+
+  const live = autoRefreshEnabled && autoRefreshTimer !== null;
+  refreshDot.classList.toggle('paused', !live);
+  refreshStatus.textContent = live ? 'Live' : 'Paused';
+  refreshToggleButton.textContent = live ? 'Pause' : 'Resume';
+
+  if (lastRefreshAt) {
+    refreshTime.textContent = `Last refresh ${lastRefreshAt.toLocaleTimeString()}`;
+  } else {
+    refreshTime.textContent = 'Waiting for first refresh';
+  }
+}
+
+async function refreshRemoteLog() {
+  if (!autoRefreshEnabled) return;
+  try {
+    const res = await fetch(`/debug.jsonl?ts=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const text = await res.text();
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const fingerprint = buildFingerprint(trimmed);
+    if (fingerprint === lastRemoteFingerprint) {
+      lastRefreshAt = new Date();
+      updateRefreshUi();
+      return;
+    }
+    applyLogText(trimmed, { source: 'remote', fingerprint });
+  } catch {}
 }
 
 function renderStats(events) {
@@ -707,17 +838,23 @@ function shortPath(s) { return s.split('/').slice(-2).join('/'); }
 // Auto-load from /debug.jsonl if served via `jin diagnostic` or the bun dev server
 (async function autoLoad() {
   try {
-    const res = await fetch('/debug.jsonl');
-    if (!res.ok) return;
-    const text = await res.text();
-    if (!text.trim()) return;
-    const lines = text.trim().split('\n');
-    allEvents = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-    if (allEvents.length > 0) {
-      document.getElementById('drop-view').style.display = 'none';
-      document.getElementById('dashboard').style.display = 'block';
-      render();
+    currentSource = 'remote';
+    updateRefreshUi();
+    const res = await fetch(`/debug.jsonl?ts=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) {
+      startAutoRefresh();
+      return;
     }
+    const text = await res.text();
+    if (!text.trim()) {
+      startAutoRefresh();
+      return;
+    }
+    if (applyLogText(text, { source: 'remote', fingerprint: buildFingerprint(text.trim()) })) {
+      startAutoRefresh();
+      return;
+    }
+    startAutoRefresh();
   } catch {}
 })();
 </script>

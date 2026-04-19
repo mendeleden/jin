@@ -262,6 +262,10 @@ export async function runPipeline(
                 trackChangedConversationIds: false,
                 logger,
                 workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -300,6 +304,10 @@ export async function runPipeline(
                 trackChangedConversationIds: false,
                 logger,
                 workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -338,6 +346,10 @@ export async function runPipeline(
                 trackChangedConversationIds: false,
                 logger,
                 workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
                     `shutdown ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,

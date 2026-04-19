@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, statSync } from "fs";
-import { configPath, loadConfig } from "../config";
+import { configPath, discoveryCachePath, loadConfig } from "../config";
 import type { JinConfig } from "../config";
 import type { RuntimeStatus } from "../contracts/lifecycle";
+import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath } from "../db/store";
 import { analyzeByAdapter, getOverviewSummary } from "../db/query-surface";
 import { getAllState } from "../daemon/process-state";
@@ -50,6 +51,7 @@ async function printJson(
       config: paths.configPath,
       store: paths.storePath,
       log: paths.logPath,
+      discoveryCache: discoveryCachePath(),
     },
   };
 
@@ -73,6 +75,7 @@ async function printJson(
     enabled: sink.enabled !== false,
   }));
   output.routes = config.routes || [];
+  output.discoveryCache = readDiscoveryCacheStatus(discoveryCachePath());
 
   const progress = readProgress();
   if (progress) {
@@ -116,6 +119,7 @@ async function printFull(
   console.log(`  ${padRight("runtime", 12)}${formatRuntimeState(runtime.state)}    ${describeRuntimeOwner(runtime)}`);
   console.log(`  ${padRight("config", 12)}${configPath()}`);
   console.log(`  ${padRight("store", 12)}${paths.storePath}`);
+  console.log(`  ${padRight("cache", 12)}${discoveryCachePath()}`);
 
   for (const state of states) {
     if (state.status === "running") {
@@ -189,6 +193,29 @@ async function printFull(
     console.log(`  routes      ${config.routes.length} configured`);
   }
 
+  const discoveryCache = readDiscoveryCacheStatus(discoveryCachePath());
+  if (discoveryCache.length > 0) {
+    console.log("");
+    for (const row of discoveryCache) {
+      const counters = [
+        `cached ${row.cachedSources}`,
+        `fresh ${row.freshSources}`,
+        `invalidated ${row.invalidatedSources}`,
+      ];
+      const extras = [
+        row.lastInvalidationReason
+          ? `last-invalid ${row.lastInvalidationReason}`
+          : "",
+        row.lastDisabledReason ? `disabled ${row.lastDisabledReason}` : "",
+      ].filter(Boolean);
+      console.log(
+        `  cache:${row.adapterId}  ${counters.join("    ")}${
+          extras.length > 0 ? `    ${extras.join("    ")}` : ""
+        }`,
+      );
+    }
+  }
+
   console.log("");
 
   if (existsSync(paths.logPath)) {
@@ -238,6 +265,36 @@ function readStoreStats(storePath: string): {
     };
   } catch {
     return null;
+  }
+}
+
+function readDiscoveryCacheStatus(cachePath: string): Array<{
+  adapterId: string;
+  cachedSources: number;
+  invalidatedSources: number;
+  freshSources: number;
+  lastInvalidationReason: string;
+  lastDisabledReason: string;
+}> {
+  if (!existsSync(cachePath)) {
+    return [];
+  }
+
+  let cache: SqliteDiscoveryCache | null = null;
+  try {
+    cache = new SqliteDiscoveryCache(cachePath);
+    return cache.getStatusRows().map((row) => ({
+      adapterId: row.adapterId,
+      cachedSources: row.cachedSources,
+      invalidatedSources: row.invalidatedSources,
+      freshSources: row.freshSources,
+      lastInvalidationReason: row.lastInvalidationReason,
+      lastDisabledReason: row.lastDisabledReason,
+    }));
+  } catch {
+    return [];
+  } finally {
+    cache?.close();
   }
 }
 

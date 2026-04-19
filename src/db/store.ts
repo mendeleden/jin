@@ -61,6 +61,17 @@ export class SqliteConversationStore implements ConversationStore {
     return writeConversationBundle(this.database, bundle);
   }
 
+  hasLocalData(): boolean {
+    try {
+      const row = this.database
+        .prepare("SELECT 1 AS present FROM _jin_sync LIMIT 1")
+        .get() as { present?: number } | undefined;
+      return row?.present === 1;
+    } catch {
+      return false;
+    }
+  }
+
   beginWrite(
     conversation: ConversationBundle["conversation"],
   ): ConversationWriteSession {

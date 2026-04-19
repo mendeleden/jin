@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import {
   DEFAULT_S3_PREFIX,
   DEFAULT_S3_REGION,
   DEFAULT_SCAN_INTERVAL_MS,
   DEFAULT_WEBHOOK_TIMEOUT_MS,
   defaultConfig,
+  loadStartupConfig,
   normalizeConfig,
 } from "../src/config";
+
+afterEach(() => {
+  if (process.env.JIN_CONFIG_DIR?.includes("jin-config-test-")) {
+    rmSync(process.env.JIN_CONFIG_DIR, { recursive: true, force: true });
+  }
+  delete process.env.JIN_CONFIG_DIR;
+});
 
 describe("defaultConfig", () => {
   test("creates a v2 zero-state snapshot", () => {
@@ -131,10 +142,67 @@ describe("normalizeConfig", () => {
     ]);
     expect(normalized.watch).toEqual({
       pollIntervalMs: 120_000,
+      debounceMs: 5_000,
     });
     expect(normalized).not.toHaveProperty("defaultSinks");
     expect(normalized).not.toHaveProperty("routeUnmatchedToAll");
     expect(normalized).not.toHaveProperty("store");
     expect(normalized).not.toHaveProperty("team");
+  });
+});
+
+describe("loadStartupConfig", () => {
+  test("persists default config on first-run startup bootstrap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    const config = await loadStartupConfig();
+
+    expect(config).toEqual(defaultConfig());
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
+  });
+
+  test("materializes missing adapter defaults into an existing config without dropping watch extensions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          adapters: {
+            cursor: {
+              enabled: true,
+            },
+          },
+          sinks: [],
+          routes: [],
+          watch: {
+            pollIntervalMs: 5_000,
+            debounceMs: 500,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const config = await loadStartupConfig();
+    const written = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
+
+    expect(config.watch).toEqual({
+      pollIntervalMs: 5_000,
+      debounceMs: 500,
+    });
+    expect(written.watch).toEqual({
+      pollIntervalMs: 5_000,
+      debounceMs: 500,
+    });
+    expect(written.adapters.cursor).toEqual({
+      enabled: true,
+      allowProtectedSource: false,
+    });
+    expect(written.adapters["claude-code"]).toEqual({ enabled: true });
+    expect(written.adapters.codex).toEqual({ enabled: true });
   });
 });
