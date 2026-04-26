@@ -122,6 +122,7 @@
   .tag-queue { background: rgba(210, 153, 34, 0.15); color: var(--orange); }
   .tag-periodic { background: rgba(139, 148, 158, 0.15); color: var(--text-dim); }
   .tag-reconcile { background: rgba(57, 210, 192, 0.15); color: var(--cyan); }
+  .tag-worker { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
   .tag-detect { background: rgba(255, 123, 114, 0.15); color: #ff7b72; }
   .tag-error { background: rgba(248, 81, 73, 0.15); color: var(--red); }
   .drop-zone {
@@ -219,11 +220,23 @@
   <div class="chart-container">
     <h2>RSS Memory (MB)</h2>
     <div class="legend">
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--accent)"></div>RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--accent)"></div>Parent RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple)"></div>Worker RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div>Combined RSS</div>
       <div class="legend-item"><div class="legend-swatch" style="background:var(--orange)"></div>Warning (200 MB)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:var(--red)"></div>Hard limit (256 MB)</div>
     </div>
     <canvas id="rssChart"></canvas>
+  </div>
+
+  <div class="chart-container">
+    <h2>CPU Usage (%)</h2>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--green)"></div>Parent CPU</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple)"></div>Worker CPU</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div>Combined CPU</div>
+    </div>
+    <canvas id="cpuChart"></canvas>
   </div>
 
   <div class="chart-container">
@@ -271,7 +284,7 @@
     <h2>Event log</h2>
     <div class="events-scroll">
       <table>
-        <thead><tr><th>Time</th><th>Event</th><th>RSS</th><th>Queue</th><th>Details</th></tr></thead>
+        <thead><tr><th>Time</th><th>Event</th><th>Metrics</th><th>Queue</th><th>Details</th></tr></thead>
         <tbody id="eventsBody"></tbody>
       </table>
     </div>
@@ -343,6 +356,7 @@ function render() {
 
   renderStats(events);
   renderRssChart(events);
+  renderCpuChart(events);
   renderQueueChart(events);
   renderDurationChart(events);
   renderTimelineChart(events);
@@ -439,9 +453,22 @@ async function refreshRemoteLog() {
 }
 
 function renderStats(events) {
-  const rssValues = events.map(e => e.rssMb).filter(v => typeof v === 'number');
-  const maxRss = Math.max(...rssValues);
-  const avgRss = Math.round(rssValues.reduce((a, b) => a + b, 0) / rssValues.length);
+  const parentRssValues = events.map(e => e.rssMb).filter(v => typeof v === 'number');
+  const workerRssValues = events.map(e => e.workerRssMb).filter(v => typeof v === 'number');
+  const combinedRssValues = events
+    .map(e => typeof e.combinedRssMb === 'number' ? e.combinedRssMb : (typeof e.workerRssMb === 'number' ? e.rssMb + e.workerRssMb : null))
+    .filter(v => typeof v === 'number');
+  const parentCpuValues = events.map(e => e.cpuPct).filter(v => typeof v === 'number');
+  const workerCpuValues = events.map(e => e.workerCpuPct).filter(v => typeof v === 'number');
+  const combinedCpuValues = events
+    .map(e => typeof e.combinedCpuPct === 'number' ? e.combinedCpuPct : (typeof e.workerCpuPct === 'number' ? e.cpuPct + e.workerCpuPct : null))
+    .filter(v => typeof v === 'number');
+  const maxParentRss = parentRssValues.length > 0 ? Math.max(...parentRssValues) : 0;
+  const maxWorkerRss = workerRssValues.length > 0 ? Math.max(...workerRssValues) : 0;
+  const maxCombinedRss = combinedRssValues.length > 0 ? Math.max(...combinedRssValues) : maxParentRss;
+  const maxParentCpu = parentCpuValues.length > 0 ? Math.max(...parentCpuValues) : 0;
+  const maxWorkerCpu = workerCpuValues.length > 0 ? Math.max(...workerCpuValues) : 0;
+  const maxCombinedCpu = combinedCpuValues.length > 0 ? Math.max(...combinedCpuValues) : maxParentCpu;
   const maxQueue = Math.max(...events.map(e => e.queueSize || 0));
   const ingestEvents = events.filter(e => e.event === 'ingest:result');
   const totalChanged = ingestEvents.reduce((s, e) => s + (e.changedCount || 0), 0);
@@ -452,12 +479,16 @@ function renderStats(events) {
   const detectResult = [...events].reverse().find(e => e.event === 'detect:result');
 
   const html = [
-    card('Peak RSS', maxRss + ' MB', maxRss > 200 ? 'red' : maxRss > 150 ? 'orange' : 'green'),
-    card('Avg RSS', avgRss + ' MB', 'accent'),
+    card('Peak Parent RSS', maxParentRss + ' MB', maxParentRss > 200 ? 'red' : maxParentRss > 150 ? 'orange' : 'green'),
+    card('Peak Worker RSS', maxWorkerRss + ' MB', maxWorkerRss > 200 ? 'red' : maxWorkerRss > 150 ? 'orange' : 'purple'),
+    card('Peak Family RSS', maxCombinedRss + ' MB', maxCombinedRss > 256 ? 'red' : maxCombinedRss > 200 ? 'orange' : 'accent'),
+    card('Peak Parent CPU', maxParentCpu + '%', maxParentCpu > 100 ? 'orange' : 'green'),
+    card('Peak Worker CPU', maxWorkerCpu + '%', maxWorkerCpu > 100 ? 'orange' : 'purple'),
+    card('Peak Family CPU', maxCombinedCpu + '%', maxCombinedCpu > 200 ? 'orange' : 'accent'),
     card('Max Queue', maxQueue, maxQueue > 10 ? 'orange' : 'accent'),
     card('Detected', detectResult?.activeAdapterCount ?? 0, 'accent'),
-    card('Changed', totalChanged, 'green'),
     card('Pushed', totalPushed, 'purple'),
+    card('Changed', totalChanged, 'green'),
     card('Failed', totalFailed, totalFailed > 0 ? 'red' : 'green'),
     card('Errors', errorEvents.length, errorEvents.length > 0 ? 'red' : 'green'),
   ].join('');
@@ -479,12 +510,24 @@ function renderRssChart(events) {
   const W = rect.width, H = 200;
   ctx.clearRect(0, 0, W, H);
 
-  const points = events.map(e => ({ t: new Date(e.ts).getTime(), v: e.rssMb })).filter(p => typeof p.v === 'number');
+  const parentPoints = buildSeries(events, 'rssMb');
+  const workerPoints = buildSeries(events, 'workerRssMb');
+  const combinedPoints = buildDerivedSeries(events, (e) =>
+    typeof e.combinedRssMb === 'number'
+      ? e.combinedRssMb
+      : (typeof e.workerRssMb === 'number' ? e.rssMb + e.workerRssMb : null)
+  );
+  const points = parentPoints.length > 0 ? parentPoints : workerPoints;
   if (points.length < 2) return;
 
   const tMin = points[0].t, tMax = points[points.length - 1].t;
   const tRange = Math.max(tMax - tMin, 1);
-  const vMax = Math.max(260, ...points.map(p => p.v));
+  const vMax = Math.max(
+    260,
+    ...parentPoints.map(p => p.v),
+    ...workerPoints.map(p => p.v),
+    ...combinedPoints.map(p => p.v),
+  );
   const pad = { t: 0, b: 20, l: 40, r: 10 };
   const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
 
@@ -506,24 +549,57 @@ function renderRssChart(events) {
   ctx.beginPath(); ctx.moveTo(pad.l, hardY); ctx.lineTo(W - pad.r, hardY); ctx.stroke();
   ctx.setLineDash([]);
 
-  // RSS line
-  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const x = pad.l + ((p.t - tMin) / tRange) * cW;
-    const y = pad.t + cH - (p.v / vMax) * cH;
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.stroke();
+  drawLineSeries(ctx, parentPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#58a6ff', width: 1.8 });
+  drawLineSeries(ctx, workerPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#bc8cff', width: 1.4 });
+  drawLineSeries(ctx, combinedPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#39d2c0', width: 1.4 });
 
-  // Fill under
-  ctx.globalAlpha = 0.08;
-  ctx.fillStyle = '#58a6ff';
-  ctx.lineTo(pad.l + cW, pad.t + cH);
-  ctx.lineTo(pad.l, pad.t + cH);
-  ctx.closePath();
-  ctx.fill();
-  ctx.globalAlpha = 1;
+  drawTimeAxis(ctx, tMin, tMax, pad, cW, H);
+}
+
+function renderCpuChart(events) {
+  const canvas = document.getElementById('cpuChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 200 * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 200;
+  ctx.clearRect(0, 0, W, H);
+
+  const parentPoints = buildSeries(events, 'cpuPct');
+  const workerPoints = buildSeries(events, 'workerCpuPct');
+  const combinedPoints = buildDerivedSeries(events, (e) =>
+    typeof e.combinedCpuPct === 'number'
+      ? e.combinedCpuPct
+      : (typeof e.workerCpuPct === 'number' ? e.cpuPct + e.workerCpuPct : null)
+  );
+  const points = parentPoints.length > 0 ? parentPoints : workerPoints;
+  if (points.length < 2) return;
+
+  const tMin = points[0].t, tMax = points[points.length - 1].t;
+  const tRange = Math.max(tMax - tMin, 1);
+  const vMax = Math.max(
+    100,
+    ...parentPoints.map(p => p.v),
+    ...workerPoints.map(p => p.v),
+    ...combinedPoints.map(p => p.v),
+  );
+  const pad = { t: 0, b: 20, l: 40, r: 10 };
+  const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
+
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 0.5;
+  const step = vMax > 300 ? 100 : 50;
+  for (let v = 0; v <= vMax; v += step) {
+    const y = pad.t + cH - (v / vMax) * cH;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(v + '%', pad.l - 4, y + 3);
+  }
+
+  drawLineSeries(ctx, parentPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#3fb950', width: 1.8 });
+  drawLineSeries(ctx, workerPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#bc8cff', width: 1.4 });
+  drawLineSeries(ctx, combinedPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#39d2c0', width: 1.4 });
 
   drawTimeAxis(ctx, tMin, tMax, pad, cW, H);
 }
@@ -791,7 +867,7 @@ function renderTable(events) {
     const time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3});
     const tag = eventTag(e.event);
     const details = eventDetails(e);
-    return `<tr><td>${time}</td><td>${tag}</td><td>${e.rssMb} MB</td><td>${e.queueSize}</td><td>${details}</td></tr>`;
+    return `<tr><td>${time}</td><td>${tag}</td><td>${formatMetrics(e)}</td><td>${e.queueSize}</td><td>${details}</td></tr>`;
   }).join('');
   tbody.innerHTML = rows;
 }
@@ -801,6 +877,7 @@ function eventTag(event) {
     event.startsWith('detect:') ? 'detect' :
     event.startsWith('ingest:') ? 'ingest' :
     event.startsWith('reclaim:') ? 'ingest' :
+    event.startsWith('worker:') ? 'worker' :
     event.startsWith('push:') ? 'push' :
     event.startsWith('queue:') ? 'queue' :
     event.startsWith('periodic') ? 'periodic' :
@@ -818,9 +895,14 @@ function eventDetails(e) {
   if (e.hint) parts.push(`hint=${e.hint}`);
   if (typeof e.durationMs === 'number') parts.push(`${Math.round(e.durationMs)}ms`);
   if (typeof e.processedRefs === 'number' && typeof e.totalRefs === 'number') parts.push(`progress=${e.processedRefs}/${e.totalRefs}`);
+  if (typeof e.childPid === 'number') parts.push(`pid=${e.childPid}`);
   if (Array.isArray(e.batchRefIds) && e.batchRefIds.length > 0) parts.push(`refs=${e.batchRefIds.join(',')}`);
   if (Array.isArray(e.batchSourcePaths) && e.batchSourcePaths.length > 0) parts.push(`src=${e.batchSourcePaths.map(shortPath).join(',')}`);
   if (e.reclaim && typeof e.reclaim.beforeRssMb === 'number' && typeof e.reclaim.afterRssMb === 'number') parts.push(`reclaim=${e.reclaim.beforeRssMb}->${e.reclaim.afterRssMb}MB (${e.reclaim.deltaMb >= 0 ? '+' : ''}${e.reclaim.deltaMb})`);
+  if (typeof e.workerRssMb === 'number') parts.push(`worker-rss=${e.workerRssMb}MB`);
+  if (typeof e.combinedRssMb === 'number') parts.push(`combined-rss=${e.combinedRssMb}MB`);
+  if (typeof e.workerCpuPct === 'number') parts.push(`worker-cpu=${e.workerCpuPct}%`);
+  if (typeof e.combinedCpuPct === 'number') parts.push(`combined-cpu=${e.combinedCpuPct}%`);
   if (typeof e.scannedRefs === 'number') parts.push(`scanned=${e.scannedRefs}`);
   if (typeof e.loadedConversations === 'number') parts.push(`loaded=${e.loadedConversations}`);
   if (typeof e.changedCount === 'number') parts.push(`changed=${e.changedCount}`);
@@ -830,6 +912,42 @@ function eventDetails(e) {
   if (typeof e.activeAdapterCount === 'number') parts.push(`active=${e.activeAdapterCount}`);
   if (e.error) parts.push(`<span style="color:var(--red)">error: ${esc(e.error).slice(0,80)}</span>`);
   return parts.join(' &middot; ');
+}
+
+function buildSeries(events, field) {
+  return events
+    .map(e => ({ t: new Date(e.ts).getTime(), v: e[field] }))
+    .filter(p => typeof p.v === 'number');
+}
+
+function buildDerivedSeries(events, getValue) {
+  return events
+    .map(e => ({ t: new Date(e.ts).getTime(), v: getValue(e) }))
+    .filter(p => typeof p.v === 'number');
+}
+
+function drawLineSeries(ctx, points, { tMin, tRange, vMax, pad, cW, cH, color, width }) {
+  if (!points || points.length < 2) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const x = pad.l + ((p.t - tMin) / tRange) * cW;
+    const y = pad.t + cH - (p.v / vMax) * cH;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+function formatMetrics(e) {
+  const parts = [`P ${e.rssMb}MB / ${e.cpuPct}%`];
+  if (typeof e.workerRssMb === 'number' || typeof e.workerCpuPct === 'number') {
+    parts.push(`W ${e.workerRssMb ?? '?'}MB / ${e.workerCpuPct ?? '?'}%`);
+  }
+  if (typeof e.combinedRssMb === 'number' || typeof e.combinedCpuPct === 'number') {
+    parts.push(`C ${e.combinedRssMb ?? '?'}MB / ${e.combinedCpuPct ?? '?'}%`);
+  }
+  return esc(parts.join(' · '));
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }

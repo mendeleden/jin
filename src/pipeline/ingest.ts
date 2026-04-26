@@ -16,6 +16,7 @@ import {
   findChangedViaWorker,
   ingestConversationViaWorker,
 } from "./ingest-worker";
+import type { WorkerSampleDiagnosticFields } from "./diagnostic";
 import type { IngestResult, PipelineLogger } from "./types";
 
 export interface IngestOptions {
@@ -54,6 +55,9 @@ export interface IngestOptions {
     cacheDisabledReason?: string;
     invalidationReason?: string;
   }) => void | Promise<void>;
+  onWorkerSample?: (
+    info: WorkerSampleDiagnosticFields,
+  ) => void | Promise<void>;
 }
 
 const EMPTY_INGEST_RESULT: IngestResult = {
@@ -124,6 +128,13 @@ export async function ingestOne(
         },
         {
           timeoutMs: findChangedTimeoutMs,
+          onWorkerEvent: (phase, fields) => {
+            if (phase !== "sample") {
+              return;
+            }
+            const sample = normalizeWorkerSample(fields);
+            return sample ? options.onWorkerSample?.(sample) : undefined;
+          },
         },
       );
       refs = result.refs;
@@ -189,6 +200,13 @@ export async function ingestOne(
             },
             {
               timeoutMs: loadConversationTimeoutMs,
+              onWorkerEvent: (phase, fields) => {
+                if (phase !== "sample") {
+                  return;
+                }
+                const sample = normalizeWorkerSample(fields);
+                return sample ? options.onWorkerSample?.(sample) : undefined;
+              },
             },
           );
           if (result.kind === "missing") {
@@ -568,6 +586,38 @@ function normalizeTimeoutMs(
   }
 
   return Math.max(1, Math.floor(timeoutMs));
+}
+
+function normalizeWorkerSample(
+  fields: Record<string, unknown>,
+): WorkerSampleDiagnosticFields | null {
+  if (
+    typeof fields.adapterId !== "string" ||
+    typeof fields.phase !== "string" ||
+    typeof fields.childRssMb !== "number" ||
+    typeof fields.childCpuPct !== "number" ||
+    typeof fields.combinedRssMb !== "number" ||
+    typeof fields.combinedCpuPct !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    adapterId: fields.adapterId,
+    ...(typeof fields.refId === "string" ? { refId: fields.refId } : {}),
+    phase: fields.phase,
+    ...(typeof fields.childPid === "number" ? { childPid: fields.childPid } : {}),
+    workerRssMb: fields.childRssMb,
+    workerCpuPct: fields.childCpuPct,
+    ...(typeof fields.childJscHeapMb === "number"
+      ? { workerJscHeapMb: fields.childJscHeapMb }
+      : {}),
+    ...(typeof fields.childExternalMb === "number"
+      ? { workerExternalMb: fields.childExternalMb }
+      : {}),
+    combinedRssMb: fields.combinedRssMb,
+    combinedCpuPct: fields.combinedCpuPct,
+  };
 }
 
 async function withTimeout<T>(

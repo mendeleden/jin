@@ -30,6 +30,7 @@ test("worker ingest routes heavy codex startup refs through the worker path", as
   expect(refs).toHaveLength(1);
 
   const storeEnv = createStoreEnv("worker-ingest");
+  const workerSamples: Array<Record<string, unknown>> = [];
   workerTrapAdapter.findChanged = async () => {
     throw new Error("inline findChanged should not run when worker discovery is enabled");
   };
@@ -49,12 +50,30 @@ test("worker ingest routes heavy codex startup refs through the worker path", as
         },
       },
     },
+    onWorkerSample: (info) => {
+      workerSamples.push(info as unknown as Record<string, unknown>);
+    },
   });
 
   expect(result.anyChanged).toBe(true);
   expect(result.scannedRefCount).toBeGreaterThan(0);
   expect(result.loadedConversationCount).toBeGreaterThan(0);
   expect(result.changedConversationIds.length).toBe(result.loadedConversationCount);
+  expect(workerSamples.length).toBeGreaterThan(0);
+  expect(
+    workerSamples.some((sample) =>
+      typeof sample.workerRssMb === "number" &&
+      typeof sample.workerCpuPct === "number" &&
+      typeof sample.combinedRssMb === "number" &&
+      typeof sample.combinedCpuPct === "number",
+    ),
+  ).toBe(true);
+  expect(
+    workerSamples.some((sample) =>
+      sample.phase === "before-findChanged" ||
+      sample.phase === "before-load",
+    ),
+  ).toBe(true);
   for (const conversationId of result.changedConversationIds) {
     expect(storeEnv.store.getMessages(conversationId).length).toBeGreaterThan(0);
   }

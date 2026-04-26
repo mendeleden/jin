@@ -78,6 +78,17 @@ Follow-on:
   while startup work is still active
 - possibly a softer startup-aware scheduling policy before hard shutdown logic
 
+Recommended queue policy:
+
+- treat periodic maintenance as level-triggered intent, not an edge-triggered
+  packet appended every interval
+- allow only one pending:
+  - `reconcile-adapters`
+  - `ingest-all(periodic-scan)`
+  - `push`
+- if one of those items is already running, remember that one rerun is owed
+  instead of stacking more duplicates in the queue
+
 ## Notes
 
 This issue is adjacent to, but distinct from, the fresh-restart replay issue:

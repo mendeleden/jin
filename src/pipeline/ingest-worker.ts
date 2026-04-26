@@ -31,6 +31,8 @@ const INGEST_CONVERSATION_METHOD = "jin.ingest.conversation";
 const INGEST_MESSAGE_METHOD = "jin.ingest.message";
 const INGEST_MISSING_METHOD = "jin.ingest.missing";
 const WORKER_PROTOCOL_HANDSHAKE_TIMEOUT_MS = 1000;
+let lastProcessCpuUsage = process.cpuUsage();
+let lastProcessCpuAtNs = process.hrtime.bigint();
 
 type JsonRpcId = number;
 
@@ -109,9 +111,11 @@ type WorkerStartedNotification = {
 
 type WorkerSampleNotification = {
   adapterId: string;
-  refId: string;
+  refId?: string;
   phase: string;
+  pid: number;
   rssMb: number;
+  cpuPct: number;
   jscHeapMb: number;
   externalMb: number;
 };
@@ -316,14 +320,18 @@ export async function ingestConversationViaWorker(
       case WORKER_SAMPLE_METHOD: {
         const params = message.params as WorkerSampleNotification;
         const parentRssMb = Math.round(process.memoryUsage().rss / MB);
+        const parentCpuPct = sampleProcessCpuPct();
         await options.onWorkerEvent?.("sample", {
           adapterId: params.adapterId,
-          refId: params.refId,
+          ...(params.refId ? { refId: params.refId } : {}),
           phase: params.phase,
+          childPid: params.pid,
           childRssMb: params.rssMb,
+          childCpuPct: params.cpuPct,
           childJscHeapMb: params.jscHeapMb,
           childExternalMb: params.externalMb,
           combinedRssMb: parentRssMb + params.rssMb,
+          combinedCpuPct: Math.round((parentCpuPct + params.cpuPct) * 10) / 10,
         });
         return;
       }
@@ -529,6 +537,10 @@ export async function findChangedViaWorker(
   request: WorkerFindChangedRequest,
   options: {
     timeoutMs?: number;
+    onWorkerEvent?: (
+      phase: "sample",
+      fields: Record<string, unknown>,
+    ) => void | Promise<void>;
   } = {},
 ): Promise<WorkerFindChangedResult> {
   const subprocess = Bun.spawn({
@@ -542,6 +554,29 @@ export async function findChangedViaWorker(
   const pending = new Map<JsonRpcId, PendingRequest>();
 
   const readLoop = readJsonRpcMessages(subprocess.stdout, async (message) => {
+    if (isJsonRpcNotification(message)) {
+      if (message.method !== WORKER_SAMPLE_METHOD) {
+        return;
+      }
+
+      const params = message.params as WorkerSampleNotification;
+      const parentRssMb = Math.round(process.memoryUsage().rss / MB);
+      const parentCpuPct = sampleProcessCpuPct();
+      await options.onWorkerEvent?.("sample", {
+        adapterId: params.adapterId,
+        ...(params.refId ? { refId: params.refId } : {}),
+        phase: params.phase,
+        childPid: params.pid,
+        childRssMb: params.rssMb,
+        childCpuPct: params.cpuPct,
+        childJscHeapMb: params.jscHeapMb,
+        childExternalMb: params.externalMb,
+        combinedRssMb: parentRssMb + params.rssMb,
+        combinedCpuPct: Math.round((parentCpuPct + params.cpuPct) * 10) / 10,
+      });
+      return;
+    }
+
     if (!isJsonRpcResponse(message)) {
       return;
     }
@@ -739,7 +774,9 @@ async function findChangedAndSnapshot(
     created.importDiscoveryState(discoveryState);
   }
 
+  writeSample(created.id, undefined, "before-findChanged");
   const refs = await created.findChanged(hint);
+  writeSample(created.id, undefined, "after-findChanged");
   const nextDiscoveryState = isDiscoveryCacheCapableAdapter(created)
     ? created.exportDiscoveryState()
     : null;
@@ -749,6 +786,7 @@ async function findChangedAndSnapshot(
   Bun.gc(true);
   await Bun.sleep(0);
   Bun.gc(true);
+  writeSample(created.id, undefined, "after-findChanged-release");
 
   return {
     refs,
@@ -906,17 +944,42 @@ function notification(method: string, params: unknown): JsonRpcNotification {
   };
 }
 
-function writeSample(adapterId: string, refId: string, phase: string): void {
+function writeSample(
+  adapterId: string,
+  refId: string | undefined,
+  phase: string,
+): void {
   const mem = process.memoryUsage();
   const stats = heapStats();
   writeJsonRpcMessage(process.stdout, notification(WORKER_SAMPLE_METHOD, {
     adapterId,
-    refId,
+    ...(refId ? { refId } : {}),
     phase,
+    pid: process.pid,
     rssMb: Math.round(mem.rss / MB),
+    cpuPct: sampleProcessCpuPct(),
     jscHeapMb: Math.round(stats.heapSize / MB),
     externalMb: Math.round((mem.external ?? 0) / MB),
   }));
+}
+
+function sampleProcessCpuPct(): number {
+  const nowNs = process.hrtime.bigint();
+  const usage = process.cpuUsage();
+  const elapsedMs = Number(nowNs - lastProcessCpuAtNs) / 1_000_000;
+  const deltaMicros =
+    usage.user +
+    usage.system -
+    (lastProcessCpuUsage.user + lastProcessCpuUsage.system);
+
+  lastProcessCpuUsage = usage;
+  lastProcessCpuAtNs = nowNs;
+
+  if (elapsedMs <= 0) {
+    return 0;
+  }
+
+  return Math.round(((deltaMicros / 1000) / elapsedMs) * 1000) / 10;
 }
 
 function writeJsonRpcMessage(

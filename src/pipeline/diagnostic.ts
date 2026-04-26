@@ -15,6 +15,19 @@ export interface DiagnosticEvent {
 let lastCpuUsage = process.cpuUsage();
 let lastCpuAtNs = process.hrtime.bigint();
 
+export interface WorkerSampleDiagnosticFields {
+  adapterId: string;
+  refId?: string;
+  phase: string;
+  childPid?: number;
+  workerRssMb: number;
+  workerCpuPct: number;
+  workerJscHeapMb?: number;
+  workerExternalMb?: number;
+  combinedRssMb: number;
+  combinedCpuPct: number;
+}
+
 function sampleCpuPct(): number {
   const nowNs = process.hrtime.bigint();
   const usage = process.cpuUsage();
@@ -202,6 +215,26 @@ export class DiagnosticLogger {
       event: "reclaim:adapter-boundary",
       adapterId,
       reclaim,
+    });
+  }
+
+  workerSample(fields: WorkerSampleDiagnosticFields): void {
+    this.emit({
+      event: "worker:sample",
+      adapterId: fields.adapterId,
+      ...(fields.refId ? { refId: fields.refId } : {}),
+      phase: fields.phase,
+      ...(typeof fields.childPid === "number" ? { childPid: fields.childPid } : {}),
+      workerRssMb: fields.workerRssMb,
+      workerCpuPct: fields.workerCpuPct,
+      ...(typeof fields.workerJscHeapMb === "number"
+        ? { workerJscHeapMb: fields.workerJscHeapMb }
+        : {}),
+      ...(typeof fields.workerExternalMb === "number"
+        ? { workerExternalMb: fields.workerExternalMb }
+        : {}),
+      combinedRssMb: fields.combinedRssMb,
+      combinedCpuPct: fields.combinedCpuPct,
     });
   }
 

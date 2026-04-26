@@ -508,6 +508,44 @@ complementary:
 - disk-backed staged writes keep necessary ingest bounded when a load is still
   required
 
+## Adjacent Follow-Up: Queue Coalescing
+
+This proposal addresses repeated heavy discovery and startup residency. It does
+not, by itself, solve the separate queue-growth issue observed during long
+startup drain.
+
+The remaining queue problem is:
+
+- a long-running startup ingest is active
+- periodic ticks continue enqueueing the same maintenance trio:
+  - `reconcile-adapters`
+  - `ingest-all(periodic-scan)`
+  - `push`
+- queue depth grows even when the runtime only needs one pending copy of each
+  maintenance intent
+
+The preferred fix is queue-level semantic coalescing, not more special-case
+enqueue logic at the timer site.
+
+Recommended policy:
+
+- allow at most one pending `reconcile-adapters`
+- allow at most one pending `push`
+- allow at most one pending `ingest-all(periodic-scan)`
+- if one of those maintenance items is already running, record that one rerun
+  is owed instead of appending unbounded duplicates
+
+That keeps periodic maintenance level-triggered:
+
+- "periodic maintenance is still due"
+
+instead of edge-triggered:
+
+- "append another full maintenance packet every interval"
+
+This is intentionally a lower-priority follow-up. The durable cache lane closes
+startup replay; queue semantics remain a separate runtime policy improvement.
+
 ## Alternative Considered: Long-Running Discovery Worker
 
 A resident discovery subprocess that spawns once per daemon lifetime and

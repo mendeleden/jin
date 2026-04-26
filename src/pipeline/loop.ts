@@ -266,6 +266,9 @@ export async function runPipeline(
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
                 },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
+                },
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -308,6 +311,9 @@ export async function runPipeline(
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
                 },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
+                },
                 onBatchProcessed: (info) => {
                   diag?.ingestBatch(info);
                   enforceRssBudget(
@@ -349,6 +355,9 @@ export async function runPipeline(
                 discoveryCache: options.discoveryCache,
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
+                },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
                 },
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
