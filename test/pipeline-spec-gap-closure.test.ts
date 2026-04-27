@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type {
   Adapter,
   ChangeHint,
@@ -239,6 +242,57 @@ describe("pipeline spec gap closure", () => {
       expect(sink.closeCalls).toBe(1);
     } finally {
       await handle.shutdown();
+    }
+  });
+
+  test("diagnostics emit a single failed work:end entry when pipeline work throws", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "jin-pipeline-diagnostic-"));
+    const diagnosticPath = join(tempRoot, "debug.jsonl");
+    const store = new InMemoryConversationStore();
+    const logger = createLogger();
+    let adapterSourceCalls = 0;
+
+    const handle = await runPipeline({
+      adapterSource: async () => {
+        adapterSourceCalls += 1;
+        if (adapterSourceCalls === 1) {
+          return [];
+        }
+        throw new Error("boom");
+      },
+      store,
+      sinks: [],
+      routes: [],
+      logger,
+      diagnosticLogPath: diagnosticPath,
+      scheduleStartupWork: false,
+      scanIntervalMs: null,
+    });
+
+    try {
+      handle.enqueue({
+        kind: "reconcile-adapters",
+      });
+
+      await handle.waitForIdle();
+
+      const entries = readFileSync(diagnosticPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const workEnds = entries.filter(
+        (entry) =>
+          entry.event === "work:end" &&
+          entry.kind === "reconcile-adapters",
+      );
+
+      expect(workEnds).toHaveLength(1);
+      expect(workEnds[0]?.error).toBe("boom");
+      expect(logger.errors).toEqual(["Pipeline work item reconcile-adapters failed"]);
+    } finally {
+      await handle.shutdown();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });

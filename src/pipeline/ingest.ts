@@ -73,7 +73,6 @@ const NOOP_LOGGER: PipelineLogger = {
   error() {},
 };
 
-const WORKER_INGEST_ADAPTERS = new Set(["claude-code", "codex", "cursor"]);
 const DISCOVERY_CACHE_ADAPTERS = new Set(["claude-code", "codex", "cursor"]);
 
 interface LoadedDiscoveryCacheSummary extends DiscoveryCacheRunSummary {
@@ -376,10 +375,6 @@ function resolveWorkerAdapterSnapshot(
     return null;
   }
 
-  if (!WORKER_INGEST_ADAPTERS.has(adapterId)) {
-    return null;
-  }
-
   return {
     adapterId,
     adapterConfig: options.workerIngest.adapterConfigs[adapterId] ?? {
@@ -400,7 +395,7 @@ function resolveWorkerDiscoverySnapshot(
 
 function resolveWorkerLoadSnapshot(
   adapterId: string,
-  hint: ChangeHint | undefined,
+  _hint: ChangeHint | undefined,
   options: IngestOptions,
 ): {
   adapterId: string;
@@ -408,10 +403,6 @@ function resolveWorkerLoadSnapshot(
 } | null {
   const snapshot = resolveWorkerAdapterSnapshot(adapterId, options);
   if (!snapshot) {
-    return null;
-  }
-
-  if (!hint || hint.kind === "fs-change") {
     return null;
   }
 

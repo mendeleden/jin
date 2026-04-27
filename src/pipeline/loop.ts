@@ -228,6 +228,7 @@ export async function runPipeline(
         handedOffWorkItems -= 1;
       }
       let shouldStop = false;
+      let workError: string | undefined;
       const workStartedAt = performance.now();
       diag?.workStart(work);
 
@@ -376,8 +377,7 @@ export async function runPipeline(
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        diag?.workEnd(work, performance.now() - workStartedAt, errMsg);
+        workError = error instanceof Error ? error.message : String(error);
         if (error instanceof PipelineRssHardLimitError) {
           shutdownPromise ??= performShutdown();
           if (work.kind === "shutdown-flush") {
@@ -387,7 +387,7 @@ export async function runPipeline(
           logger.error(`Pipeline work item ${work.kind} failed`, error);
         }
       } finally {
-        diag?.workEnd(work, performance.now() - workStartedAt);
+        diag?.workEnd(work, performance.now() - workStartedAt, workError);
         currentWork = null;
         resolveIdleIfNeeded();
       }

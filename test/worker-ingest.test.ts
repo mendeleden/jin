@@ -5,6 +5,7 @@ import { dirname, join } from "path";
 import { Database } from "bun:sqlite";
 import { CodexAdapter } from "../src/adapters/codex";
 import { CursorAdapter } from "../src/adapters/cursor";
+import { GeminiCliAdapter } from "../src/adapters/gemini-cli";
 import type { Adapter } from "../src/contracts/adapters";
 import { openStoreAtPath, type SqliteConversationStore } from "../src/db";
 import { ingestOne } from "../src/pipeline/ingest";
@@ -23,8 +24,8 @@ afterEach(() => {
 });
 
 test("worker ingest routes heavy codex startup refs through the worker path", async () => {
-  const codexHome = makeCodexHome();
-  const workerTrapAdapter = new CodexAdapter(codexHome) as CodexAdapter &
+  const codexEnv = makeCodexHome();
+  const workerTrapAdapter = new CodexAdapter(codexEnv.root) as CodexAdapter &
     Adapter;
   const refs = await workerTrapAdapter.findChanged({ kind: "startup-scan" });
   expect(refs).toHaveLength(1);
@@ -46,7 +47,7 @@ test("worker ingest routes heavy codex startup refs through the worker path", as
       adapterConfigs: {
         codex: {
           enabled: true,
-          dataDir: codexHome,
+          dataDir: codexEnv.root,
         },
       },
     },
@@ -120,8 +121,95 @@ test("worker ingest routes heavy cursor startup refs through the worker path", a
   }
 });
 
+test("worker ingest routes codex fs-change refs through the worker path", async () => {
+  const codexEnv = makeCodexHome();
+  const workerTrapAdapter = new CodexAdapter(codexEnv.root) as CodexAdapter &
+    Adapter;
+
+  workerTrapAdapter.findChanged = async () => {
+    throw new Error("inline findChanged should not run when worker discovery is enabled");
+  };
+  workerTrapAdapter.loadConversation = async () => {
+    throw new Error("inline loadConversation should not run when worker ingest is enabled");
+  };
+
+  const storeEnv = createStoreEnv("worker-codex-fs-change");
+  const result = await ingestOne(
+    workerTrapAdapter,
+    storeEnv.store,
+    {
+      kind: "fs-change",
+      changedPaths: [codexEnv.sessionPath],
+    },
+    {
+      workerIngest: {
+        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        adapterConfigs: {
+          codex: {
+            enabled: true,
+            dataDir: codexEnv.root,
+          },
+        },
+      },
+    },
+  );
+
+  expect(result).toMatchObject({
+    scannedRefCount: 1,
+    loadedConversationCount: 1,
+    anyChanged: true,
+  });
+  expect(result.changedConversationIds.length).toBe(1);
+  for (const conversationId of result.changedConversationIds) {
+    expect(storeEnv.store.getMessages(conversationId).length).toBeGreaterThan(0);
+  }
+});
+
+test("worker ingest routes simple gemini startup refs through the worker path", async () => {
+  const geminiRoot = makeGeminiHome();
+  const workerTrapAdapter = new GeminiCliAdapter(geminiRoot) as GeminiCliAdapter &
+    Adapter;
+  const refs = await workerTrapAdapter.findChanged({ kind: "startup-scan" });
+  expect(refs).toHaveLength(1);
+
+  workerTrapAdapter.findChanged = async () => {
+    throw new Error("inline findChanged should not run when worker discovery is enabled");
+  };
+  workerTrapAdapter.loadConversation = async () => {
+    throw new Error("inline loadConversation should not run when worker ingest is enabled");
+  };
+
+  const storeEnv = createStoreEnv("worker-gemini-ingest");
+  const result = await ingestOne(
+    workerTrapAdapter,
+    storeEnv.store,
+    { kind: "startup-scan" },
+    {
+      workerIngest: {
+        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        adapterConfigs: {
+          "gemini-cli": {
+            enabled: true,
+            dataDir: geminiRoot,
+          },
+        },
+      },
+    },
+  );
+
+  expect(result).toMatchObject({
+    scannedRefCount: 1,
+    loadedConversationCount: 1,
+    anyChanged: true,
+  });
+  expect(result.changedConversationIds.length).toBe(1);
+  for (const conversationId of result.changedConversationIds) {
+    expect(storeEnv.store.getMessages(conversationId).length).toBeGreaterThan(0);
+  }
+});
+
 test("worker discovery uses durable cache to suppress unchanged codex periodic replay", async () => {
-  const codexHome = makeCodexHome();
+  const codexEnv = makeCodexHome();
   const storeEnv = createStoreEnv("worker-discovery-cache");
   const cachePath = join(storeEnv.dir, "discovery-cache.db");
   const { SqliteDiscoveryCache } = await import("../src/db/discovery-cache");
@@ -130,7 +218,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
     discoveryCache.close();
   });
 
-  const startupAdapter = new CodexAdapter(codexHome) as CodexAdapter & Adapter;
+  const startupAdapter = new CodexAdapter(codexEnv.root) as CodexAdapter & Adapter;
   startupAdapter.findChanged = async () => {
     throw new Error("inline findChanged should not run when worker discovery is enabled");
   };
@@ -148,7 +236,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
         adapterConfigs: {
           codex: {
             enabled: true,
-            dataDir: codexHome,
+            dataDir: codexEnv.root,
           },
         },
       },
@@ -157,7 +245,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
         adapterConfigs: {
           codex: {
             enabled: true,
-            dataDir: codexHome,
+            dataDir: codexEnv.root,
           },
         },
       },
@@ -170,7 +258,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
     anyChanged: true,
   });
 
-  const periodicAdapter = new CodexAdapter(codexHome) as CodexAdapter & Adapter;
+  const periodicAdapter = new CodexAdapter(codexEnv.root) as CodexAdapter & Adapter;
   periodicAdapter.findChanged = async () => {
     throw new Error("inline findChanged should not run when worker discovery is enabled");
   };
@@ -188,7 +276,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
         adapterConfigs: {
           codex: {
             enabled: true,
-            dataDir: codexHome,
+            dataDir: codexEnv.root,
           },
         },
       },
@@ -197,7 +285,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
         adapterConfigs: {
           codex: {
             enabled: true,
-            dataDir: codexHome,
+            dataDir: codexEnv.root,
           },
         },
       },
@@ -212,7 +300,10 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
   });
 });
 
-function makeCodexHome(): string {
+function makeCodexHome(): {
+  root: string;
+  sessionPath: string;
+} {
   const root = mkdtempSync(join(tmpdir(), "jin-worker-codex-"));
   const relativePath = "sessions/2026/02/21/rollout-simple.jsonl";
   const fullPath = join(root, relativePath);
@@ -221,7 +312,10 @@ function makeCodexHome(): string {
   cleanups.push(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  return root;
+  return {
+    root,
+    sessionPath: fullPath,
+  };
 }
 
 function makeCursorHome(): {
@@ -271,6 +365,40 @@ function makeCursorHome(): {
   });
 
   return { root, stateDbPath };
+}
+
+function makeGeminiHome(): string {
+  const root = mkdtempSync(join(tmpdir(), "jin-worker-gemini-"));
+  const sessionPath = join(root, "tmp", "session-gemini-thread.json");
+  mkdirSync(dirname(sessionPath), { recursive: true });
+  writeFileSync(
+    sessionPath,
+    JSON.stringify({
+      sessionId: "gemini-thread",
+      startTime: "2026-04-01T11:00:00.000Z",
+      lastUpdated: "2026-04-01T11:00:05.000Z",
+      messages: [
+        {
+          id: "gemini-user",
+          type: "user",
+          timestamp: "2026-04-01T11:00:00.000Z",
+          content: [{ text: "Summarize the current branch." }],
+        },
+        {
+          id: "gemini-assistant",
+          type: "model",
+          timestamp: "2026-04-01T11:00:05.000Z",
+          model: "gemini-2.5-pro",
+          content: [{ text: "The branch ports the simple adapters to the v2 contract." }],
+        },
+      ],
+    }),
+    "utf8",
+  );
+  cleanups.push(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  return root;
 }
 
 function createStoreEnv(name: string): { dir: string; store: SqliteConversationStore } {

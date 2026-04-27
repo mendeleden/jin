@@ -402,7 +402,7 @@ export async function ingestConversationViaWorker(
       client: "jin",
       protocolVersion: 1,
     });
-    assertInitializeResult(initializeResult);
+    assertInitializeResult(initializeResult, [LOAD_CONVERSATION_METHOD]);
 
     const loadPromise = sendRequest(LOAD_CONVERSATION_METHOD, request);
     subprocess.stdin.end();
@@ -628,7 +628,7 @@ export async function findChangedViaWorker(
       client: "jin",
       protocolVersion: 1,
     });
-    assertInitializeResult(initializeResult);
+    assertInitializeResult(initializeResult, [FIND_CHANGED_METHOD]);
 
     const findChangedPromise = sendRequest(FIND_CHANGED_METHOD, request);
     subprocess.stdin.end();
@@ -794,14 +794,21 @@ async function findChangedAndSnapshot(
   };
 }
 
-function assertInitializeResult(result: unknown): void {
+function assertInitializeResult(
+  result: unknown,
+  requiredMethods: string[],
+): void {
   if (
     !isRecord(result) ||
-    !Array.isArray(result.methods) ||
-    !result.methods.includes(FIND_CHANGED_METHOD) ||
-    !result.methods.includes(LOAD_CONVERSATION_METHOD)
+    !Array.isArray(result.methods)
   ) {
     throw new Error("worker initialize handshake failed");
+  }
+
+  for (const method of requiredMethods) {
+    if (!result.methods.includes(method)) {
+      throw new Error("worker initialize handshake failed");
+    }
   }
 }
 
