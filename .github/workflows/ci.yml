@@ -52,9 +52,6 @@ jobs:
 
       - run: bun install
 
-      - name: Embed dashboard placeholder
-        run: bun run scripts/embed-spa.ts
-
       - name: Build binary
         run: bun build ./src/index.ts --compile --outfile jin
 

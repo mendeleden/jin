@@ -1,6 +1,6 @@
 {
   "name": "jin",
-  "version": "0.8.9",
+  "version": "0.8.10",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "bin": {
