@@ -1,5 +1,5 @@
 /**
- * Verify Postgres push results. Returns JSON with session/message counts and metadata.
+ * Verify Postgres push results. Returns JSON with conversation/message counts and metadata.
  * Usage: bun run verify-postgres.ts <connectionString>
  */
 const connString = process.argv[2];
@@ -12,31 +12,31 @@ const { SQL } = await import("bun");
 const sql = new SQL(connString);
 
 try {
-  const [sessionRow] = await sql.unsafe("SELECT count(*) as cnt FROM public.jin_sessions");
+  const [conversationRow] = await sql.unsafe("SELECT count(*) as cnt FROM public.jin_conversations");
   const [messageRow] = await sql.unsafe("SELECT count(*) as cnt FROM public.jin_messages");
   const [invalidRow] = await sql.unsafe(
     "SELECT count(*) as cnt FROM public.jin_messages WHERE role NOT IN ('user','assistant','system')",
   );
 
-  const teamRows = await sql.unsafe("SELECT DISTINCT team_id FROM public.jin_sessions LIMIT 1");
-  const devRows = await sql.unsafe("SELECT DISTINCT developer_id FROM public.jin_sessions LIMIT 1");
+  const teamRows = await sql.unsafe("SELECT DISTINCT team_id FROM public.jin_conversations LIMIT 1");
+  const userRows = await sql.unsafe("SELECT DISTINCT user_id FROM public.jin_conversations LIMIT 1");
 
-  const topSessions = await sql.unsafe(
-    "SELECT id, adapter_id, name, message_count, team_id, developer_id FROM public.jin_sessions ORDER BY created_at DESC LIMIT 10",
+  const topConversations = await sql.unsafe(
+    "SELECT id, adapter_id, name, message_count, team_id, user_id FROM public.jin_conversations ORDER BY started_at DESC LIMIT 10",
   );
 
   const result = {
-    sessions: Number(sessionRow.cnt),
+    conversations: Number(conversationRow.cnt),
     messages: Number(messageRow.cnt),
     invalidRoles: Number(invalidRow.cnt),
     teamId: teamRows.length > 0 ? teamRows[0].team_id : "",
-    developerId: devRows.length > 0 ? devRows[0].developer_id : "",
-    topSessions: topSessions.map((r: any) => ({
+    userId: userRows.length > 0 ? userRows[0].user_id : "",
+    topConversations: topConversations.map((r: any) => ({
       adapter: r.adapter_id,
       name: (r.name || "").slice(0, 40),
       msgs: r.message_count,
       team: r.team_id,
-      dev: r.developer_id,
+      user: r.user_id,
     })),
   };
 

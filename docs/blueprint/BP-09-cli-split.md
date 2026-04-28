@@ -77,19 +77,22 @@ knowledge.
 
 | Command | Purpose |
 |---------|---------|
-| `jin connect --team=<code>` | Decode bridge code, create sink + route |
+| `jin connect --team=<code>` | Decode bridge code, create sink + route, preserve bridge export metadata |
 | `jin connect <repo> --sink=<id>` | Route a repo to an existing destination |
 | `jin connections` | Show current routing and destinations |
 | `jin disconnect <repo>` | Remove routing |
 
 `connect --team=<code>` is the developer's entry point to a workspace.
 The developer does not need to know what kind of sink backs the workspace.
+When the bridge payload contains sink-scoped export metadata such as
+`teamId` or `userId`, `connect --team=<code>` must preserve those values
+exactly when materializing sink config.
 
 ### Integration Wiring (BYO / Power User)
 
 | Command | Purpose |
 |---------|---------|
-| `jin sink add <type> ...` | Add a generic integration destination |
+| `jin sink add <type> [--team-id --user-id] ...` | Add a generic integration destination |
 | `jin sink remove <id>` | Remove a destination |
 | `jin sink disable\|enable <id>` | Durable destination control |
 | `jin route add ... --sink=<id>` | Add routing rules |
@@ -122,7 +125,7 @@ The first `jin team` implementation should stay narrow. It owns:
 
 | Command | Purpose |
 |---------|---------|
-| `jin team bridge` | Generate an onboarding bridge code for developers |
+| `jin team bridge [--team-id --user-id]` | Generate an onboarding bridge code for developers |
 | `jin team schema apply <connection>` | Apply jin tables to an existing Postgres database |
 | `jin team schema check <connection>` | Read-only version compatibility check |
 | `jin team schema version` | Print expected local schema version |
@@ -151,9 +154,14 @@ heuristic in the local config:
 
 ## Operator Bridge: `jin team bridge`
 
-`jin team bridge` generates a base64 bridge code encoding sink
-credentials. It is an operator command — it requires knowing connection
-strings, bucket names, or webhook URLs.
+`jin team bridge` generates a bridge code encoding sink credentials plus
+optional sink-scoped export metadata. It is an operator command — it requires
+knowing connection strings, bucket names, webhook URLs, or remote attribution
+settings.
+
+Relevant flags:
+- `--team-id=<value>` for sink-scoped remote multi-tenant metadata
+- `--user-id=<value>` for sink-scoped export-side user identity
 
 Why:
 - "team-config" is ambiguous (configure the team? show team configuration?)
@@ -169,8 +177,8 @@ Why:
 ### What It Is
 
 An explicit operator escape hatch for provisioning jin's Postgres schema on
-a self-managed database. It creates the tables jin expects (`conversations`,
-`messages`, `tool_calls`, `jin_meta`, sync tables) and sets the schema
+a self-managed database. It creates the tables jin expects (`jin_conversations`,
+`jin_messages`, `jin_tool_calls`, `jin_meta`, sync tables) and sets the schema
 version in `jin_meta`.
 
 ### What It Is Not
@@ -205,7 +213,7 @@ jin team schema apply --connection-string="postgres://..."
    - If yes: read schema_version, compare to local version
      - Match: "Schema v2.3 already applied. No changes needed."
      - Remote ahead: "Remote schema v2.4 is newer than local v2.3. Update jin."
-     - Remote behind: run migrations, update jin_meta
+     - Remote behind: repair/add missing columns, update jin_meta
    - If no: create all tables, insert schema_version into jin_meta
 3. Print result
 ```
@@ -219,10 +227,13 @@ jin team schema check --connection-string="postgres://..."
 
   Remote: v2.3 (compatible)
   Local:  v2.3
-  Tables: conversations, messages, tool_calls, jin_meta  [OK]
+  Tables: jin_conversations, jin_messages, jin_tool_calls, jin_meta  [OK]
 ```
 
 Useful for CI/CD pipelines and health monitoring.
+
+For schema revisions that add integration metadata columns, `jin team schema`
+must verify and repair the table shape, not just compare version strings.
 
 ---
 
@@ -238,16 +249,17 @@ The flow:
 Operator                              Developer
 --------                              ---------
 jin team schema apply <conn>          (nothing — operator handles infra)
-jin team bridge --type=webhook ...    (nothing — operator generates code)
+jin team bridge --type=webhook --user-id=eden ...    (nothing — operator generates code)
   → shares code with developer        jin connect --team=<code>
                                         → sink + route created
                                         → data starts flowing
 ```
 
-The bridge code format is an implementation detail. Today it is a base64
-blob encoding sink config. In the future it could be a workspace URL that
-triggers an OAuth flow. `connect --team=<value>` should be format-agnostic
-— interpret the value based on its shape (base64 blob vs URL vs token).
+The bridge code format is an implementation detail. Today it may encode
+sink configuration and optional export metadata. In the future it could be
+a workspace URL that triggers an OAuth flow. `connect --team=<value>` should
+be format-agnostic — interpret the value based on its shape (bridge blob vs
+URL vs token).
 
 ---
 
@@ -276,7 +288,8 @@ Connect:
   disconnect <repo>                    Remove routing
 
 Integrations:
-  sink add <type> ...                  Add an integration destination
+  sink add <type> [--team-id --user-id] ...
+                                       Add an integration destination
   sink remove <id>                     Remove a destination
   sink disable|enable <id>             Durable destination control
   route add ... --sink=<id>            Add routing rules
@@ -304,7 +317,8 @@ Help:          jin help <command>
 jin team — workspace bootstrap and operator tools
 
 Bootstrap:
-  bridge --type=<sink> ...             Generate a developer onboarding code
+  bridge --type=<sink> [--team-id --user-id] ...
+                                       Generate a developer onboarding code
 
 Schema (operator escape hatch):
   schema apply <connection>            Apply jin tables to a Postgres database
@@ -407,7 +421,7 @@ an operator can find `schema apply` without reading developer docs.
 ### Experiment 2: Onboarding Flow
 
 1. Operator: `jin team schema apply --connection-string=...`
-2. Operator: `jin team bridge --type=webhook --url=...`
+2. Operator: `jin team bridge --type=webhook --url=... --team-id=jin-team --user-id=eden`
 3. Developer: `jin connect --team=<code>`
 4. Developer: `jin status` shows the workspace sink
 
@@ -415,7 +429,7 @@ Verify that at no point does the developer need to run a `jin team` command.
 
 ### Experiment 3: BYO Integration Independence
 
-1. Power user: `jin sink add postgres --connection-string=...`
+1. Power user: `jin sink add postgres --connection-string=... --user-id=eden`
 2. Power user: `jin route add --remote="github.com/org/*" --sink=my-pg`
 
 Verify that this path works without touching `jin team` at all. Generic

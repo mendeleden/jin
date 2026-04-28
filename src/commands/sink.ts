@@ -23,6 +23,8 @@ export interface SinkCommandOptions {
   secretAccessKey?: string;
   prefix?: string;
   pathStyle?: boolean;
+  teamId?: string;
+  userId?: string;
   yes?: boolean;
 }
 
@@ -114,9 +116,14 @@ export async function ensureSinkConfigured(
     fail(`sink id "${candidate.id}" is already configured`);
   }
 
-  const equivalent = config.sinks.find((sink) => sameSinkIdentity(sink, candidate));
+  const equivalent = config.sinks.find((sink) => sameSinkTransport(sink, candidate));
   if (equivalent) {
-    return { sinkId: equivalent.id, created: false, sink: equivalent };
+    if (sameSinkIdentity(equivalent, candidate)) {
+      return { sinkId: equivalent.id, created: false, sink: equivalent };
+    }
+    fail(
+      `sink transport is already configured as "${equivalent.id}" with different teamId/userId; duplicate transport endpoints with different export identity are not supported yet`,
+    );
   }
 
   await validateSink(candidate, config.sinks.length);
@@ -145,6 +152,8 @@ function buildSinkConfig(
         type: "postgres",
         enabled: true,
         connectionString: input.connectionString,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
       };
     }
     case "webhook": {
@@ -157,6 +166,8 @@ function buildSinkConfig(
         type: "webhook",
         enabled: true,
         url: input.url,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
         ...(input.headers ? { headers: input.headers } : {}),
         ...(typeof input.timeoutMs === "number"
           ? { timeoutMs: input.timeoutMs }
@@ -180,6 +191,8 @@ function buildSinkConfig(
         accessKeyId: input.accessKeyId,
         secretAccessKey: input.secretAccessKey,
         prefix: input.prefix ?? DEFAULT_S3_PREFIX,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
         ...(input.endpoint ? { endpoint: input.endpoint } : {}),
         ...(typeof input.pathStyle === "boolean"
           ? { pathStyle: input.pathStyle }
@@ -195,6 +208,14 @@ function autoSinkId(config: Pick<JinConfig, "sinks">, type: SinkType): string {
 }
 
 function sameSinkIdentity(left: SinkConfig, right: SinkConfig): boolean {
+  return (
+    sameSinkTransport(left, right) &&
+    left.teamId === right.teamId &&
+    left.userId === right.userId
+  );
+}
+
+function sameSinkTransport(left: SinkConfig, right: SinkConfig): boolean {
   if (left.type !== right.type) {
     return false;
   }

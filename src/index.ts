@@ -241,8 +241,8 @@ const COMMAND_HELP: Record<string, string> = {
     jin sink enable <id>
 
   EXAMPLES
-    $ jin sink add postgres --connection-string=postgres://... --id=team-postgres
-    $ jin sink add webhook --url=https://example.com/jin --id=analytics
+    $ jin sink add postgres --connection-string=postgres://... --id=team-postgres --team-id=jin-team --user-id=eden
+    $ jin sink add webhook --url=https://example.com/jin --id=analytics --user-id=eden
     $ jin sink disable team-postgres
 `,
   route: `
@@ -261,7 +261,8 @@ const COMMAND_HELP: Record<string, string> = {
   jin team — workspace bootstrap and operator tools
 
   Bootstrap:
-    bridge --type=<sink> ...             Generate a developer onboarding code
+    bridge --type=<sink> [--team-id --user-id] ...
+                                       Generate a developer onboarding code
 
   Schema (operator escape hatch):
     schema apply <connection>            Apply jin tables to a Postgres database
@@ -437,6 +438,7 @@ async function main(): Promise<void> {
         team: flags.team as string | undefined,
         id: flags.id as string | undefined,
         teamId: flags.teamId as string | undefined,
+        userId: (flags["user-id"] || flags.userId) as string | undefined,
         remote: flags.remote as string | undefined,
         json: !!flags.json,
         yes: !!flags.yes,
@@ -493,6 +495,8 @@ async function main(): Promise<void> {
             secretAccessKey: (flags["secret-access-key"] ||
               flags.secretAccessKey) as string | undefined,
             prefix: flags.prefix as string | undefined,
+            teamId: (flags["team-id"] || flags.teamId) as string | undefined,
+            userId: (flags["user-id"] || flags.userId) as string | undefined,
             pathStyle:
               parseBooleanFlag(flags["path-style"]) ??
               parseBooleanFlag(flags.pathStyle),
@@ -649,6 +653,7 @@ async function main(): Promise<void> {
             secretAccessKey: (teamFlags["secret-access-key"] || teamFlags.secretAccessKey) as string | undefined,
             prefix: teamFlags.prefix as string | undefined,
             teamId: (teamFlags["team-id"] || teamFlags.teamId) as string | undefined,
+            userId: (teamFlags["user-id"] || teamFlags.userId) as string | undefined,
             headers: teamFlags.headers as string | undefined,
           });
           break;

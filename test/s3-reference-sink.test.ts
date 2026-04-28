@@ -99,6 +99,39 @@ describe("S3Sink", () => {
       ],
     });
   });
+
+  test("push includes team and user metadata when configured", async () => {
+    const payloads = [makePayload("conv-1", 7)];
+    const calls: Array<{ input: string; init: RequestInit | undefined }> = [];
+
+    setFetch(async (input, init) => {
+      calls.push({ input: String(input), init });
+      return new Response(null, { status: 200 });
+    });
+
+    const sink = new S3Sink({
+      type: "s3",
+      id: "s3-ref",
+      enabled: true,
+      bucket: "sink-bucket",
+      region: "us-east-1",
+      endpoint: "https://storage.example.com",
+      accessKeyId: "test-access-key",
+      secretAccessKey: "test-secret-key",
+      prefix: "exports/root/",
+      teamId: "team-1",
+      userId: "user-9",
+    });
+
+    const result = (await sink.push(payloads)) as PushResult;
+    const body = JSON.parse(String(calls[0]?.init?.body ?? ""));
+
+    expect(result).toEqual({ pushed: 1, failed: 0, errors: [] });
+    expect(body._meta).toEqual({
+      teamId: "team-1",
+      userId: "user-9",
+    });
+  });
 });
 
 function makeSink(): S3Sink {

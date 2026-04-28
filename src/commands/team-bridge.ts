@@ -15,6 +15,7 @@ export async function teamBridgeCommand(opts: {
   secretAccessKey?: string;
   prefix?: string;
   teamId?: string;
+  userId?: string;
   headers?: string;
 }): Promise<void> {
   const sinkType = opts.type;
@@ -30,6 +31,7 @@ export async function teamBridgeCommand(opts: {
   Options:
     --name=<label>         Human-readable sink name (e.g. "team-prod", "acme-db")
     --team-id=<id>         Team identifier for multi-tenant setups
+    --user-id=<id>         User identifier exported by the sink
 
   Available sink types: ${availableSinks().join(", ")}
 
@@ -50,7 +52,8 @@ export async function teamBridgeCommand(opts: {
     accessKeyId: opts.accessKeyId,
     secretAccessKey: opts.secretAccessKey,
     prefix: opts.prefix || "jin/",
-    teamId: opts.teamId || "default",
+    teamId: opts.teamId,
+    userId: opts.userId,
     headers: opts.headers ? JSON.parse(opts.headers) : undefined,
   };
 
