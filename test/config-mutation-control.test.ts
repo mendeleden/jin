@@ -80,6 +80,8 @@ mock.module("../src/commands/start", () => ({
 
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
+  createAdapter: (adapterId: string) =>
+    mockAdapters.find((adapter) => adapter.id === adapterId) ?? null,
   protectedSourceStartupNotices: (adapterConfigs: Record<string, any> = {}) =>
     buildProtectedSourceNotices(adapterConfigs),
   startupProbeBlocked: (
@@ -290,13 +292,13 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toHaveLength(0);
   });
 
-  test("connect resolves project routing to remote matches and keeps team data out of generic config", async () => {
+  test("connect resolves project routing to remote matches and preserves sink identity metadata", async () => {
     const teamCode = encodeTeamConfig({
       id: "workspace-postgres",
       type: "postgres",
       connectionString: "postgresql://team-db:5432/shared",
       teamId: "team-42",
-      developerId: "dev-7",
+      userId: "user-7",
     });
 
     await connectCommand("alpha", { team: teamCode });
@@ -308,6 +310,8 @@ describe("config mutation and control commands", () => {
       type: "postgres",
       enabled: true,
       connectionString: "postgresql://team-db:5432/shared",
+      teamId: "team-42",
+      userId: "user-7",
     });
     expect(config.routes).toEqual([
       {

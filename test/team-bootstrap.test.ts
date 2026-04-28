@@ -213,10 +213,24 @@ describe("jin team schema apply", () => {
     expect(ddl).toContain("idx_jin_tc_name");
   });
 
+  test("schema version stamp is emitted after table repair DDL", () => {
+    const ddl = getIntegrationDDL();
+    const schemaStampIndex = ddl.indexOf("INSERT INTO jin_meta (key, value)");
+    const conversationRepairIndex = ddl.indexOf(
+      "ALTER TABLE jin_conversations\n  ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT '';",
+    );
+    const toolCallRepairIndex = ddl.indexOf(
+      "ALTER TABLE public.jin_tool_calls\n      ADD CONSTRAINT jin_tool_calls_pkey",
+    );
+
+    expect(schemaStampIndex).toBeGreaterThan(conversationRepairIndex);
+    expect(schemaStampIndex).toBeGreaterThan(toolCallRepairIndex);
+  });
+
   test("schema version matches sink expectations", () => {
     const version = getIntegrationSchemaVersion();
     expect(version).toMatch(/^\d+\.\d+$/);
-    expect(version).toBe("2.4");
+    expect(version).toBe("2.5");
   });
 
   test("DDL comment references jin team schema apply (not top-level)", () => {
@@ -257,7 +271,7 @@ describe("jin team schema version", () => {
     schemaVersionCommand();
 
     const output = console_.logs.join("\n").trim();
-    expect(output).toBe("2.4");
+    expect(output).toBe("2.5");
   });
 });
 

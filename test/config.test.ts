@@ -48,6 +48,8 @@ describe("normalizeConfig", () => {
           type: "postgres",
           connectionString: "postgres://jin:test@localhost:5432/jin",
           enabled: false,
+          teamId: "team-1",
+          userId: "user-1",
         },
         {
           id: "s3-archive",
@@ -55,11 +57,14 @@ describe("normalizeConfig", () => {
           bucket: "jin-archive",
           accessKeyId: "abc",
           secretAccessKey: "def",
+          userId: "user-archive",
         },
         {
           id: "webhook-cursor",
           type: "webhook",
           url: "https://example.com/hooks/jin",
+          teamId: "team-2",
+          userId: "user-2",
           headers: {
             Authorization: "Bearer token",
             ignore: 42,
@@ -107,6 +112,8 @@ describe("normalizeConfig", () => {
         type: "postgres",
         enabled: false,
         connectionString: "postgres://jin:test@localhost:5432/jin",
+        teamId: "team-1",
+        userId: "user-1",
       },
       {
         id: "s3-archive",
@@ -117,12 +124,15 @@ describe("normalizeConfig", () => {
         accessKeyId: "abc",
         secretAccessKey: "def",
         prefix: DEFAULT_S3_PREFIX,
+        userId: "user-archive",
       },
       {
         id: "webhook-cursor",
         type: "webhook",
         enabled: true,
         url: "https://example.com/hooks/jin",
+        teamId: "team-2",
+        userId: "user-2",
         headers: {
           Authorization: "Bearer token",
         },

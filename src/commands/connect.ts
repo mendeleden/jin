@@ -30,6 +30,7 @@ interface ConnectOptions {
   team?: string;
   id?: string;
   teamId?: string;
+  userId?: string;
   remote?: string;
   json?: boolean;
   yes?: boolean;
@@ -497,6 +498,8 @@ function toSinkCandidate(
         type: "postgres",
         id: opts.id || decoded.id,
         connectionString: decoded.connectionString,
+        ...(decoded.teamId ? { teamId: decoded.teamId } : {}),
+        ...(decoded.userId ? { userId: decoded.userId } : {}),
       };
     case "webhook":
       return {
@@ -504,6 +507,8 @@ function toSinkCandidate(
         id: opts.id || decoded.id,
         url: decoded.url,
         headers: decoded.headers,
+        ...(decoded.teamId ? { teamId: decoded.teamId } : {}),
+        ...(decoded.userId ? { userId: decoded.userId } : {}),
       };
     case "s3":
       return {
@@ -515,6 +520,8 @@ function toSinkCandidate(
         accessKeyId: decoded.accessKeyId,
         secretAccessKey: decoded.secretAccessKey,
         prefix: decoded.prefix,
+        ...(decoded.teamId ? { teamId: decoded.teamId } : {}),
+        ...(decoded.userId ? { userId: decoded.userId } : {}),
       };
   }
 }

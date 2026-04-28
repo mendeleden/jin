@@ -58,7 +58,6 @@ export interface SinkConfig {
 
   // Postgres
   connectionString?: string;
-  table?: string; // defaults to "jin_sessions" / "jin_messages"
   schema?: string; // defaults to "public"
 
   // S3-compatible (AWS S3, Cloudflare R2, MinIO, GCS)
@@ -72,7 +71,7 @@ export interface SinkConfig {
   // Shared
   batchSize?: number;
   teamId?: string; // identifies the team in multi-tenant setups
-  developerId?: string; // identifies the individual developer
+  userId?: string; // canonical user identity for sink consumers
 }
 
 /** Decode a base64-encoded team config string into SinkConfig */

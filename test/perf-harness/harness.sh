@@ -91,7 +91,7 @@ log ""
 log "═══ PHASE 1: JIN CONNECT --TEAM ═══"
 
 # Build Postgres team config base64 the same way a team lead would
-TEAM_JSON="{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
+TEAM_JSON="{\"type\":\"postgres\",\"id\":\"perf-test\",\"connectionString\":\"$PG_CONN\",\"teamId\":\"perf-team\",\"userId\":\"perf-user\"}"
 TEAM_B64=$(echo -n "$TEAM_JSON" | base64 -w0)
 log "Postgres team config (base64): ${TEAM_B64:0:40}..."
 
@@ -118,7 +118,7 @@ if [ -n "$S3_ENDPOINT" ]; then
   log "  Bucket result: $BUCKET_RESULT"
   cd /home/testuser
 
-  S3_JSON="{\"type\":\"s3\",\"id\":\"perf-s3\",\"bucket\":\"$S3_BUCKET\",\"endpoint\":\"$S3_ENDPOINT\",\"accessKeyId\":\"$S3_ACCESS_KEY\",\"secretAccessKey\":\"$S3_SECRET_KEY\",\"region\":\"us-east-1\",\"prefix\":\"jin/\",\"teamId\":\"perf-team\",\"developerId\":\"perf-dev\"}"
+  S3_JSON="{\"type\":\"s3\",\"id\":\"perf-s3\",\"bucket\":\"$S3_BUCKET\",\"endpoint\":\"$S3_ENDPOINT\",\"accessKeyId\":\"$S3_ACCESS_KEY\",\"secretAccessKey\":\"$S3_SECRET_KEY\",\"region\":\"us-east-1\",\"prefix\":\"jin/\",\"teamId\":\"perf-team\",\"userId\":\"perf-user\"}"
   S3_B64=$(echo -n "$S3_JSON" | base64 -w0)
   log "S3 team config (base64): ${S3_B64:0:40}..."
 
@@ -273,17 +273,17 @@ log "═══ PHASE 7: POSTGRES VERIFICATION ═══"
 
 cd /home/testuser/jin-src
 
-# Run verification script — returns JSON with sessions, messages, invalidRoles, teamId, developerId, topSessions
+# Run verification script — returns JSON with conversations, messages, invalidRoles, teamId, userId, topConversations
 PG_RESULT=$(bun run "$SCRIPTS_DIR/verify-postgres.ts" "$PG_CONN" 2>/dev/null || echo '{}')
 log "Postgres result: $PG_RESULT"
 
-SESSIONS=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sessions 2>/dev/null || echo "0")
+CONVERSATIONS=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" conversations 2>/dev/null || echo "0")
 MESSAGES=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" messages 2>/dev/null || echo "0")
 VALID_ROLES=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" invalidRoles 2>/dev/null || echo "-1")
 TEAM_ID=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" teamId 2>/dev/null || echo "")
-DEV_ID=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" developerId 2>/dev/null || echo "")
+USER_ID=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" userId 2>/dev/null || echo "")
 
-metric "postgres" "sessions" "$SESSIONS"
+metric "postgres" "conversations" "$CONVERSATIONS"
 metric "postgres" "messages" "$MESSAGES"
 
 # Get SQLite counts for completeness check
@@ -300,18 +300,19 @@ if [ "$SQLITE_MESSAGES" -gt 0 ] 2>/dev/null; then
   log "Push completeness: $MESSAGES / $SQLITE_MESSAGES messages (${PUSH_PCT}%)"
 fi
 
-# Session details for report
+# Conversation details for report
 log ""
-log "Postgres session details:"
-PG_TOP=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" topSessions 2>/dev/null || echo "[]")
+log "Postgres conversation details:"
+PG_TOP=$(echo "$PG_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" topConversations 2>/dev/null || echo "[]")
 log "  $PG_TOP"
 
 # ─── S3 Verification ─────────────────────────────────────────────────────
 
-S3_SESSIONS=0
+S3_CONVERSATIONS=0
 S3_MESSAGES=0
 S3_VALID=0
 S3_SAMPLE_TEAM=""
+S3_SAMPLE_USER=""
 
 if [ -n "$S3_ENDPOINT" ]; then
   log ""
@@ -319,30 +320,32 @@ if [ -n "$S3_ENDPOINT" ]; then
 
   cd /home/testuser/jin-src
 
-  # Run verification script — returns JSON with sessions, totalMessages, sample
+  # Run verification script — returns JSON with conversations, totalMessages, sample
   S3_RESULT=$(bun run "$SCRIPTS_DIR/verify-s3.ts" "$S3_ENDPOINT" "$S3_BUCKET" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" 2>/dev/null || echo '{}')
   log "S3 result: $S3_RESULT"
 
-  S3_SESSIONS=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sessions 2>/dev/null || echo "0")
+  S3_CONVERSATIONS=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" conversations 2>/dev/null || echo "0")
   S3_MESSAGES=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" totalMessages 2>/dev/null || echo "0")
 
-  metric "s3" "sessions" "$S3_SESSIONS"
+  metric "s3" "conversations" "$S3_CONVERSATIONS"
   metric "s3" "total_messages" "$S3_MESSAGES"
-  log "S3 objects: $S3_SESSIONS session files, $S3_MESSAGES total messages"
+  log "S3 objects: $S3_CONVERSATIONS conversation files, $S3_MESSAGES total messages"
 
   # Check sample validity
   S3_SAMPLE_MSGS=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.messageCount 2>/dev/null || echo "0")
   S3_SAMPLE_TEAM=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.teamId 2>/dev/null || echo "")
-  S3_SAMPLE_HAS_SESSION=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.hasSession 2>/dev/null || echo "false")
+  S3_SAMPLE_USER=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.userId 2>/dev/null || echo "")
+  S3_SAMPLE_HAS_CONVERSATION=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.hasConversation 2>/dev/null || echo "false")
   S3_SAMPLE_KEY=$(echo "$S3_RESULT" | bun run "$SCRIPTS_DIR/json-field.ts" sample.key 2>/dev/null || echo "")
 
   if [ -n "$S3_SAMPLE_KEY" ]; then
     metric "s3" "sample_key" "$S3_SAMPLE_KEY"
     metric "s3" "sample_messages" "$S3_SAMPLE_MSGS"
     metric "s3" "sample_team_id" "$S3_SAMPLE_TEAM"
-    log "S3 sample: $S3_SAMPLE_KEY — $S3_SAMPLE_MSGS messages, team=$S3_SAMPLE_TEAM"
+    metric "s3" "sample_user_id" "$S3_SAMPLE_USER"
+    log "S3 sample: $S3_SAMPLE_KEY — $S3_SAMPLE_MSGS messages, team=$S3_SAMPLE_TEAM, user=$S3_SAMPLE_USER"
 
-    if [ "$S3_SAMPLE_HAS_SESSION" = "true" ] && [ "$S3_SAMPLE_MSGS" -gt 0 ] 2>/dev/null; then
+    if [ "$S3_SAMPLE_HAS_CONVERSATION" = "true" ] && [ "$S3_SAMPLE_MSGS" -gt 0 ] 2>/dev/null; then
       S3_VALID=1
     fi
   fi
@@ -355,10 +358,10 @@ fi
 log ""
 log "═══ ASSERTIONS ═══"
 
-assert_gt "postgres_sessions" "$SESSIONS" "0"
+assert_gt "postgres_conversations" "$CONVERSATIONS" "0"
 assert_gt "postgres_messages" "$MESSAGES" "0"
 assert_eq "team_id" "$TEAM_ID" "perf-team"
-assert_eq "developer_id" "$DEV_ID" "perf-dev"
+assert_eq "user_id" "$USER_ID" "perf-user"
 assert_eq "invalid_roles" "$VALID_ROLES" "0"
 
 # Push completeness: at least 95% of SQLite messages should be in Postgres
@@ -369,10 +372,11 @@ fi
 
 # S3 assertions
 if [ -n "$S3_ENDPOINT" ]; then
-  assert_gt "s3_sessions" "$S3_SESSIONS" "0"
+  assert_gt "s3_conversations" "$S3_CONVERSATIONS" "0"
   assert_gt "s3_messages" "$S3_MESSAGES" "0"
   assert_eq "s3_sample_valid" "$S3_VALID" "1"
   assert_eq "s3_team_id" "$S3_SAMPLE_TEAM" "perf-team"
+  assert_eq "s3_user_id" "$S3_SAMPLE_USER" "perf-user"
 fi
 
 # ─── Phase 8: Benchmark ─────────────────────────────────────────────────

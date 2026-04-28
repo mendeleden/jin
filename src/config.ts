@@ -58,7 +58,7 @@ export interface AdapterConfig extends ContractAdapterConfig {
 
 export interface TeamConfig {
   teamId: string;
-  developerId?: string;
+  userId?: string;
   syncMode?: "realtime" | "periodic" | "manual";
   syncIntervalMs?: number;
 }
@@ -85,6 +85,7 @@ export interface SinkConfigBase extends Omit<ContractSinkConfigBase, "enabled"> 
   enabled?: boolean;
   name?: string;
   teamId?: string;
+  userId?: string;
 }
 
 export interface PostgresSinkConfig extends SinkConfigBase {
@@ -351,6 +352,12 @@ function normalizeSinkConfig(raw: unknown): SinkConfig | null {
     id,
     type,
     enabled: asBoolean(raw.enabled) ?? true,
+    ...(asNonEmptyString(raw.teamId)
+      ? { teamId: asNonEmptyString(raw.teamId) }
+      : {}),
+    ...(resolveSinkUserId(raw)
+      ? { userId: resolveSinkUserId(raw) }
+      : {}),
   };
 
   switch (type) {
@@ -486,6 +493,10 @@ function normalizeWatchConfig(raw: unknown, fallback: WatchConfig): WatchConfig 
       asPositiveInteger(raw.pollIntervalMs) ?? fallback.pollIntervalMs,
     ...(debounceMs !== undefined ? { debounceMs } : {}),
   };
+}
+
+function resolveSinkUserId(raw: Record<string, unknown>): string | undefined {
+  return asNonEmptyString(raw.userId);
 }
 
 function materializeConfigShape(raw: unknown): {

@@ -11,7 +11,7 @@
  * Lives under `jin team schema ...` per BP-09 (not top-level `jin schema`).
  */
 
-const INTEGRATION_SCHEMA_VERSION = "2.4";
+const INTEGRATION_SCHEMA_VERSION = "2.5";
 
 const POSTGRES_INTEGRATION_DDL = `
 -- Jin Postgres Integration Schema v${INTEGRATION_SCHEMA_VERSION}
@@ -23,10 +23,6 @@ CREATE TABLE IF NOT EXISTS jin_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-INSERT INTO jin_meta (key, value)
-  VALUES ('schema_version', '${INTEGRATION_SCHEMA_VERSION}')
-  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 CREATE TABLE IF NOT EXISTS jin_conversations (
   id TEXT PRIMARY KEY,
@@ -51,9 +47,17 @@ CREATE TABLE IF NOT EXISTS jin_conversations (
   message_count INTEGER DEFAULT 0,
   tool_count INTEGER DEFAULT 0,
   turn_count INTEGER DEFAULT 0,
+  team_id TEXT DEFAULT '',
+  user_id TEXT DEFAULT '',
   source_path TEXT,
   source_format TEXT DEFAULT ''
 );
+
+ALTER TABLE jin_conversations
+  ADD COLUMN IF NOT EXISTS team_id TEXT DEFAULT '';
+
+ALTER TABLE jin_conversations
+  ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS jin_messages (
   id TEXT PRIMARY KEY,
@@ -130,6 +134,10 @@ CREATE INDEX IF NOT EXISTS idx_jin_msg_timestamp ON jin_messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_jin_tc_conv ON jin_tool_calls(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_jin_tc_msg ON jin_tool_calls(message_id);
 CREATE INDEX IF NOT EXISTS idx_jin_tc_name ON jin_tool_calls(name);
+
+INSERT INTO jin_meta (key, value)
+  VALUES ('schema_version', '${INTEGRATION_SCHEMA_VERSION}')
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 `;
 
 export async function schemaApplyCommand(opts: {
@@ -216,10 +224,9 @@ export async function schemaCheckCommand(opts: {
     const rows = await conn.unsafe(
       "SELECT value FROM jin_meta WHERE key = 'schema_version' LIMIT 1"
     );
-    await conn.close();
-
     const rowArray = Array.from(rows as Iterable<Record<string, unknown>>);
     if (rowArray.length === 0 || !rowArray[0].value) {
+      await conn.close();
       console.log("  Remote: not initialized (no schema_version in jin_meta)");
       console.log("  Local:  v" + INTEGRATION_SCHEMA_VERSION);
       console.log("  Action: run jin team schema apply");
@@ -229,6 +236,17 @@ export async function schemaCheckCommand(opts: {
     const remoteVersion = String(rowArray[0].value);
     const localMajor = parseInt(INTEGRATION_SCHEMA_VERSION.split(".")[0]);
     const remoteMajor = parseInt(remoteVersion.split(".")[0]);
+    const toolCallPrimaryKey = await readPrimaryKeyDefinition(
+      conn,
+      "public",
+      "jin_tool_calls",
+    );
+    const conversationColumns = await readColumnNames(
+      conn,
+      "public",
+      "jin_conversations",
+    );
+    await conn.close();
 
     console.log("  Remote: v" + remoteVersion + (remoteMajor === localMajor ? " (compatible)" : " (INCOMPATIBLE)"));
     console.log("  Local:  v" + INTEGRATION_SCHEMA_VERSION);
@@ -237,6 +255,15 @@ export async function schemaCheckCommand(opts: {
       console.log("  Action: update jin (remote schema is newer)");
     } else if (remoteMajor < localMajor) {
       console.log("  Action: run jin team schema apply (remote schema is older)");
+    } else if (toolCallPrimaryKey !== "PRIMARY KEY (conversation_id, message_id, id)") {
+      console.log("  Tool calls PK: incompatible");
+      console.log("  Action: run jin team schema apply (tool call primary key needs repair)");
+    } else if (!conversationColumns.has("team_id") || !conversationColumns.has("user_id")) {
+      console.log("  Conversation identity columns: incompatible");
+      console.log("  Action: run jin team schema apply (team_id/user_id columns need repair)");
+    } else {
+      console.log("  Tool calls PK: ok");
+      console.log("  Conversation identity columns: ok");
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -272,4 +299,50 @@ export function getIntegrationDDL(): string {
 
 export function getIntegrationSchemaVersion(): string {
   return INTEGRATION_SCHEMA_VERSION;
+}
+
+type SQLLike = {
+  unsafe(query: string, params?: unknown[]): Promise<unknown>;
+};
+
+async function readPrimaryKeyDefinition(
+  conn: SQLLike,
+  schemaName: string,
+  tableName: string,
+): Promise<string | null> {
+  const rows = await conn.unsafe(
+    `SELECT pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint
+      WHERE conrelid = to_regclass($1)
+        AND contype = 'p'
+      LIMIT 1`,
+    [`${schemaName}.${tableName}`],
+  );
+  const rowArray = Array.from(rows as Iterable<Record<string, unknown>>);
+  const definition = rowArray[0]?.definition;
+  return typeof definition === "string" && definition.trim() !== ""
+    ? definition
+    : null;
+}
+
+async function readColumnNames(
+  conn: SQLLike,
+  schemaName: string,
+  tableName: string,
+): Promise<Set<string>> {
+  const rows = await conn.unsafe(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = $2`,
+    [schemaName, tableName],
+  );
+  const columns = new Set<string>();
+  for (const row of Array.from(rows as Iterable<Record<string, unknown>>)) {
+    const columnName = row.column_name;
+    if (typeof columnName === "string" && columnName.trim() !== "") {
+      columns.add(columnName);
+    }
+  }
+  return columns;
 }

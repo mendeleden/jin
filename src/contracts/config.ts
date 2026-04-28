@@ -33,6 +33,8 @@ export interface SinkConfigBase {
   id: string;
   type: SinkType;
   enabled: boolean;
+  teamId?: string;
+  userId?: string;
 }
 
 export interface PostgresSinkConfig extends SinkConfigBase {

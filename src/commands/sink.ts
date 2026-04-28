@@ -23,6 +23,8 @@ export interface SinkCommandOptions {
   secretAccessKey?: string;
   prefix?: string;
   pathStyle?: boolean;
+  teamId?: string;
+  userId?: string;
   yes?: boolean;
 }
 
@@ -145,6 +147,8 @@ function buildSinkConfig(
         type: "postgres",
         enabled: true,
         connectionString: input.connectionString,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
       };
     }
     case "webhook": {
@@ -157,6 +161,8 @@ function buildSinkConfig(
         type: "webhook",
         enabled: true,
         url: input.url,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
         ...(input.headers ? { headers: input.headers } : {}),
         ...(typeof input.timeoutMs === "number"
           ? { timeoutMs: input.timeoutMs }
@@ -180,6 +186,8 @@ function buildSinkConfig(
         accessKeyId: input.accessKeyId,
         secretAccessKey: input.secretAccessKey,
         prefix: input.prefix ?? DEFAULT_S3_PREFIX,
+        ...(input.teamId ? { teamId: input.teamId } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
         ...(input.endpoint ? { endpoint: input.endpoint } : {}),
         ...(typeof input.pathStyle === "boolean"
           ? { pathStyle: input.pathStyle }

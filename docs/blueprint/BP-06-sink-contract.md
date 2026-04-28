@@ -18,6 +18,11 @@ performs privileged remote provisioning as part of normal push.
 The pipeline (BP-02) owns scheduling and eligibility. The sink owns
 formatting and transmission.
 
+Generic sinks may also project optional sink-scoped **export metadata**
+configured at the sink boundary, such as remote multi-tenant scoping
+(`teamId`) and export-side user attribution (`userId`). This metadata belongs
+to the integration/export boundary, not to the canonical conversation payload.
+
 **Scope:** This blueprint defines **generic integration sinks** only.
 Per [BP-Product-Strategy.md](/Users/edenmendel/Documents/GitHub/jin/docs/blueprint/BP-Product-Strategy.md),
 `jin team` is a separate product boundary and is not defined by this sink
@@ -195,12 +200,15 @@ Table names are prefixed with `jin_` in Postgres to avoid collisions.
 | INTEGER (booleans) | BOOLEAN |
 | REAL (cost) | DOUBLE PRECISION |
 
-**Postgres-only columns** (added by schema owner, not jin):
+**Postgres-only columns**:
 - `team_id TEXT` — multi-tenant scoping
-- `developer_id TEXT` — developer identifier
+- `user_id TEXT` — export-side user attribution
 - `content_tsv tsvector` — auto-populated FTS
 
-Jin does not set these columns. The schema owner populates them.
+`content_tsv` remains schema-owner populated. When configured with sink-level
+export metadata, Jin may set `team_id` and `user_id` on conversation rows.
+These columns are integration metadata, not part of the canonical snapshot
+payload shape.
 
 ### Object Sinks (S3 / R2 / MinIO)
 
@@ -225,6 +233,37 @@ Sinks that write files to object storage.
   "toolCalls": [ ... ]
 }
 ```
+
+If configured with sink-level export metadata, object sinks may include a
+separate top-level `_meta` envelope:
+
+```json
+{
+  "_meta": {
+    "teamId": "jin-team",
+    "userId": "eden"
+  },
+  "conversation": { ... },
+  "messages": [ ... ],
+  "toolCalls": [ ... ]
+}
+```
+
+`_meta` means:
+
+- optional export/integration metadata only
+- top-level sibling to `conversation`, `messages`, and `toolCalls`
+- not part of the canonical conversation snapshot
+- not read back into Jin's local conversation model
+
+`_meta` does **not** mean:
+
+- a place to move canonical snapshot fields
+- a second conversation payload
+- a generic extension bag for arbitrary local runtime state
+
+For this lane, the only canonical `_meta` keys are sink-scoped export metadata
+such as `teamId` and `userId`.
 
 Each push overwrites the previous file for that conversation. This is
 correct for jin's full-snapshot model — the latest push is the complete
@@ -260,6 +299,11 @@ Sinks that push via HTTP to external endpoints.
 The webhook sink derives `idempotencyKey` from `${conversation.id}:r${attemptedRevision}`
 and includes it in the POST body. This gives receivers a stable dedup key
 for at-least-once delivery.
+
+If configured with sink-level export metadata, delivery sinks may project that
+metadata into transport-specific headers such as `X-Jin-Team` and
+`X-Jin-User`. These headers are integration metadata, not part of the
+canonical snapshot payload.
 
 **Timeout:** Configurable per webhook sink. Default 30 seconds.
 Timeout is treated as a failure — the conversation remains eligible for

@@ -22,11 +22,15 @@ describe("PostgresSink", () => {
 
     setSqlTransport(calls, async (call) => {
       if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
-        return { rows: [{ value: "2.4" }] };
+        return { rows: [{ value: "2.5" }] };
       }
 
       if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
         return { rows: [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }] };
+      }
+
+      if (call.query.includes("FROM information_schema.columns")) {
+        return { rows: [{ column_name: "team_id" }, { column_name: "user_id" }] };
       }
 
       return { rows: [] };
@@ -35,10 +39,11 @@ describe("PostgresSink", () => {
     const result = (await makeSink().healthCheck()) as SinkHealth;
 
     expect(result).toEqual({ ok: true });
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.query).toContain(`SELECT value FROM "public"."jin_meta"`);
     expect(calls[0]?.params).toEqual(["schema_version"]);
     expect(calls[1]?.query).toContain(`SELECT pg_get_constraintdef(oid) AS definition`);
+    expect(calls[2]?.query).toContain("FROM information_schema.columns");
   });
 
   test("healthCheck refuses the sink when the remote tool-call key is still legacy-shaped", async () => {
@@ -46,7 +51,7 @@ describe("PostgresSink", () => {
 
     setSqlTransport(calls, async (call) => {
       if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
-        return { rows: [{ value: "2.4" }] };
+        return { rows: [{ value: "2.5" }] };
       }
 
       if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
@@ -135,11 +140,15 @@ describe("PostgresSink", () => {
 
     setSqlTransport(calls, async (call) => {
       if (call.query.includes(`SELECT value FROM "public"."jin_meta"`)) {
-        return { rows: [{ value: "2.4" }] };
+        return { rows: [{ value: "2.5" }] };
       }
 
       if (call.query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
         return { rows: [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }] };
+      }
+
+      if (call.query.includes("FROM information_schema.columns")) {
+        return { rows: [{ column_name: "team_id" }, { column_name: "user_id" }] };
       }
 
       if (
@@ -155,7 +164,10 @@ describe("PostgresSink", () => {
       return { rows: [] };
     });
 
-    const result = (await makeSink().push(payloads)) as PushResult;
+    const result = (await makeSink("https://postgres.example/sql", {
+      teamId: "team-1",
+      userId: "user-9",
+    }).push(payloads)) as PushResult;
     const ddlQueries = calls.filter((call) =>
       /^(CREATE|ALTER|DROP|TRUNCATE)\b/.test(call.query.trim().toUpperCase()),
     );
@@ -175,6 +187,13 @@ describe("PostgresSink", () => {
     expect(calls.some((call) => call.query.includes(`INSERT INTO "public"."jin_conversations"`))).toBe(true);
     expect(calls.some((call) => call.query.includes(`INSERT INTO "public"."jin_messages"`))).toBe(true);
     expect(calls.some((call) => call.query.includes(`INSERT INTO "public"."jin_tool_calls"`))).toBe(true);
+    const conversationInsert = calls.find((call) =>
+      call.query.includes(`INSERT INTO "public"."jin_conversations"`),
+    );
+    expect(conversationInsert?.params.slice(-2)).toEqual([
+      "team-1",
+      "user-9",
+    ]);
   });
 
   test("push uses sql.begin for postgres:// schema and DML queries when root-client unsafe is disallowed", async () => {
@@ -186,10 +205,13 @@ describe("PostgresSink", () => {
       unsafe: async (query: string, params: unknown[] = []) => {
         transactionCalls.push({ query, params });
         if (query.includes(`SELECT value FROM "public"."jin_meta"`)) {
-          return [{ value: "2.4" }];
+          return [{ value: "2.5" }];
         }
         if (query.includes(`SELECT pg_get_constraintdef(oid) AS definition`)) {
           return [{ definition: "PRIMARY KEY (conversation_id, message_id, id)" }];
+        }
+        if (query.includes("FROM information_schema.columns")) {
+          return [{ column_name: "team_id" }, { column_name: "user_id" }];
         }
         return [];
       },
@@ -235,12 +257,16 @@ describe("PostgresSink", () => {
   });
 });
 
-function makeSink(connectionString = "https://postgres.example/sql"): PostgresSink {
+function makeSink(
+  connectionString = "https://postgres.example/sql",
+  identity: { teamId?: string; userId?: string } = {},
+): PostgresSink {
   return new PostgresSink({
     type: "postgres",
     id: "postgres-ref",
     enabled: true,
     connectionString,
+    ...identity,
   } as ConstructorParameters<typeof PostgresSink>[0]);
 }
 

@@ -38,6 +38,13 @@ mock.module("../src/daemon/runtime-state", () => ({
   runModeLabel: (mode: string) => mode,
 }));
 
+mock.module("../src/daemon/process-state", () => ({
+  getWatcherState: () => ({ name: "watcher", status: "stopped", lifecycleState: "stopped" }),
+  getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
+  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
+  stopDashboard: async () => {},
+}));
+
 import {
   connectCommand,
   connectionsCommand,
@@ -102,6 +109,7 @@ describe("jin connect", () => {
       type: "postgres",
       connectionString: "postgresql://team-db:5432/shared",
       teamId: "team-42",
+      userId: "user-7",
     });
 
     await connectCommand("alpha", { team: teamCode });
@@ -113,6 +121,8 @@ describe("jin connect", () => {
         type: "postgres",
         enabled: true,
         connectionString: "postgresql://team-db:5432/shared",
+        teamId: "team-42",
+        userId: "user-7",
       },
     ]);
     expect(config.routes).toEqual([

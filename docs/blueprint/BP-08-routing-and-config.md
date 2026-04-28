@@ -176,6 +176,8 @@ type SinkConfigBase = {
   id: string;                    // unique, referenced by routes
   type: "postgres" | "s3" | "webhook";
   enabled: boolean;              // false = durably disabled via `jin sink disable`
+  teamId?: string;               // optional remote multi-tenant scoping
+  userId?: string;               // optional export-side user identity
 };
 
 type PostgresSinkConfig = SinkConfigBase & {
@@ -203,6 +205,25 @@ type WebhookSinkConfig = SinkConfigBase & {
 ```
 
 The `type` field narrows the union. No more flat bag of optional fields.
+
+### Sink Export Metadata
+
+`teamId` and `userId` are optional sink-scoped export metadata fields.
+
+They are:
+
+- not routing fields
+- not workspace membership state
+- not part of the canonical conversation snapshot
+
+They exist so a configured sink can project stable export metadata into the
+remote integration surface.
+
+Why sink-scoped instead of top-level:
+
+- different sinks may require different remote tenancy or attribution
+- generic config stays explicit about which remote receives which metadata
+- BP-08 still does not own workspace/team enrollment
 
 ---
 
@@ -246,10 +267,19 @@ Adds a sink definition to config. This is a low-level integration command
 — it creates the destination, not the routing policy.
 
 ```
-jin sink add postgres --connection-string="postgres://..." --id="postgres-team"
-jin sink add s3 --bucket="jin-archive" --endpoint="..." --id="s3-archive"
-jin sink add webhook --url="https://..." --id="webhook-alerts"
+jin sink add postgres --connection-string="postgres://..." --id="postgres-team" --team-id="jin-team" --user-id="eden"
+jin sink add s3 --bucket="jin-archive" --endpoint="..." --id="s3-archive" --user-id="eden"
+jin sink add webhook --url="https://..." --id="webhook-alerts" --team-id="jin-team" --user-id="eden"
 ```
+
+Optional sink-scoped export metadata:
+
+- `--team-id=<value>` sets remote multi-tenant scoping metadata when the sink
+  projects it
+- `--user-id=<value>` sets export-side user identity when the sink projects it
+
+These flags configure remote integration metadata only. They do not affect
+route matching or the canonical local conversation model.
 
 Steps:
 1. Validate connection (healthCheck)
@@ -299,7 +329,7 @@ live runtime. Instead, they can optionally trigger a controlled restart.
 ### The Pattern
 
 ```
-jin sink add postgres --connection-string="..." --yes
+jin sink add postgres --connection-string="..." --user-id="eden" --yes
   1. Validates connection (healthCheck)
   2. Writes sink to config.json
   3. --yes: stops running daemon → starts it again (config reloaded)
