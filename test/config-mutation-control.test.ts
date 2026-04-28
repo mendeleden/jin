@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ConversationBundle } from "../src/contracts/conversations";
+import type { PushPayload } from "../src/contracts/sinks";
 import { openStoreAtPath } from "../src/db/store";
 import {
   captureConsole,
@@ -103,6 +104,7 @@ const {
   sinkAddCommand,
   sinkDisableCommand,
   sinkEnableCommand,
+  sinkRepushCommand,
 } = await import("../src/commands/sink");
 
 let tempDir = "";
@@ -167,6 +169,37 @@ describe("config mutation and control commands", () => {
     ]);
     expect(restartCalls).toHaveLength(0);
     expect(console_.logs.join("\n")).toContain("Restart jin to apply config changes.");
+  });
+
+  test("sink add refuses duplicate transport endpoints when export identity differs", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team-a",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+        teamId: "team-a",
+        userId: "alice",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    await expect(
+      sinkAddCommand("postgres", {
+        id: "postgres-team-b",
+        connectionString: "postgresql://localhost:5432/jin",
+        teamId: "team-a",
+        userId: "bob",
+      }),
+    ).rejects.toThrow();
+
+    expect(console_.errors.join("\n")).toContain(
+      'sink transport is already configured as "postgres-team-a" with different teamId/userId',
+    );
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual(config.sinks);
   });
 
   test("route add --yes performs a service-aware controlled restart", async () => {
@@ -290,6 +323,106 @@ describe("config mutation and control commands", () => {
     expect(nextConfig.sinks[0].enabled).toBe(true);
     expect(markRuntimeRunningCalls.at(-1)?.issues).toEqual([]);
     expect(restartCalls).toHaveLength(0);
+  });
+
+  test("sink repush resets and replays only the selected sink state", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+      {
+        id: "archive-webhook",
+        type: "webhook",
+        enabled: true,
+        url: "https://example.test/archive",
+        timeoutMs: 30_000,
+      },
+    ];
+    config.routes = [
+      {
+        match: { remote: "github.com/org/repush" },
+        sinks: ["postgres-team"],
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    const seededStore = openStoreAtPath(runtimePaths.storePath);
+    try {
+      seededStore.writeBundle(makeBundle("repush", "github.com/org/repush"));
+      seededStore.recordPushResult(
+        "repush-conversation",
+        "postgres-team",
+        1,
+        { ok: true },
+      );
+      seededStore.recordPushResult(
+        "repush-conversation",
+        "archive-webhook",
+        1,
+        { ok: true },
+      );
+      seededStore.recordPushResult(
+        "alpha-conversation",
+        "archive-webhook",
+        1,
+        { ok: true },
+      );
+    } finally {
+      seededStore.close();
+    }
+
+    const pushCalls: Array<Array<{ attemptedRevision: number; conversation: { id: string } }>> = [];
+    fakeSink = {
+      ...createFakeSink({
+        id: "postgres-team",
+        name: "postgres-team",
+      }),
+      push: async (payloads: PushPayload[]) => {
+        pushCalls.push(
+          payloads.map((payload) => ({
+            attemptedRevision: payload.attemptedRevision,
+            conversation: { id: payload.conversation.id },
+          })),
+        );
+        return {
+          pushed: payloads.length,
+          failed: 0,
+          errors: [],
+        };
+      },
+    };
+
+    await sinkRepushCommand("postgres-team");
+
+    const reopenedStore = openStoreAtPath(runtimePaths.storePath);
+    try {
+      const postgresDirty = reopenedStore.conversationsNeedingPush("postgres-team");
+
+      expect(pushCalls).toEqual([
+        [
+          {
+            attemptedRevision: 1,
+            conversation: { id: "repush-conversation" },
+          },
+        ],
+      ]);
+      expect(postgresDirty).toEqual(["alpha-conversation"]);
+      expect(postgresDirty).not.toContain("repush-conversation");
+      expect(reopenedStore.conversationsNeedingPush("archive-webhook")).toEqual([]);
+    } finally {
+      reopenedStore.close();
+    }
+
+    expect(console_.logs.join("\n")).toContain(
+      "Reset 1 push-state row for sink postgres-team.",
+    );
+    expect(console_.logs.join("\n")).toContain(
+      "Repush complete. attempts 1, pushed 1, failed 0.",
+    );
   });
 
   test("connect resolves project routing to remote matches and preserves sink identity metadata", async () => {

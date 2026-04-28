@@ -133,6 +133,41 @@ describe("jin connect", () => {
     ]);
   });
 
+  test("connect with --team refuses endpoint reuse when export identity differs", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "workspace-postgres",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://team-db:5432/shared",
+        teamId: "team-42",
+        userId: "user-1",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    const teamCode = encodeTeamConfig({
+      id: "workspace-postgres-2",
+      type: "postgres",
+      connectionString: "postgresql://team-db:5432/shared",
+      teamId: "team-42",
+      userId: "user-7",
+    });
+
+    await expect(connectCommand("alpha", { team: teamCode })).rejects.toThrow(
+      ExitError,
+    );
+
+    expect(console_.errors.join("\n")).toContain(
+      'sink transport is already configured as "workspace-postgres" with different teamId/userId',
+    );
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual(config.sinks);
+    expect(nextConfig.routes).toEqual([]);
+  });
+
   test("connect with --remote writes a remote-based route", async () => {
     const config = defaultConfig();
     config.sinks = [

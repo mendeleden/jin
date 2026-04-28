@@ -116,9 +116,14 @@ export async function ensureSinkConfigured(
     fail(`sink id "${candidate.id}" is already configured`);
   }
 
-  const equivalent = config.sinks.find((sink) => sameSinkIdentity(sink, candidate));
+  const equivalent = config.sinks.find((sink) => sameSinkTransport(sink, candidate));
   if (equivalent) {
-    return { sinkId: equivalent.id, created: false, sink: equivalent };
+    if (sameSinkIdentity(equivalent, candidate)) {
+      return { sinkId: equivalent.id, created: false, sink: equivalent };
+    }
+    fail(
+      `sink transport is already configured as "${equivalent.id}" with different teamId/userId; duplicate transport endpoints with different export identity are not supported yet`,
+    );
   }
 
   await validateSink(candidate, config.sinks.length);
@@ -203,6 +208,14 @@ function autoSinkId(config: Pick<JinConfig, "sinks">, type: SinkType): string {
 }
 
 function sameSinkIdentity(left: SinkConfig, right: SinkConfig): boolean {
+  return (
+    sameSinkTransport(left, right) &&
+    left.teamId === right.teamId &&
+    left.userId === right.userId
+  );
+}
+
+function sameSinkTransport(left: SinkConfig, right: SinkConfig): boolean {
   if (left.type !== right.type) {
     return false;
   }
