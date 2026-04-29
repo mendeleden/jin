@@ -85,7 +85,8 @@ if ($UserPath -notlike "*$InstallDir*") {
 
 Write-Host ""
 Write-Host "  Get started:"
-Write-Host "    jin init            # detect your coding tools"
-Write-Host "    jin start           # start background monitoring"
+Write-Host "    jin start           # start local monitoring"
+Write-Host "    jin status          # check daemon and sink health"
+Write-Host "    jin connect --team=<code>   # join a workspace, if you have one"
 Write-Host "    jin update          # self-update to latest version"
 Write-Host ""
