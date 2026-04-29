@@ -25,17 +25,17 @@ function buildIntegrationDDL(schemaName: string): string {
   const messagesTable = qualifyIdentifier(schemaName, MESSAGES_TABLE);
   const toolCallsTable = qualifyIdentifier(schemaName, TOOL_CALLS_TABLE);
   const toolCallsRegclass = quoteLiteral(`${schemaName}.${TOOL_CALLS_TABLE}`);
-  const idxConvTrace = qualifyIdentifier(schemaName, "idx_jin_conv_trace");
-  const idxConvParent = qualifyIdentifier(schemaName, "idx_jin_conv_parent");
-  const idxConvRemote = qualifyIdentifier(schemaName, "idx_jin_conv_remote");
-  const idxConvAdapter = qualifyIdentifier(schemaName, "idx_jin_conv_adapter");
-  const idxConvEnded = qualifyIdentifier(schemaName, "idx_jin_conv_ended");
-  const idxMsgConv = qualifyIdentifier(schemaName, "idx_jin_msg_conv");
-  const idxMsgSequence = qualifyIdentifier(schemaName, "idx_jin_msg_sequence");
-  const idxMsgTimestamp = qualifyIdentifier(schemaName, "idx_jin_msg_timestamp");
-  const idxTcConv = qualifyIdentifier(schemaName, "idx_jin_tc_conv");
-  const idxTcMsg = qualifyIdentifier(schemaName, "idx_jin_tc_msg");
-  const idxTcName = qualifyIdentifier(schemaName, "idx_jin_tc_name");
+  const idxConvTrace = quoteIdentifier("idx_jin_conv_trace");
+  const idxConvParent = quoteIdentifier("idx_jin_conv_parent");
+  const idxConvRemote = quoteIdentifier("idx_jin_conv_remote");
+  const idxConvAdapter = quoteIdentifier("idx_jin_conv_adapter");
+  const idxConvEnded = quoteIdentifier("idx_jin_conv_ended");
+  const idxMsgConv = quoteIdentifier("idx_jin_msg_conv");
+  const idxMsgSequence = quoteIdentifier("idx_jin_msg_sequence");
+  const idxMsgTimestamp = quoteIdentifier("idx_jin_msg_timestamp");
+  const idxTcConv = quoteIdentifier("idx_jin_tc_conv");
+  const idxTcMsg = quoteIdentifier("idx_jin_tc_msg");
+  const idxTcName = quoteIdentifier("idx_jin_tc_name");
 
   return `
 -- Jin Postgres Integration Schema v${INTEGRATION_SCHEMA_VERSION}

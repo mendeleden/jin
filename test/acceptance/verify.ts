@@ -304,6 +304,7 @@ cpSync(
 console.log("  Gemini CLI: 1 fixture session");
 
 const totalExpectedSessions = 1 + SYNTHETIC_SESSIONS + 1 + 1; // cc fixture + synth + codex + gemini
+const expectedBootstrapAdapters = ["claude-code", "codex", "gemini-cli"] as const;
 
 // ─── Phase 2: jin start --foreground (bootstrap + daemon lifecycle) ─────
 
@@ -338,7 +339,21 @@ for (let i = 0; i < maxWaitMs / 1000; i++) {
     continue;
   }
 
-  if ((bootstrapStatus.sessions || 0) > 0 && (bootstrapStatus.messages || 0) > 0) {
+  const adapters = Array.isArray(bootstrapStatus.adapters)
+    ? bootstrapStatus.adapters
+    : [];
+  const adapterIds = adapters.map((entry: any) =>
+    typeof entry === "string" ? entry : entry.id,
+  );
+  const hasExpectedAdapters = expectedBootstrapAdapters.every((adapterId) =>
+    adapterIds.includes(adapterId),
+  );
+
+  if (
+    (bootstrapStatus.sessions || 0) > 0 &&
+    (bootstrapStatus.messages || 0) > 0 &&
+    hasExpectedAdapters
+  ) {
     bootstrapComplete = true;
     break;
   }

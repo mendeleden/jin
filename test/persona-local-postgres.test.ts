@@ -91,6 +91,8 @@ describe("persona local Postgres bootstrap", () => {
         "--type=postgres",
         `--connection-string=${PG_CONN}`,
         `--name=${BRIDGE_NAME}`,
+        `--team-id=${TEAM_ID}`,
+        `--user-id=${USER_ID}`,
       ],
       process.env,
     );
