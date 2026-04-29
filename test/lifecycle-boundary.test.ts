@@ -71,6 +71,7 @@ mock.module("../src/commands/service", () => ({
 mock.module("../src/config", () => ({
   configDir: () => runtimePaths.configDir,
   configPath: () => runtimePaths.configPath,
+  discoveryCachePath: () => join(runtimePaths.configDir, "discovery-cache.db"),
   loadConfig: async () => configValue,
 }));
 

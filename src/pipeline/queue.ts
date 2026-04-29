@@ -58,6 +58,13 @@ export class WorkQueue {
     return this.items.length;
   }
 
+  snapshot(): string[] {
+    return this.items.map((item) => {
+      if (item.kind === "ingest-adapter") return `${item.kind}:${item.adapterId}`;
+      return item.kind;
+    });
+  }
+
   private tryCoalesce(next: PipelineWorkItem): boolean {
     const tail = this.items.at(-1);
     if (!tail) {

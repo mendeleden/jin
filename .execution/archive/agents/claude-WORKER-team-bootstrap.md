@@ -1,0 +1,25 @@
+# Worker Heartbeat
+
+- agent id: `claude-WORKER-team-bootstrap`
+- preferred session name: `claude-WORKER-team-bootstrap`
+- external session id: `d9a9d3a5-92d7-4acd-9ce8-d6b561860508`
+- tmux session: `jin-w3-team`
+- log path: `.execution/logs/claude-WORKER-team-bootstrap.stream.jsonl`
+- packet id: `W3-TEAM-01`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-06 22:20:00 EDT`
+- current focus: `Codex-review blocker fixed — awaiting re-review`
+- recent updates:
+  - `2026-04-06 19:46:00 EDT`: packet created
+  - `2026-04-06 20:30:00 EDT`: first pass (crossed BP-09 boundary)
+  - `2026-04-06 21:15:00 EDT`: BP-09 correction complete
+  - `2026-04-06 22:12:00 EDT`: Codex review found one blocker: post-apply guidance leaked to jin sink add postgres
+  - `2026-04-06 22:20:00 EDT`: fixed — post-apply guidance now says jin team bridge --type=postgres; added schemaApplySuccessGuidance export + focused test; 15+42 tests passing
+- files changed:
+  - `src/commands/schema.ts` — success path now points to jin team bridge (not jin sink add postgres); extracted schemaApplySuccessGuidance for testability
+  - `test/team-bootstrap.test.ts` — added "success guidance stays inside jin team operator surface" test (15 tests total)
+- tests run:
+  - `bun test test/team-bootstrap.test.ts` — 15 pass, 0 fail, 59 expect() calls
+  - `bun test test/init.test.ts test/connect.test.ts test/config-mutation-control.test.ts` — 42 pass, 0 fail, 120 expect() calls
+- current blocker: `none`

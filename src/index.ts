@@ -222,6 +222,15 @@ const COMMAND_HELP: Record<string, string> = {
     $ jin status
     $ jin status --json
 `,
+  cache: `
+  Manage local performance caches
+
+  USAGE
+    jin cache clear
+
+  EXAMPLES
+    $ jin cache clear
+`,
   sink: `
   Manage low-level integration destinations
 
@@ -230,11 +239,13 @@ const COMMAND_HELP: Record<string, string> = {
     jin sink remove <id> [--yes]
     jin sink disable <id>
     jin sink enable <id>
+    jin sink repush <id>
 
   EXAMPLES
-    $ jin sink add postgres --connection-string=postgres://... --id=team-postgres
-    $ jin sink add webhook --url=https://example.com/jin --id=analytics
+    $ jin sink add postgres --connection-string=postgres://... --id=team-postgres --team-id=jin-team --user-id=eden
+    $ jin sink add webhook --url=https://example.com/jin --id=analytics --user-id=eden
     $ jin sink disable team-postgres
+    $ jin sink repush team-postgres
 `,
   route: `
   Manage low-level routing rules for local conversations
@@ -252,7 +263,8 @@ const COMMAND_HELP: Record<string, string> = {
   jin team — workspace bootstrap and operator tools
 
   Bootstrap:
-    bridge --type=<sink> ...             Generate a developer onboarding code
+    bridge --type=<sink> [--team-id --user-id] ...
+                                       Generate a developer onboarding code
 
   Schema (operator escape hatch):
     schema apply <connection>            Apply jin tables to a Postgres database
@@ -301,6 +313,7 @@ function usage(): void {
     sink add <type> ...                  Add an integration destination
     sink remove <id>                     Remove a destination
     sink disable|enable <id>             Durable destination control
+    sink repush <id>                     Reset one sink's delivery state and backfill
     route add ... --sink=<id>            Add routing rules
     route remove ...                     Remove routing rules
 
@@ -310,6 +323,7 @@ function usage(): void {
 
   Utility:
     ingest                               One-shot local ingest
+    cache clear                          Clear the local discovery cache
     benchmark [--json]                   Measure ingest budgets
     service install|uninstall|status     OS service management
     update [--quiet|--rollback]          Self-update or rollback
@@ -350,9 +364,7 @@ async function main(): Promise<void> {
         await watchCommand({ daemon: false });
       } else {
         const { startCommand } = await import("./commands/start");
-        await startCommand({
-          service: !!flags.service,
-        });
+        await startCommand({ service: !!flags.service });
       }
       break;
     }
@@ -376,14 +388,17 @@ async function main(): Promise<void> {
         ]);
       }
       const { restartCommand } = await import("./commands/start");
-      await restartCommand({
-        service: !!flags.service,
-      });
+      await restartCommand({ service: !!flags.service });
       break;
     }
     case "ingest": {
       const { ingestCommand } = await import("./commands/ingest");
       await ingestCommand();
+      break;
+    }
+    case "__worker": {
+      const { runWorkerServerCommand } = await import("./pipeline/ingest-worker");
+      await runWorkerServerCommand();
       break;
     }
     case "status": {
@@ -392,6 +407,21 @@ async function main(): Promise<void> {
         json: !!flags.json,
         short: !!flags.short,
       });
+      break;
+    }
+    case "cache": {
+      const action = args[1];
+      switch (action) {
+        case "clear": {
+          const { cacheClearCommand } = await import("./commands/cache");
+          await cacheClearCommand();
+          break;
+        }
+        default:
+          console.error(`Unknown cache action: ${action || "(missing)"}`);
+          console.log(COMMAND_HELP.cache);
+          process.exit(1);
+      }
       break;
     }
 
@@ -411,6 +441,7 @@ async function main(): Promise<void> {
         team: flags.team as string | undefined,
         id: flags.id as string | undefined,
         teamId: flags.teamId as string | undefined,
+        userId: (flags["user-id"] || flags.userId) as string | undefined,
         remote: flags.remote as string | undefined,
         json: !!flags.json,
         yes: !!flags.yes,
@@ -438,6 +469,7 @@ async function main(): Promise<void> {
         sinkRemoveCommand,
         sinkDisableCommand,
         sinkEnableCommand,
+        sinkRepushCommand,
       } = await import("./commands/sink");
       const action = args[1];
       const sinkId = args[2];
@@ -467,6 +499,8 @@ async function main(): Promise<void> {
             secretAccessKey: (flags["secret-access-key"] ||
               flags.secretAccessKey) as string | undefined,
             prefix: flags.prefix as string | undefined,
+            teamId: (flags["team-id"] || flags.teamId) as string | undefined,
+            userId: (flags["user-id"] || flags.userId) as string | undefined,
             pathStyle:
               parseBooleanFlag(flags["path-style"]) ??
               parseBooleanFlag(flags.pathStyle),
@@ -494,6 +528,13 @@ async function main(): Promise<void> {
             process.exit(1);
           }
           await sinkEnableCommand(sinkId);
+          break;
+        case "repush":
+          if (!sinkId || sinkId.startsWith("--")) {
+            console.error("Usage: jin sink repush <sink-id>");
+            process.exit(1);
+          }
+          await sinkRepushCommand(sinkId);
           break;
         default:
           console.error(`Unknown sink action: ${action || "(missing)"}`);
@@ -623,6 +664,7 @@ async function main(): Promise<void> {
             secretAccessKey: (teamFlags["secret-access-key"] || teamFlags.secretAccessKey) as string | undefined,
             prefix: teamFlags.prefix as string | undefined,
             teamId: (teamFlags["team-id"] || teamFlags.teamId) as string | undefined,
+            userId: (teamFlags["user-id"] || teamFlags.userId) as string | undefined,
             headers: teamFlags.headers as string | undefined,
           });
           break;
@@ -636,6 +678,7 @@ async function main(): Promise<void> {
               await schemaApplyCommand({
                 connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
                 dryRun: !!schemaFlags["dry-run"] || !!schemaFlags.dryRun,
+                schema: (schemaFlags.schema as string | undefined),
               });
               break;
             }
@@ -643,6 +686,7 @@ async function main(): Promise<void> {
               const { schemaCheckCommand } = await import("./commands/schema");
               await schemaCheckCommand({
                 connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+                schema: (schemaFlags.schema as string | undefined),
               });
               break;
             }
@@ -656,8 +700,8 @@ async function main(): Promise<void> {
   jin team schema — operator escape hatch for Postgres integrations
 
   USAGE
-    jin team schema apply --connection-string="postgres://..."  [--dry-run]
-    jin team schema check --connection-string="postgres://..."
+    jin team schema apply --connection-string="postgres://..."  [--schema=name] [--dry-run]
+    jin team schema check --connection-string="postgres://..."  [--schema=name]
     jin team schema version
 `);
               break;

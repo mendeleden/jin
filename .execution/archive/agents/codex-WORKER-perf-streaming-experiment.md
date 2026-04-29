@@ -1,0 +1,28 @@
+# Agent Heartbeat
+
+- agent: `codex-WORKER-perf-streaming-experiment`
+- preferred session name: `codex-WORKER-perf-streaming-experiment`
+- packet: `W3-PERF-05`
+- external session id: `019d7e77-a2c5-7bf1-9ba9-60e9d762a5ce`
+- tmux session: `jin-w3-perf-05-streaming`
+- log path: `.execution/logs/codex-WORKER-perf-streaming-experiment.jsonl`
+- last-message path: `.execution/logs/codex-WORKER-perf-streaming-experiment-last.txt`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-11T23:06:59Z`
+- current focus: `review the packet-local Claude cold-start backfill prototype against the pinned benchmark and disposable-foreground evidence`
+- recent updates:
+  - `2026-04-11`: read the execution rules, packet state, and current flow docs
+  - `2026-04-11`: baseline worker heartbeat does not yet publish the exact before/after command set, so this lane remains investigation/design only
+  - `2026-04-11`: live Claude probe found `924` refs across `908` source files; only `12` files emit multiple refs, covering `28/924` refs (`3.0%`), so a requested-ref-only load experiment is too small to explain the remaining runtime gap
+  - `2026-04-11`: targeted load probe on the largest multi-ref Claude file showed discovery `34 -> 79 MB`, load `79 -> 104 MB`, and store-side hash/derived second passes only `104 -> 107 MB`, which points to bundle materialization rather than duplicate post-load scans as the dominant pressure
+  - `2026-04-11`: current design target is a packet-local streamed cold-backfill prototype against a disposable store that avoids full `ConversationBundle.messages[]` materialization during startup, but implementation is gated on the baseline worker publishing the pinned before/after command set
+  - `2026-04-11`: baseline worker is now `review_ready` and wrote `docs/execution/audits/2026-04-11-W3-PERF-05-tdd-baseline-and-command-set.md`, but its heartbeat still summarizes the command set instead of inlining the exact commands, so this lane is still respecting the no-code gate from the operator prompt
+  - `2026-04-11`: baseline worker heartbeat now inlines the exact pinned benchmark and disposable-foreground commands, so the code-change gate is open
+  - `2026-04-11`: implementation focus is now the smallest Claude-only cold-start staged/streamed backfill prototype that can show up under both pinned commands without touching sinks, service, daemon, or frozen contracts
+  - `2026-04-11T23:06:59Z`: landed a narrow Claude-only `coldStartBackfillToStore(...)` path plus packet-owned ingest and benchmark wiring so empty `startup-scan` refs can stream directly into SQLite instead of materializing a full `ConversationBundle.messages[]` before write
+  - `2026-04-11T23:06:59Z`: focused coverage is green: Claude adapter `16/16`, runtime/pipeline grouped `14/14`, perf harness `6/6`
+  - `2026-04-11T23:06:59Z`: pinned benchmark still fails overall, but the first runtime hard-limit moved materially later from the baseline Claude/Cursor range to Codex `1/270` after Claude `916/916` and Cursor `96/96`; shutdown-flush still fails at Claude `306/916`
+  - `2026-04-11T23:06:59Z`: pinned frozen-guard disposable foreground still fails inside Claude, but the hard-limit moved from baseline Claude `(306/921)` to Claude `(842/916)` at `RSS 258 MB`
+  - `2026-04-11T23:06:59Z`: the pinned `RSS_HARD_LIMIT_MB=400` foreground control is not a valid completion proof on `jin start --foreground` because the runtime still enforced the frozen `256 MB` guard on this path
+- current blocker: `none`

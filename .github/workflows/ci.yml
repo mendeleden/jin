@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3"
+          no-cache: true
+
+      - run: bun install
+
+      - name: Run typecheck
+        run: bun run typecheck
+
   test:
     strategy:
       fail-fast: false
@@ -23,18 +39,51 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3"
+          no-cache: true
 
       - run: bun install
 
-      # bun test has no --ignore flag; list unit test files explicitly
-      # (integration.test.ts needs Docker, acceptance/ runs as a separate job)
+      # Keep the matrix job on focused local-command and store/pipeline coverage.
       - name: Run unit tests
-        run: bun test test/connect.test.ts test/init.test.ts test/progress.test.ts test/routing.test.ts test/search.test.ts test/self-observation.test.ts
+        run: >-
+          bun test
+          test/cli-surface-cleanup.test.ts
+          test/config.test.ts
+          test/config-mutation-control.test.ts
+          test/connect.test.ts
+          test/db-store-spine.test.ts
+          test/pipeline-spec-gap-closure.test.ts
+          test/progress.test.ts
+          test/routing.test.ts
+          test/self-observation.test.ts
+          test/team-bootstrap.test.ts
 
-  # Full acceptance test: build binary → seed data → jin init → jin start → verify
-  # Simulates a real user installing and running jin on each platform
+  lifecycle-validation:
+    needs: [typecheck]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3"
+          no-cache: true
+
+      - run: bun install
+
+      - name: Run release-gate lifecycle tests
+        run: bun run test:release-gates
+
+  # Full acceptance test: build binary → seed data → jin start → verify
+  # Simulates a real user installing and running jin on each platform.
   acceptance:
-    needs: [test]
+    needs: [typecheck, test, lifecycle-validation]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -49,11 +98,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3"
+          no-cache: true
 
       - run: bun install
-
-      - name: Embed dashboard placeholder
-        run: bun run scripts/embed-spa.ts
 
       - name: Build binary
         run: bun build ./src/index.ts --compile --outfile jin
@@ -66,11 +113,10 @@ jobs:
         run: bun run test/acceptance/verify.ts .\jin.exe
         if: runner.os == 'Windows'
 
-  # Integration tests with real Postgres + S3 (Linux only — needs Docker)
-  # Uses docker-compose (not GHA services) because MinIO needs command: server /data
+  # Outside-in Postgres operator/developer flow (Linux only — needs Docker)
   # Runs on PRs targeting main + pushes to main (not feature branch pushes)
   integration:
-    needs: [test]
+    needs: [typecheck, test]
     if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -81,19 +127,20 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3"
+          no-cache: true
 
       - run: bun install
 
-      - name: Start Postgres + MinIO
-        run: docker compose -f test/docker-compose.integration.yml up -d --wait
+      - name: Start Postgres
+        run: docker compose -f test/docker-compose.integration.yml up -d --wait postgres
         timeout-minutes: 2
 
       - name: Run integration tests
-        run: bun test test/integration.test.ts
+        run: bun test test/persona-local-postgres.test.ts
 
       - name: Service logs (on failure)
         if: failure()
-        run: docker compose -f test/docker-compose.integration.yml logs
+        run: docker compose -f test/docker-compose.integration.yml logs postgres
 
       - name: Tear down services
         if: always()

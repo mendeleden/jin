@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { defaultConfig } from "../src/config";
@@ -13,6 +13,7 @@ import {
   readTestConfig,
   writeTestConfig,
   ExitError,
+  removeDirWithRetry,
 } from "./helpers";
 
 let fakeSink = createFakeSink();
@@ -36,6 +37,13 @@ mock.module("../src/daemon/runtime-state", () => ({
   markRuntimeRunning: () => ({ state: "running", issues: [] }),
   clearRuntimeState: () => {},
   runModeLabel: (mode: string) => mode,
+}));
+
+mock.module("../src/daemon/process-state", () => ({
+  getWatcherState: () => ({ name: "watcher", status: "stopped", lifecycleState: "stopped" }),
+  getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
+  stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
+  stopDashboard: async () => {},
 }));
 
 import {
@@ -68,7 +76,7 @@ afterEach(() => {
   console_.restore();
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
-  rmSync(tempDir, { recursive: true, force: true });
+  removeDirWithRetry(tempDir);
 });
 
 describe("jin connect", () => {
@@ -102,6 +110,7 @@ describe("jin connect", () => {
       type: "postgres",
       connectionString: "postgresql://team-db:5432/shared",
       teamId: "team-42",
+      userId: "user-7",
     });
 
     await connectCommand("alpha", { team: teamCode });
@@ -113,6 +122,8 @@ describe("jin connect", () => {
         type: "postgres",
         enabled: true,
         connectionString: "postgresql://team-db:5432/shared",
+        teamId: "team-42",
+        userId: "user-7",
       },
     ]);
     expect(config.routes).toEqual([
@@ -121,6 +132,41 @@ describe("jin connect", () => {
         sinks: ["workspace-postgres"],
       },
     ]);
+  });
+
+  test("connect with --team refuses endpoint reuse when export identity differs", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "workspace-postgres",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://team-db:5432/shared",
+        teamId: "team-42",
+        userId: "user-1",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    const teamCode = encodeTeamConfig({
+      id: "workspace-postgres-2",
+      type: "postgres",
+      connectionString: "postgresql://team-db:5432/shared",
+      teamId: "team-42",
+      userId: "user-7",
+    });
+
+    await expect(connectCommand("alpha", { team: teamCode })).rejects.toThrow(
+      ExitError,
+    );
+
+    expect(console_.errors.join("\n")).toContain(
+      'sink transport is already configured as "workspace-postgres" with different teamId/userId',
+    );
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual(config.sinks);
+    expect(nextConfig.routes).toEqual([]);
   });
 
   test("connect with --remote writes a remote-based route", async () => {

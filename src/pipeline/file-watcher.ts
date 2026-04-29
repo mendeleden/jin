@@ -1,4 +1,5 @@
-import { watch, type FSWatcher } from "fs";
+import { statSync, watch, type FSWatcher } from "fs";
+import { basename, join } from "path";
 import type { WatchEvent } from "../adapters/types";
 
 interface WatcherOptions {
@@ -17,9 +18,14 @@ export class FileWatcher {
 
   addPath(path: string, adapterId: string): void {
     try {
-      const watcher = watch(path, { recursive: true }, (eventType, filename) => {
-        if (!filename) return;
-        const key = `${adapterId}:${filename}`;
+      const recursive = statSync(path).isDirectory();
+      const watcher = watch(path, { recursive }, (eventType, filename) => {
+        const reportedName = recursive
+          ? filename?.toString()
+          : basename(path);
+        if (!reportedName) return;
+        const changedPath = recursive ? join(path, reportedName) : path;
+        const key = `${adapterId}:${changedPath}`;
 
         // Debounce rapid changes
         if (this.debounceTimers.has(key)) {
@@ -33,9 +39,9 @@ export class FileWatcher {
             const watchEvent: WatchEvent = {
               type: eventType === "rename" ? "session_created" : "session_updated",
               adapterId,
-              sessionId: filename || "",
+              sessionId: reportedName,
               timestamp: new Date().toISOString(),
-              path: `${path}/${filename}`,
+              path: changedPath,
             };
             this.opts.onChange(watchEvent);
           }, this.opts.debounceMs)

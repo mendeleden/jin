@@ -151,6 +151,25 @@ export function allAdapters(
   ];
 }
 
+export function createAdapter(
+  adapterId: string,
+  config: AdapterConfig,
+): Adapter {
+  const factory = ADAPTER_FACTORIES.find((candidate) => candidate.id === adapterId);
+  if (!factory) {
+    throw new Error(`unknown adapter ${adapterId}`);
+  }
+
+  return factory.create(
+    resolveAdapterConfig(
+      {
+        [adapterId]: { ...config },
+      },
+      adapterId,
+    ),
+  );
+}
+
 export function protectedSourceStartupNotices(
   adapterConfigs?: Record<string, AdapterConfig>,
   platform: NodeJS.Platform = process.platform,

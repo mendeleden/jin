@@ -8,7 +8,11 @@ import {
   DEFAULT_WATCH_DEBOUNCE_MS,
 } from "../contracts/pipeline";
 import type { Adapter, ChangeHint } from "../contracts/adapters";
-import { ingestAll, ingestOne } from "./ingest";
+import {
+  ingestAll,
+  ingestOne,
+  reclaimAdapterBoundaryMemory,
+} from "./ingest";
 import { pushDirty } from "./push";
 import { WorkQueue } from "./queue";
 import type {
@@ -20,6 +24,7 @@ import type {
   RunPipelineOptions,
 } from "./types";
 import { WatcherController } from "./watcher";
+import { DiagnosticLogger } from "./diagnostic";
 
 const NOOP_LOGGER: PipelineLogger = {
   info() {},
@@ -40,8 +45,17 @@ export async function runPipeline(
 ): Promise<PipelineHandle> {
   const logger = options.logger ?? NOOP_LOGGER;
   let activeAdapters = await resolveAdapters(options.adapterSource);
-
   const queue = new WorkQueue();
+  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
+  const diag = options.diagnosticLogPath
+    ? new DiagnosticLogger({
+        path: options.diagnosticLogPath,
+        getRssBytes,
+        getQueueSize: () => queue.size,
+        getQueueSnapshot: () => queue.snapshot(),
+      })
+    : null;
+
   const watcher = new WatcherController({
     debounceMs: options.watchDebounceMs ?? DEFAULT_WATCH_DEBOUNCE_MS,
     onChange: (event) => {
@@ -61,6 +75,7 @@ export async function runPipeline(
   if (!deferWatcherStart) {
     watcher.reconcile(activeAdapters);
     watcherStarted = true;
+    diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), false);
   }
 
   const ingestBatchSize = normalizeBatchSize(
@@ -87,7 +102,6 @@ export async function runPipeline(
     options.rssHardLimitBytes,
     DEFAULT_RSS_HARD_LIMIT_BYTES,
   );
-  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
 
   let currentWork: PipelineWorkItem | null = null;
   let stopping = false;
@@ -105,6 +119,7 @@ export async function runPipeline(
   const periodicTimer =
     scanIntervalMs && scanIntervalMs > 0
       ? setInterval(() => {
+          diag?.periodicTick();
           enqueue({ kind: "reconcile-adapters" });
           enqueue({
             kind: "ingest-all",
@@ -140,6 +155,11 @@ export async function runPipeline(
     }
 
     const enqueueResult = queue.enqueue(work);
+    diag?.queueEvent(
+      enqueueResult,
+      work.kind,
+      work.kind === "ingest-adapter" ? work.adapterId : undefined,
+    );
     if (enqueueResult === "handed-off") {
       handedOffWorkItems += 1;
     }
@@ -208,6 +228,9 @@ export async function runPipeline(
         handedOffWorkItems -= 1;
       }
       let shouldStop = false;
+      let workError: string | undefined;
+      const workStartedAt = performance.now();
+      diag?.workStart(work);
 
       try {
         if (stopping && work.kind !== "shutdown-flush") {
@@ -218,13 +241,17 @@ export async function runPipeline(
 
         switch (work.kind) {
           case "reconcile-adapters": {
+            const t0 = performance.now();
             activeAdapters = await resolveAdapters(options.adapterSource);
             if (watcherStarted) {
               watcher.reconcile(activeAdapters);
+              diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), deferWatcherStart);
             }
+            diag?.reconcileResult(activeAdapters.length, activeAdapters.map(a => a.id), performance.now() - t0);
             break;
           }
           case "ingest-all": {
+            const t0 = performance.now();
             const result = await ingestAll(
               activeAdapters,
               options.store,
@@ -236,13 +263,23 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
-                onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
+                workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
+                },
+                onBatchProcessed: (info) => {
+                  diag?.ingestBatch(info);
                   enforceRssBudget(
-                    `ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
+                    `ingest batch for adapter ${info.adapterId} (${info.processedRefs}/${info.totalRefs})`,
                   );
                 },
               },
             );
+            diag?.ingestResult("*", result, performance.now() - t0);
             if (result.anyChanged) {
               enqueuePush();
             }
@@ -259,6 +296,7 @@ export async function runPipeline(
               break;
             }
 
+            const t0 = performance.now();
             const result = await ingestOne(
               adapter,
               options.store,
@@ -270,23 +308,38 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
-                onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
+                workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
+                },
+                onBatchProcessed: (info) => {
+                  diag?.ingestBatch(info);
                   enforceRssBudget(
-                    `ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
+                    `ingest batch for adapter ${info.adapterId} (${info.processedRefs}/${info.totalRefs})`,
                   );
                 },
               },
             );
+            diag?.ingestResult(work.adapterId, result, performance.now() - t0);
             if (result.anyChanged) {
               enqueuePush();
             }
+            const reclaim = await reclaimAdapterBoundaryMemory(options.store);
+            diag?.adapterBoundaryReclaim(work.adapterId, reclaim);
             break;
           }
           case "push": {
-            await pushDirty(options.store, options.sinks, options.routes, {
+            const t0 = performance.now();
+            const summary = await pushDirty(options.store, options.sinks, options.routes, {
               batchSize: pushBatchSize,
               logger,
+              diag,
             });
+            diag?.pushResult(summary, performance.now() - t0, summary.sinkBreakdown);
             break;
           }
           case "shutdown-flush": {
@@ -300,6 +353,14 @@ export async function runPipeline(
                 loadConversationTimeoutMs,
                 trackChangedConversationIds: false,
                 logger,
+                workerIngest: options.workerIngest,
+                discoveryCache: options.discoveryCache,
+                onDiscoveryResult: (info) => {
+                  diag?.discoveryResult(info);
+                },
+                onWorkerSample: (info) => {
+                  diag?.workerSample(info);
+                },
                 onBatchProcessed: ({ adapterId, processedRefs, totalRefs }) => {
                   enforceRssBudget(
                     `shutdown ingest batch for adapter ${adapterId} (${processedRefs}/${totalRefs})`,
@@ -310,12 +371,14 @@ export async function runPipeline(
             await pushDirty(options.store, options.sinks, options.routes, {
               batchSize: pushBatchSize,
               logger,
+              diag,
             });
             shouldStop = true;
             break;
           }
         }
       } catch (error) {
+        workError = error instanceof Error ? error.message : String(error);
         if (error instanceof PipelineRssHardLimitError) {
           shutdownPromise ??= performShutdown();
           if (work.kind === "shutdown-flush") {
@@ -325,6 +388,7 @@ export async function runPipeline(
           logger.error(`Pipeline work item ${work.kind} failed`, error);
         }
       } finally {
+        diag?.workEnd(work, performance.now() - workStartedAt, workError);
         currentWork = null;
         resolveIdleIfNeeded();
       }
@@ -340,7 +404,7 @@ export async function runPipeline(
       return;
     }
 
-    queue.enqueue({ kind: "push" });
+    enqueue({ kind: "push" });
   }
 
   function initiateShutdown(): void {
@@ -360,6 +424,7 @@ export async function runPipeline(
       (item) => item.kind !== "shutdown-flush",
     );
     queue.enqueue({ kind: "shutdown-flush" });
+    diag?.queueEvent("queued", "shutdown-flush");
   }
 
   function enforceRssBudget(context: string): void {
@@ -396,6 +461,7 @@ export async function runPipeline(
     if (!stopping && deferWatcherStart && !watcherStarted) {
       watcher.reconcile(activeAdapters);
       watcherStarted = true;
+      diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), true);
     }
 
     while (idleResolvers.length > 0) {

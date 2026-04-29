@@ -3,12 +3,20 @@ import type {
   ConversationBundle,
   ConversationRelationship,
   Message,
+  ParsedConversation,
+  ParsedMessage,
   ToolCall,
 } from "./conversations";
 
 export interface WriteBundleResult {
   changed: boolean;
   revision: number;
+}
+
+export interface ConversationWriteSession {
+  appendMessage(message: ParsedMessage): void;
+  finish(bundleHash: string): WriteBundleResult;
+  abort(): void;
 }
 
 export interface SyncStateRecord {
@@ -40,7 +48,9 @@ export interface OrphanedConversation {
 }
 
 export interface ConversationStore {
+  beginWrite(conversation: ParsedConversation): ConversationWriteSession;
   writeBundle(bundle: ConversationBundle): WriteBundleResult;
+  hasLocalData?(): boolean;
   getConversation(id: string): Conversation | null;
   getMessages(conversationId: string): Message[];
   getToolCalls(conversationId: string): ToolCall[];

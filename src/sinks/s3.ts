@@ -25,6 +25,8 @@ type S3ConfigFields = {
   accessKeyId?: string;
   secretAccessKey?: string;
   prefix?: string;
+  teamId?: string;
+  userId?: string;
 };
 
 /**
@@ -43,6 +45,8 @@ export class S3Sink implements LegacySink, SnapshotSink {
   private accessKeyId: string;
   private secretAccessKey: string;
   private prefix: string;
+  private teamId: string | null;
+  private userId: string | null;
 
   constructor(config: S3Config) {
     const values = config as S3ConfigFields;
@@ -61,6 +65,8 @@ export class S3Sink implements LegacySink, SnapshotSink {
     this.accessKeyId = values.accessKeyId;
     this.secretAccessKey = values.secretAccessKey;
     this.prefix = normalizePrefix(values.prefix);
+    this.teamId = values.teamId ?? null;
+    this.userId = values.userId ?? null;
   }
 
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
@@ -120,6 +126,18 @@ export class S3Sink implements LegacySink, SnapshotSink {
           conversation: payload.conversation,
           messages: payload.messages,
           toolCalls: payload.toolCalls,
+          ...(this.teamId || this.userId
+            ? {
+                _meta: {
+                  ...(this.teamId ? { teamId: this.teamId } : {}),
+                  ...(this.userId
+                    ? {
+                        userId: this.userId,
+                      }
+                    : {}),
+                },
+              }
+            : {}),
         });
 
         const response = await fetch(this.buildUrl(path), {

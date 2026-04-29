@@ -1,0 +1,21 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-codex-reference-adapter`
+- preferred session name: `codex-WORKER-codex-reference-adapter`
+- packet id: `W2-ADAPTER-02`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-03 00:02:27 EDT`
+- current focus: `Packet implementation complete; the v2 Codex adapter rewrite and packet-local tests are ready for review.`
+- recent updates:
+  - `2026-04-02 23:29:01 EDT` — heartbeat created; execution docs, control plane, packet state, and W1 approved reference review loaded
+  - `2026-04-02 23:52:11 EDT` — packet blueprints, Codex storage docs, current adapter, and fixture reviewed; implementation rewrite starting
+  - `2026-04-03 00:01:43 EDT` — v2 Codex adapter rewrite completed with packet-local coverage for deterministic refs, compaction splitting, spawned linkage, and Codex tool-call extraction
+  - `2026-04-03 00:02:27 EDT` — final packet-local test rerun passed after cleanup in the temporary fixture helper; handoff remains review_ready
+- files changed:
+  - `src/adapters/codex.ts`
+  - `test/codex-reference-adapter.test.ts`
+- tests run:
+  - `bun test test/codex-reference-adapter.test.ts`
+  - `bunx tsc --noEmit --pretty false` (fails in pre-existing files outside this packet; no packet-owned errors surfaced)
+- current blocker: `none`

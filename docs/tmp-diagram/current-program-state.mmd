@@ -1,33 +1,10 @@
-flowchart TD
-  subgraph Runtime["Runtime / Live blockers"]
-    PERF4["W3-PERF-04<br/>in_progress<br/>built no-sink startup still dies in Claude<br/>759/922 at 259 MB vs frozen 256 MB guard"]
-    SINK04["W3-SINK-04<br/>needs_codex<br/>transport + schema fixes landed<br/>waiting on perf closure + clean-start sink proof"]
-    E2E["W3-E2E-01<br/>review_ready<br/>wait for perf closure + sink proof"]
-    SERVICE["W3-SERVICE-01<br/>blocked<br/>wait for perf closure + sink proof"]
-  end
+flowchart LR
+  Cleanup02["W3-CLEANUP-02<br/>review_ready<br/>stale progress/search/route cleanup"]
+  Validate02["W3-VALIDATE-02<br/>queued<br/>release-gate hardening"]
+  MainCI["main CI<br/>currently red"]
+  Release["v0.8.12 retag/release"]
 
-  subgraph Evidence["Fresh evidence"]
-    BUILT["Built ./jin no-sink run<br/>759 conversations / 31,906 messages / 11,649 tool calls<br/>bounded shutdown at Claude 759/922"]
-    RSS400["Exploratory 400 MB runtime run<br/>all 1270 conversations loaded<br/>~279 MB sampled peak / ~286 MB idle"]
-    PUSHED["Remote checkpoints pushed<br/>0.8.5 + Cursor follow-up + perf/docs slices<br/>feat/rewrite-ontology @ 2d9d14b"]
-  end
-
-  subgraph Release["Downstream"]
-    PR["W3-PR-01<br/>blocked<br/>wait for perf + sink stability"]
-    UI["W3-UI-01<br/>blocked<br/>superseded by cleanup lane"]
-  end
-
-  HEAP["jin-heap-inspect<br/>manual diagnostic session"]
-
-  BUILT --> PERF4
-  RSS400 --> PERF4
-  PUSHED --> PR
-  PERF4 --> E2E
-  PERF4 --> SERVICE
-  PERF4 --> SINK04
-  SINK04 --> E2E
-  SINK04 --> PR
-  E2E --> PR
-  SERVICE --> PR
-  PR --> UI
-  HEAP -. supports diagnosis .-> PERF4
+  Cleanup02 --> MainCI
+  Cleanup02 --> Validate02
+  Validate02 --> MainCI
+  MainCI --> Release

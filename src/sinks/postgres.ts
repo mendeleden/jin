@@ -30,7 +30,7 @@ const DEFAULT_CONVERSATIONS_TABLE = "jin_conversations";
 const DEFAULT_MESSAGES_TABLE = "jin_messages";
 const DEFAULT_TOOL_CALLS_TABLE = "jin_tool_calls";
 const META_TABLE = "jin_meta";
-const LOCAL_SCHEMA_VERSION = "2.4";
+const LOCAL_SCHEMA_VERSION = "2.5";
 const LEGACY_PAYLOAD_ERROR =
   "PostgresSink requires v2 push payloads with conversation, messages, and toolCalls.";
 const REQUIRED_TOOL_CALLS_PRIMARY_KEY =
@@ -46,6 +46,8 @@ export class PostgresSink implements LegacySink, SnapshotSink {
   private readonly conversationsTable: string;
   private readonly messagesTable: string;
   private readonly toolCallsTable: string;
+  private readonly teamId: string | null;
+  private readonly userId: string | null;
   private conn: SQL | null = null;
 
   constructor(config: PostgresSinkConfig) {
@@ -59,12 +61,13 @@ export class PostgresSink implements LegacySink, SnapshotSink {
     this.name = readOptionalString(config, "name") ?? this.name;
 
     const schema = readOptionalString(config, "schema") ?? DEFAULT_SCHEMA;
-    const tableNames = resolveTableNames(schema, readOptionalString(config, "table"));
 
     this.metaTable = qualifyIdentifier(schema, META_TABLE);
-    this.conversationsTable = tableNames.conversations;
-    this.messagesTable = tableNames.messages;
-    this.toolCallsTable = tableNames.toolCalls;
+    this.conversationsTable = qualifyIdentifier(schema, DEFAULT_CONVERSATIONS_TABLE);
+    this.messagesTable = qualifyIdentifier(schema, DEFAULT_MESSAGES_TABLE);
+    this.toolCallsTable = qualifyIdentifier(schema, DEFAULT_TOOL_CALLS_TABLE);
+    this.teamId = readOptionalString(config, "teamId") ?? null;
+    this.userId = readOptionalString(config, "userId") ?? null;
   }
 
   async healthCheck(): Promise<SnapshotSinkHealth> {
@@ -196,10 +199,13 @@ export class PostgresSink implements LegacySink, SnapshotSink {
          output_tokens,
          cache_read,
          cache_write,
-         est_cost
+         est_cost,
+         team_id,
+         user_id
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+         $25, $26
        )
        ON CONFLICT (id) DO UPDATE SET
          trace_id = EXCLUDED.trace_id,
@@ -224,7 +230,9 @@ export class PostgresSink implements LegacySink, SnapshotSink {
          output_tokens = EXCLUDED.output_tokens,
          cache_read = EXCLUDED.cache_read,
          cache_write = EXCLUDED.cache_write,
-         est_cost = EXCLUDED.est_cost`,
+         est_cost = EXCLUDED.est_cost,
+         team_id = EXCLUDED.team_id,
+         user_id = EXCLUDED.user_id`,
       [
         conversation.id,
         conversation.traceId,
@@ -250,6 +258,8 @@ export class PostgresSink implements LegacySink, SnapshotSink {
         conversation.cacheRead,
         conversation.cacheWrite,
         conversation.estCost,
+        this.teamId ?? "",
+        this.userId ?? "",
       ],
     );
   }
@@ -393,6 +403,22 @@ export class PostgresSink implements LegacySink, SnapshotSink {
         };
       }
 
+      const conversationColumns = await this.readColumnNames(
+        this.conversationsTable,
+      );
+      const missingConversationColumns = ["team_id", "user_id"].filter(
+        (columnName) => !conversationColumns.has(columnName),
+      );
+      if (missingConversationColumns.length > 0) {
+        return {
+          ok: false,
+          error:
+            `Remote schema is incompatible: ${this.conversationsTable} is missing ` +
+            `${missingConversationColumns.join(", ")}. Run \`jin team schema apply\` ` +
+            "to repair the Postgres integration schema.",
+        };
+      }
+
       return { ok: true };
     } catch (error) {
       if (looksLikeMissingMetaTable(error)) {
@@ -484,6 +510,28 @@ export class PostgresSink implements LegacySink, SnapshotSink {
       ? definition
       : null;
   }
+
+  private async readColumnNames(
+    qualifiedTableName: string,
+  ): Promise<Set<string>> {
+    const [schemaName, tableName] = toRegclassName(qualifiedTableName).split(".");
+    const rows = await this.query(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = $1
+          AND table_name = $2`,
+      [schemaName, tableName],
+    );
+
+    const columns = new Set<string>();
+    for (const row of rows) {
+      const columnName = row.column_name;
+      if (typeof columnName === "string" && columnName.trim() !== "") {
+        columns.add(columnName);
+      }
+    }
+    return columns;
+  }
 }
 
 function normalizeQueryRows(rows: unknown): QueryRow[] {
@@ -500,44 +548,6 @@ function normalizeQueryRows(rows: unknown): QueryRow[] {
   }
 
   return [];
-}
-
-function resolveTableNames(schema: string, configuredTable?: string): {
-  conversations: string;
-  messages: string;
-  toolCalls: string;
-} {
-  if (!configuredTable) {
-    return {
-      conversations: qualifyIdentifier(schema, DEFAULT_CONVERSATIONS_TABLE),
-      messages: qualifyIdentifier(schema, DEFAULT_MESSAGES_TABLE),
-      toolCalls: qualifyIdentifier(schema, DEFAULT_TOOL_CALLS_TABLE),
-    };
-  }
-
-  if (configuredTable.endsWith("_conversations")) {
-    const stem = configuredTable.slice(0, -"_conversations".length);
-    return {
-      conversations: qualifyIdentifier(schema, configuredTable),
-      messages: qualifyIdentifier(schema, `${stem}_messages`),
-      toolCalls: qualifyIdentifier(schema, `${stem}_tool_calls`),
-    };
-  }
-
-  if (configuredTable.endsWith("_sessions")) {
-    const stem = configuredTable.slice(0, -"_sessions".length);
-    return {
-      conversations: qualifyIdentifier(schema, configuredTable),
-      messages: qualifyIdentifier(schema, `${stem}_messages`),
-      toolCalls: qualifyIdentifier(schema, `${stem}_tool_calls`),
-    };
-  }
-
-  return {
-    conversations: qualifyIdentifier(schema, configuredTable),
-    messages: qualifyIdentifier(schema, `${configuredTable}_messages`),
-    toolCalls: qualifyIdentifier(schema, `${configuredTable}_tool_calls`),
-  };
 }
 
 function qualifyIdentifier(schema: string, table: string): string {
@@ -557,7 +567,7 @@ function quoteIdentifier(identifier: string): string {
 }
 
 function readOptionalString(config: PostgresSinkConfig, key: string): string | undefined {
-  const value = (config as Record<string, unknown>)[key];
+  const value = (config as unknown as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
@@ -584,7 +594,7 @@ function parseSchemaVersion(value: unknown): SchemaVersion | null {
 function isLegacyPayloadArray(
   payloads: LegacyPushPayload[] | SnapshotPushPayload[],
 ): payloads is LegacyPushPayload[] {
-  const first = payloads[0] as Record<string, unknown> | undefined;
+  const first = payloads[0] as unknown as Record<string, unknown> | undefined;
   return !!first && "session" in first;
 }
 

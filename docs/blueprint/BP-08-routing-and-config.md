@@ -27,7 +27,7 @@ BP-08 owns:
 - **Route matching semantics** — glob patterns, AND logic, sink selection
 - **Config-mutating commands** — connect, disconnect, route add/remove
 - **Apply/restart semantics** — how config changes reach the runtime
-- **Emergency runtime controls** — stop, sink disable/enable
+- **Emergency runtime controls** — stop, sink disable/enable, sink repush
 
 BP-08 does NOT own:
 - **Workspace/team enrollment** — how a developer joins a team workspace,
@@ -176,6 +176,8 @@ type SinkConfigBase = {
   id: string;                    // unique, referenced by routes
   type: "postgres" | "s3" | "webhook";
   enabled: boolean;              // false = durably disabled via `jin sink disable`
+  teamId?: string;               // optional remote multi-tenant scoping
+  userId?: string;               // optional export-side user identity
 };
 
 type PostgresSinkConfig = SinkConfigBase & {
@@ -204,6 +206,25 @@ type WebhookSinkConfig = SinkConfigBase & {
 
 The `type` field narrows the union. No more flat bag of optional fields.
 
+### Sink Export Metadata
+
+`teamId` and `userId` are optional sink-scoped export metadata fields.
+
+They are:
+
+- not routing fields
+- not workspace membership state
+- not part of the canonical conversation snapshot
+
+They exist so a configured sink can project stable export metadata into the
+remote integration surface.
+
+Why sink-scoped instead of top-level:
+
+- different sinks may require different remote tenancy or attribution
+- generic config stays explicit about which remote receives which metadata
+- BP-08 still does not own workspace/team enrollment
+
 ---
 
 ## Config Lifecycle
@@ -229,6 +250,12 @@ On a fresh machine with no config, `jin start` auto-detects adapters,
 creates default config, and starts the runtime. There is no separate
 `jin init` command.
 
+On an existing machine, `jin start` may also materialize missing default
+config stanzas into `config.json` before taking the runtime snapshot.
+This is additive only: startup may write newly introduced adapter keys or
+missing default sections, but it must not silently flip explicit user
+choices or overwrite runtime/telemetry state into config.
+
 This keeps the getting-started flow to one command:
 ```
 jin start
@@ -240,10 +267,19 @@ Adds a sink definition to config. This is a low-level integration command
 — it creates the destination, not the routing policy.
 
 ```
-jin sink add postgres --connection-string="postgres://..." --id="postgres-team"
-jin sink add s3 --bucket="jin-archive" --endpoint="..." --id="s3-archive"
-jin sink add webhook --url="https://..." --id="webhook-alerts"
+jin sink add postgres --connection-string="postgres://..." --id="postgres-team" --team-id="jin-team" --user-id="eden"
+jin sink add s3 --bucket="jin-archive" --endpoint="..." --id="s3-archive" --user-id="eden"
+jin sink add webhook --url="https://..." --id="webhook-alerts" --team-id="jin-team" --user-id="eden"
 ```
+
+Optional sink-scoped export metadata:
+
+- `--team-id=<value>` sets remote multi-tenant scoping metadata when the sink
+  projects it
+- `--user-id=<value>` sets export-side user identity when the sink projects it
+
+These flags configure remote integration metadata only. They do not affect
+route matching or the canonical local conversation model.
 
 Steps:
 1. Validate connection (healthCheck)
@@ -262,6 +298,32 @@ Sinks:
 
 `jin sink remove <id>` removes a sink definition and any routes that
 reference it.
+
+### `jin sink repush <id>`
+
+Resets one sink's delivery checkpoint and replays the current local snapshot
+to that sink only.
+
+```
+jin sink repush postgres-team
+```
+
+Semantics:
+
+- requires the runtime to be stopped first
+- deletes only `_jin_push_state` rows for the selected sink
+- does **not** rewrite `_jin_sync`, local revisions, or canonical conversation
+  content
+- reuses the normal full-snapshot push path for the selected sink
+
+This command exists for sink-side repair scenarios such as:
+
+- adding or changing sink-scoped export metadata like `userId`
+- backfilling after a remote schema fix
+- replaying one destination after an operator mistake
+
+It is intentionally sink-scoped. There is no top-level "repush everything"
+surface in v2.
 
 ### `jin route add` / `jin route remove`
 
@@ -293,7 +355,7 @@ live runtime. Instead, they can optionally trigger a controlled restart.
 ### The Pattern
 
 ```
-jin sink add postgres --connection-string="..." --yes
+jin sink add postgres --connection-string="..." --user-id="eden" --yes
   1. Validates connection (healthCheck)
   2. Writes sink to config.json
   3. --yes: stops running daemon → starts it again (config reloaded)
@@ -352,6 +414,7 @@ immediate runtime control without a restart:
 | **Emergency stop** | `jin stop` | Immediate (seconds) | Panic — "stop everything NOW" |
 | **Reconfigure** | Config mutation + restart | ~2 seconds | Planned change — add sink, update route |
 | **Selective disable** | `jin sink disable <id>` | Immediate | Calm — "stop pushing to this one sink" |
+| **Selective replay** | `jin sink repush <id>` | Manual / bounded by push time | Repair — "re-deliver to this one sink" |
 
 ### Emergency Stop (`jin stop`)
 
@@ -420,6 +483,27 @@ Sinks:
 a sink. No new work queue item type — it's a filter, not a work item.
 `disable` writes config and signals the runtime via the daemon boundary
 so the change takes effect immediately without a full restart.
+
+### Selective Sink Repush
+
+For the repair case — "this sink's remote state is wrong, replay current local
+truth to that sink only":
+
+```
+jin sink repush <sink-id>
+```
+
+**Semantics:**
+- runtime must be stopped to avoid competing write-capable coordinators
+- Jin clears `_jin_push_state` for that sink only
+- Jin leaves `_jin_sync` and local bundle revisions untouched
+- Jin runs a one-shot push using the sink's current config and current routes
+- diagnostics tag the replay as `reason=repush`
+
+**Why not rewrite local revisions:** backfill pressure is an export-boundary
+problem, not a canonical-store problem. Revisions describe local content
+changes. Sink repush forgets one sink's delivery checkpoint instead of
+pretending every conversation changed locally.
 
 ### Queue Self-Heal After Crash
 

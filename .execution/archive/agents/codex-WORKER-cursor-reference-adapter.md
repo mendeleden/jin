@@ -1,0 +1,21 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-cursor-reference-adapter`
+- preferred session name: `codex-WORKER-cursor-reference-adapter`
+- packet id: `W2-ADAPTER-03`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-02 23:16:21 EDT`
+- current focus: `Review fix pass complete; the Cursor adapter now emits frozen-contract fields directly, including \`toolUses\`, and the packet is ready for re-review.`
+- recent updates:
+  - `2026-04-02 00:23:19 EDT` — Read the execution rules, dispatch protocol, live control plane, packet brief, and shared control-plane state; claimed the Cursor adapter lane and started packet-scoped context review.
+  - `2026-04-02 00:28:44 EDT` — Reworked `src/adapters/cursor.ts` into a v2 adapter with Layer 1 `state.vscdb` discovery/loading, Layer 3 `store.db` fallback loading, adapter-owned change detection, and deterministic IDs.
+  - `2026-04-02 00:31:51 EDT` — Replaced the old Cursor v1-focused tests with packet-aligned adapter tests covering shared-db change detection, repeated-load ID stability, spawned relationship extraction, and Layer 3 fallback parsing.
+  - `2026-04-02 23:16:21 EDT` — Addressed review feedback by switching the adapter to direct `ParsedConversation` / `ParsedMessage` / `ParsedToolCall` construction, renaming message tool data to the frozen `toolUses` field, and updating the focused tests to assert on the contract surface.
+- files changed:
+  - `src/adapters/cursor.ts`
+  - `test/cursor-adapter.test.ts`
+- tests run:
+  - `bun test test/cursor-adapter.test.ts`
+  - `bun x tsc --noEmit --pretty false src/adapters/cursor.ts test/cursor-adapter.test.ts`
+- current blocker: `none`

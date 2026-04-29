@@ -16,6 +16,7 @@ import type {
   ParsedMessage,
   ParsedToolCall,
 } from "../src/contracts/conversations";
+import { resetPushStateForSink } from "../src/db/sync";
 
 const cleanups: Array<() => void> = [];
 
@@ -220,6 +221,28 @@ describe("v2 db store spine", () => {
 
     store.recordPushResult("push-conv", "sink-a", 2, { ok: true });
     expect(store.conversationsNeedingPush("sink-a")).toEqual([]);
+  });
+
+  test("repush resets one sink's delivery state without touching other sinks", () => {
+    const { store } = createStoreEnv();
+    const bundle = makeBundle("repush-conv");
+
+    expect(store.writeBundle(bundle)).toEqual({ changed: true, revision: 1 });
+    store.recordPushResult("repush-conv", "sink-a", 1, { ok: true });
+    store.recordPushResult("repush-conv", "sink-b", 1, { ok: true });
+
+    expect(store.conversationsNeedingPush("sink-a")).toEqual([]);
+    expect(store.conversationsNeedingPush("sink-b")).toEqual([]);
+
+    const reset = resetPushStateForSink(store.database, "sink-a");
+
+    expect(reset).toEqual({
+      clearedStateRows: 1,
+      dirtyBefore: 0,
+      dirtyAfter: 1,
+    });
+    expect(store.conversationsNeedingPush("sink-a")).toEqual(["repush-conv"]);
+    expect(store.conversationsNeedingPush("sink-b")).toEqual([]);
   });
 
   test("allows child conversations before parents and converges orphan checks later", () => {

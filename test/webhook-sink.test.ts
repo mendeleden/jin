@@ -31,6 +31,32 @@ describe("WebhookSink", () => {
     expect(calls[0]?.method).toBe("HEAD");
   });
 
+  test("healthCheck includes team and user headers when configured", async () => {
+    const calls: RequestInit[] = [];
+    setFetch(async (_input, init) => {
+      calls.push(init ?? {});
+      return new Response(null, { status: 405 });
+    });
+
+    const sink = new WebhookSink({
+      type: "webhook",
+      id: "webhook-ref",
+      enabled: true,
+      url: "https://example.com/webhook",
+      teamId: "team-1",
+      userId: "user-9",
+    });
+
+    const result = (await sink.healthCheck()) as SinkHealth;
+
+    expect(result).toEqual({ ok: true });
+    expect(calls[0]?.headers).toMatchObject({
+      "Content-Type": "application/json",
+      "X-Jin-Team": "team-1",
+      "X-Jin-User": "user-9",
+    });
+  });
+
   test("push sends BP-06 full snapshots with derived idempotency keys", async () => {
     const payloads = [makePayload("conv-1", 7), makePayload("conv-2", 8)];
     const bodies: string[] = [];

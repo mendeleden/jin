@@ -1,0 +1,21 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-claude-code-live-hardening`
+- external Codex session id: `019d6f49-1124-77d1-aa81-c141272df282`
+- tmux session: `jin-w3-adapter-07`
+- log: `.execution/logs/codex-WORKER-claude-code-live-hardening.jsonl`
+- preferred session name: `codex-WORKER-claude-code-live-hardening`
+- packet id: `W3-ADAPTER-07`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-08T19:04:00-04:00`
+- current focus: `Packet implementation and validation are complete: default path precedence is fixed, the live Claude child recursion is gone, and the remaining RSS-over-budget condition is documented as a frozen-contract follow-up.`
+- recent updates:
+  - `Read required execution docs and the shared control-plane files for W3-ADAPTER-07.`
+  - `Confirmed this lane is limited to src/adapters/claude-code.ts, focused tests, packet-local audits, and this heartbeat.`
+  - `Updated src/adapters/claude-code.ts to prefer populated default paths, derive spawned child IDs from agentId on real Claude transcripts, block self-recursing parent resolution, and reduce transient JSONL parse pressure.`
+  - `Added focused path-selection and live-child regression coverage in test/claude-code-reference-adapter.test.ts.`
+  - `Validation: bun test test/claude-code-reference-adapter.test.ts`
+  - `Validation: live default-path probe now resolves ~/.claude/projects without an override, and the previously failing child transcript now loads without Maximum call stack size exceeded.`
+  - `Audit: docs/execution/audits/2026-04-08-W3-ADAPTER-07-claude-code-live-hardening.md records the exact commands plus the remaining RSS blocker boundary.`
+- current blocker: `Full live dataset load no longer stack-overflows but still peaks at 812 MB on the frozen full-bundle path; further reduction to the 256 MB BP-02 hard limit appears to require a Codex-owned contract or pipeline/store decision.`

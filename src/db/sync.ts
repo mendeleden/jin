@@ -12,6 +12,12 @@ interface SyncRow {
   ingested_at: string;
 }
 
+export interface ResetSinkPushStateResult {
+  clearedStateRows: number;
+  dirtyBefore: number;
+  dirtyAfter: number;
+}
+
 export function getSyncState(
   db: Database,
   conversationId: string,
@@ -167,6 +173,26 @@ export function recordPushResult(
   );
 }
 
+export function resetPushStateForSink(
+  db: Database,
+  sinkId: string,
+): ResetSinkPushStateResult {
+  const dirtyBefore = conversationsNeedingPush(db, sinkId).length;
+  const clearedStateRows = countPushStateRows(db, sinkId);
+
+  db.run(
+    `DELETE FROM _jin_push_state
+     WHERE sink_id = ?`,
+    [sinkId],
+  );
+
+  return {
+    clearedStateRows,
+    dirtyBefore,
+    dirtyAfter: conversationsNeedingPush(db, sinkId).length,
+  };
+}
+
 export function findOrphanedConversations(
   db: Database,
 ): OrphanedConversation[] {
@@ -214,4 +240,19 @@ export function findConversationsMissingSync(
     .all() as Array<{ id: string }>;
 
   return rows.map((row) => row.id);
+}
+
+function countPushStateRows(
+  db: Database,
+  sinkId: string,
+): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM _jin_push_state
+       WHERE sink_id = ?`,
+    )
+    .get(sinkId) as { count?: number } | null;
+
+  return row?.count ?? 0;
 }
