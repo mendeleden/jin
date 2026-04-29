@@ -100,7 +100,6 @@ function printShort(runtime: RuntimeStatus, states: ComponentState[]): void {
       if (state.lifecycleState && state.lifecycleState !== "running") {
         details.push(`state ${state.lifecycleState}`);
       }
-      if (state.port) details.push(`http://localhost:${state.port}`);
       if (state.uptime) details.push(`uptime ${state.uptime}`);
       console.log(`  ${state.name}\t${green("\u25cf running")}\t${details.join("  ")}`);
     } else {
@@ -130,7 +129,6 @@ async function printFull(
         parts.push(`state ${state.lifecycleState}`);
       }
       if (state.uptime) parts.push(`uptime ${state.uptime}`);
-      if (state.port) parts.push(cyan(`http://localhost:${state.port}`));
       console.log(`  ${padRight(state.name, 12)}${parts.join("    ")}`);
     } else {
       console.log(`  ${padRight(state.name, 12)}${dim("- stopped")}`);

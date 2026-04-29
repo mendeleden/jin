@@ -475,6 +475,8 @@ function renderStats(events) {
   const pushEvents = events.filter(e => e.event === 'push:result');
   const totalPushed = pushEvents.reduce((s, e) => s + (e.pushed || 0), 0);
   const totalFailed = pushEvents.reduce((s, e) => s + (e.failed || 0), 0);
+  const pushSamples = events.filter(e => e.event === 'push:sample').length;
+  const repushes = events.filter(e => e.event === 'repush:reset').length;
   const errorEvents = events.filter(e => e.error);
   const detectResult = [...events].reverse().find(e => e.event === 'detect:result');
 
@@ -490,6 +492,8 @@ function renderStats(events) {
     card('Pushed', totalPushed, 'purple'),
     card('Changed', totalChanged, 'green'),
     card('Failed', totalFailed, totalFailed > 0 ? 'red' : 'green'),
+    card('Repushes', repushes, repushes > 0 ? 'purple' : 'accent'),
+    card('Push Samples', pushSamples, pushSamples > 0 ? 'accent' : 'green'),
     card('Errors', errorEvents.length, errorEvents.length > 0 ? 'red' : 'green'),
   ].join('');
   document.getElementById('statsRow').innerHTML = html;
@@ -767,6 +771,7 @@ function renderTimelineChart(events) {
 function buildTimelineSpans(events) {
   const spans = [];
   const activeWork = new Map();
+  const activeRepushes = new Map();
   let detectStart = null;
 
   const colorForKind = (kind) =>
@@ -791,6 +796,29 @@ function buildTimelineSpans(events) {
         error: false,
       });
       detectStart = null;
+      continue;
+    }
+    if (e.event === 'push:start' && e.reason === 'repush' && e.sinkId) {
+      activeRepushes.set(e.sinkId, {
+        start: ts,
+        lane: `${e.sinkId}`,
+        label: `${e.sinkId} repush`,
+        color: '#bc8cff',
+      });
+      continue;
+    }
+    if (e.event === 'push:sink-result' && e.reason === 'repush' && e.sinkId) {
+      const active = activeRepushes.get(e.sinkId);
+      if (!active) continue;
+      spans.push({
+        lane: active.lane,
+        label: active.label,
+        start: active.start,
+        end: ts,
+        color: active.color,
+        error: (e.failed || 0) > 0,
+      });
+      activeRepushes.delete(e.sinkId);
       continue;
     }
     if (e.event === 'work:start') {
@@ -828,10 +856,11 @@ function renderTrace(events) {
     .filter(e =>
       e.event.startsWith('detect:') ||
       e.event.startsWith('queue:') ||
+      e.event.startsWith('repush:') ||
+      e.event.startsWith('push:') ||
       e.event === 'work:start' ||
       e.event === 'work:end' ||
       e.event === 'ingest:result' ||
-      e.event === 'push:result' ||
       e.event === 'reconcile:result'
     )
     .slice(-120)
@@ -878,6 +907,7 @@ function eventTag(event) {
     event.startsWith('ingest:') ? 'ingest' :
     event.startsWith('reclaim:') ? 'ingest' :
     event.startsWith('worker:') ? 'worker' :
+    event.startsWith('repush:') ? 'push' :
     event.startsWith('push:') ? 'push' :
     event.startsWith('queue:') ? 'queue' :
     event.startsWith('periodic') ? 'periodic' :
@@ -890,13 +920,33 @@ function eventDetails(e) {
   const parts = [];
   if (e.kind) parts.push(`kind=${e.kind}`);
   if (e.adapterId) parts.push(`adapter=${e.adapterId}`);
-  if (e.status) parts.push(`status=${e.status}`);
+  if (e.sinkId) parts.push(`sink=${e.sinkId}`);
   if (e.reason) parts.push(`reason=${e.reason}`);
+  if (e.status) parts.push(`status=${e.status}`);
   if (e.hint) parts.push(`hint=${e.hint}`);
+  if (typeof e.batchIndex === 'number' && typeof e.batchCount === 'number') parts.push(`batch=${e.batchIndex}/${e.batchCount}`);
   if (typeof e.durationMs === 'number') parts.push(`${Math.round(e.durationMs)}ms`);
+  if (typeof e.elapsedMs === 'number') parts.push(`elapsed=${Math.round(e.elapsedMs)}ms`);
   if (typeof e.processedRefs === 'number' && typeof e.totalRefs === 'number') parts.push(`progress=${e.processedRefs}/${e.totalRefs}`);
+  if (typeof e.dirtyConversations === 'number') parts.push(`dirty=${e.dirtyConversations}`);
+  if (typeof e.staleConversations === 'number' && e.staleConversations > 0) parts.push(`stale=${e.staleConversations}`);
+  if (typeof e.payloadCount === 'number') parts.push(`payloads=${e.payloadCount}`);
+  if (typeof e.dirtyInBatch === 'number') parts.push(`dirty-batch=${e.dirtyInBatch}`);
+  if (typeof e.skippedConversations === 'number' && e.skippedConversations > 0) parts.push(`skipped=${e.skippedConversations}`);
+  if (typeof e.selectedConversations === 'number' && typeof e.totalDirtyConversations === 'number') parts.push(`selected=${e.selectedConversations}/${e.totalDirtyConversations}`);
+  if (typeof e.remainingConversations === 'number') parts.push(`remaining=${e.remainingConversations}`);
+  if (typeof e.inFlightConversations === 'number') parts.push(`in-flight=${e.inFlightConversations}`);
+  if (typeof e.clearedStateRows === 'number') parts.push(`cleared=${e.clearedStateRows}`);
+  if (typeof e.dirtyBefore === 'number' && typeof e.dirtyAfter === 'number') parts.push(`pending=${e.dirtyBefore}->${e.dirtyAfter}`);
+  if (typeof e.batchSize === 'number') parts.push(`batch-size=${e.batchSize}`);
+  if (typeof e.pushed === 'number') parts.push(`pushed=${e.pushed}`);
+  if (typeof e.failed === 'number') parts.push(`failed=${e.failed}`);
+  if (typeof e.sinkAttempts === 'number') parts.push(`attempts=${e.sinkAttempts}`);
+  if (typeof e.attemptedRevision === 'number') parts.push(`revision=${e.attemptedRevision}`);
   if (typeof e.childPid === 'number') parts.push(`pid=${e.childPid}`);
   if (Array.isArray(e.batchRefIds) && e.batchRefIds.length > 0) parts.push(`refs=${e.batchRefIds.join(',')}`);
+  if (Array.isArray(e.dirtyConversationIds) && e.dirtyConversationIds.length > 0) parts.push(`dirty-ids=${e.dirtyConversationIds.join(',')}`);
+  if (Array.isArray(e.payloadConversationIds) && e.payloadConversationIds.length > 0) parts.push(`payload-ids=${e.payloadConversationIds.join(',')}`);
   if (Array.isArray(e.batchSourcePaths) && e.batchSourcePaths.length > 0) parts.push(`src=${e.batchSourcePaths.map(shortPath).join(',')}`);
   if (e.reclaim && typeof e.reclaim.beforeRssMb === 'number' && typeof e.reclaim.afterRssMb === 'number') parts.push(`reclaim=${e.reclaim.beforeRssMb}->${e.reclaim.afterRssMb}MB (${e.reclaim.deltaMb >= 0 ? '+' : ''}${e.reclaim.deltaMb})`);
   if (typeof e.workerRssMb === 'number') parts.push(`worker-rss=${e.workerRssMb}MB`);

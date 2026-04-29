@@ -27,7 +27,7 @@ BP-08 owns:
 - **Route matching semantics** — glob patterns, AND logic, sink selection
 - **Config-mutating commands** — connect, disconnect, route add/remove
 - **Apply/restart semantics** — how config changes reach the runtime
-- **Emergency runtime controls** — stop, sink disable/enable
+- **Emergency runtime controls** — stop, sink disable/enable, sink repush
 
 BP-08 does NOT own:
 - **Workspace/team enrollment** — how a developer joins a team workspace,
@@ -299,6 +299,32 @@ Sinks:
 `jin sink remove <id>` removes a sink definition and any routes that
 reference it.
 
+### `jin sink repush <id>`
+
+Resets one sink's delivery checkpoint and replays the current local snapshot
+to that sink only.
+
+```
+jin sink repush postgres-team
+```
+
+Semantics:
+
+- requires the runtime to be stopped first
+- deletes only `_jin_push_state` rows for the selected sink
+- does **not** rewrite `_jin_sync`, local revisions, or canonical conversation
+  content
+- reuses the normal full-snapshot push path for the selected sink
+
+This command exists for sink-side repair scenarios such as:
+
+- adding or changing sink-scoped export metadata like `userId`
+- backfilling after a remote schema fix
+- replaying one destination after an operator mistake
+
+It is intentionally sink-scoped. There is no top-level "repush everything"
+surface in v2.
+
 ### `jin route add` / `jin route remove`
 
 Manages the routing policy separately from sink definitions:
@@ -388,6 +414,7 @@ immediate runtime control without a restart:
 | **Emergency stop** | `jin stop` | Immediate (seconds) | Panic — "stop everything NOW" |
 | **Reconfigure** | Config mutation + restart | ~2 seconds | Planned change — add sink, update route |
 | **Selective disable** | `jin sink disable <id>` | Immediate | Calm — "stop pushing to this one sink" |
+| **Selective replay** | `jin sink repush <id>` | Manual / bounded by push time | Repair — "re-deliver to this one sink" |
 
 ### Emergency Stop (`jin stop`)
 
@@ -456,6 +483,27 @@ Sinks:
 a sink. No new work queue item type — it's a filter, not a work item.
 `disable` writes config and signals the runtime via the daemon boundary
 so the change takes effect immediately without a full restart.
+
+### Selective Sink Repush
+
+For the repair case — "this sink's remote state is wrong, replay current local
+truth to that sink only":
+
+```
+jin sink repush <sink-id>
+```
+
+**Semantics:**
+- runtime must be stopped to avoid competing write-capable coordinators
+- Jin clears `_jin_push_state` for that sink only
+- Jin leaves `_jin_sync` and local bundle revisions untouched
+- Jin runs a one-shot push using the sink's current config and current routes
+- diagnostics tag the replay as `reason=repush`
+
+**Why not rewrite local revisions:** backfill pressure is an export-boundary
+problem, not a canonical-store problem. Revisions describe local content
+changes. Sink repush forgets one sink's delivery checkpoint instead of
+pretending every conversation changed locally.
 
 ### Queue Self-Heal After Crash
 

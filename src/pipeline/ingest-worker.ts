@@ -5,6 +5,7 @@ import {
 } from "../adapters/discovery-cache";
 import { createAdapter } from "../adapters/registry";
 import type { AdapterConfig } from "../config";
+import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { ChangeHint } from "../contracts/adapters";
 import type {
   ConversationBundle,
@@ -705,7 +706,10 @@ async function loadConversationAndNotify(
     );
   }
 
-  const created = createAdapter(adapter.adapterId, adapter.adapterConfig);
+  const created = createAdapter(
+    adapter.adapterId,
+    adapter.adapterConfig,
+  ) as unknown as V2Adapter;
   if (typeof created.loadConversation !== "function") {
     throw new Error(`adapter ${adapter.adapterId} does not support loadConversation`);
   }
@@ -768,7 +772,10 @@ async function findChangedAndSnapshot(
   request: WorkerFindChangedRequest,
 ): Promise<WorkerFindChangedResult> {
   const { adapter, hint, discoveryState } = request;
-  const created = createAdapter(adapter.adapterId, adapter.adapterConfig);
+  const created = createAdapter(
+    adapter.adapterId,
+    adapter.adapterConfig,
+  ) as unknown as V2Adapter;
 
   if (discoveryState && isDiscoveryCacheCapableAdapter(created)) {
     created.importDiscoveryState(discoveryState);

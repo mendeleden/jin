@@ -95,6 +95,7 @@ exactly when materializing sink config.
 | `jin sink add <type> [--team-id --user-id] ...` | Add a generic integration destination |
 | `jin sink remove <id>` | Remove a destination |
 | `jin sink disable\|enable <id>` | Durable destination control |
+| `jin sink repush <id>` | Reset one sink's delivery state and backfill it |
 | `jin route add ... --sink=<id>` | Add routing rules |
 | `jin route remove ...` | Remove routing rules |
 

@@ -38,6 +38,14 @@ export interface RuntimePaths {
   logPath: string;
 }
 
+export interface DarwinLaunchAgentStatus {
+  loaded: boolean;
+  running: boolean;
+  pid: number | null;
+  state: string | null;
+  lastExitCode: string | null;
+}
+
 /** Check if a PID file exists and the process is alive. */
 export function isDaemonRunning(): { running: boolean; pid?: number } {
   const owner = detectActiveOwner();
@@ -84,11 +92,8 @@ export function isServiceActive(): boolean {
       return state === "active" || state === "activating" || state === "reloading";
     }
     if (process.platform === "darwin") {
-      const result = Bun.spawnSync(["launchctl", "list"], { stdout: "pipe" });
-      const output = decode(result.stdout);
-      const line = output.split("\n").find((value) => value.includes("com.jin.agent"));
-      if (!line) return false;
-      return line.trim().split(/\s+/)[0] !== "-";
+      const status = getDarwinLaunchAgentStatus();
+      return status?.running === true;
     }
     if (process.platform === "win32") {
       const result = Bun.spawnSync(
@@ -103,6 +108,46 @@ export function isServiceActive(): boolean {
     }
   } catch {}
   return false;
+}
+
+export function getDarwinLaunchAgentStatus(): DarwinLaunchAgentStatus | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  try {
+    const uid = Bun.spawnSync(["id", "-u"], { stdout: "pipe", stderr: "pipe" });
+    const uidStr = decode(uid.stdout).trim();
+    if (!uidStr) {
+      return null;
+    }
+
+    const result = Bun.spawnSync(
+      ["launchctl", "print", `gui/${uidStr}/com.jin.agent`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    if (result.exitCode !== 0) {
+      return null;
+    }
+
+    const output = decode(result.stdout);
+    const stateMatch = output.match(/^\s*state = (.+)$/m);
+    const pidMatch = output.match(/^\s*pid = (\d+)$/m);
+    const lastExitMatch = output.match(/^\s*last exit code = (.+)$/m);
+    const pid = pidMatch ? parseInt(pidMatch[1] ?? "", 10) : NaN;
+
+    return {
+      loaded: true,
+      running:
+        (stateMatch?.[1]?.trim() ?? "") === "running" ||
+        (Number.isFinite(pid) && pid > 0),
+      pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+      state: stateMatch?.[1]?.trim() ?? null,
+      lastExitCode: lastExitMatch?.[1]?.trim() ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function getRuntimePaths(): RuntimePaths {
@@ -326,12 +371,7 @@ function getServicePid(): number | null {
     }
 
     if (process.platform === "darwin") {
-      const result = Bun.spawnSync(["launchctl", "list"], { stdout: "pipe", stderr: "pipe" });
-      const output = decode(result.stdout);
-      const line = output.split("\n").find((value) => value.includes("com.jin.agent"));
-      if (!line) return null;
-      const pid = parseInt(line.trim().split(/\s+/)[0], 10);
-      return Number.isFinite(pid) && pid > 0 ? pid : null;
+      return getDarwinLaunchAgentStatus()?.pid ?? null;
     }
   } catch {}
 

@@ -1,6 +1,6 @@
 {
   "name": "jin",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "bin": {
@@ -11,7 +11,7 @@
     "dev": "bun run src/index.ts",
     "build": "bun build ./src/index.ts --compile --outfile jin",
     "typecheck": "tsc --noEmit",
-    "test:integration": "docker compose -f test/docker-compose.integration.yml up -d --wait && bun test test/integration.test.ts; docker compose -f test/docker-compose.integration.yml down -v"
+    "test:integration": "/bin/sh -c 'docker compose -f test/docker-compose.integration.yml up -d --wait postgres && bun test test/persona-local-postgres.test.ts; status=$?; docker compose -f test/docker-compose.integration.yml down -v; exit $status'"
   },
   "dependencies": {},
   "devDependencies": {

@@ -2,6 +2,8 @@ import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type { IngestResult, PipelineWorkItem, PushSummary } from "./types";
 
+export type DiagnosticPushReason = "scheduled" | "repush";
+
 export interface DiagnosticEvent {
   ts: string;
   event: string;
@@ -238,38 +240,142 @@ export class DiagnosticLogger {
     });
   }
 
-  pushStart(sinkId: string, dirtyCount: number): void {
+  repushReset(info: {
+    sinkId: string;
+    clearedStateRows: number;
+    dirtyBefore: number;
+    dirtyAfter: number;
+  }): void {
+    this.emit({
+      event: "repush:reset",
+      sinkId: info.sinkId,
+      clearedStateRows: info.clearedStateRows,
+      dirtyBefore: info.dirtyBefore,
+      dirtyAfter: info.dirtyAfter,
+    });
+  }
+
+  pushStart(info: {
+    sinkId: string;
+    reason: DiagnosticPushReason;
+    dirtyConversations: number;
+    staleConversations: number;
+    batchSize: number;
+    batchCount: number;
+  }): void {
     this.emit({
       event: "push:start",
-      sinkId,
-      dirtyConversations: dirtyCount,
+      sinkId: info.sinkId,
+      reason: info.reason,
+      dirtyConversations: info.dirtyConversations,
+      staleConversations: info.staleConversations,
+      batchSize: info.batchSize,
+      batchCount: info.batchCount,
     });
   }
 
-  pushBatch(
-    sinkId: string,
-    batchSize: number,
-    conversationIds: string[],
-  ): void {
+  pushBatch(info: {
+    sinkId: string;
+    reason: DiagnosticPushReason;
+    batchIndex: number;
+    batchCount: number;
+    totalDirtyConversations: number;
+    selectedConversations: number;
+    remainingConversations: number;
+    dirtyInBatch: number;
+    payloadCount: number;
+    skippedConversations: number;
+    dirtyConversationIds: string[];
+    payloadConversationIds: string[];
+  }): void {
     this.emit({
       event: "push:batch",
-      sinkId,
-      batchSize,
-      conversationIds: conversationIds.slice(0, 10),
+      sinkId: info.sinkId,
+      reason: info.reason,
+      batchIndex: info.batchIndex,
+      batchCount: info.batchCount,
+      totalDirtyConversations: info.totalDirtyConversations,
+      selectedConversations: info.selectedConversations,
+      remainingConversations: info.remainingConversations,
+      dirtyInBatch: info.dirtyInBatch,
+      payloadCount: info.payloadCount,
+      skippedConversations: info.skippedConversations,
+      dirtyConversationIds: info.dirtyConversationIds.slice(0, 10),
+      payloadConversationIds: info.payloadConversationIds.slice(0, 10),
     });
   }
 
-  pushConversation(
-    sinkId: string,
-    conversationId: string,
-    ok: boolean,
-    error?: string,
-  ): void {
+  pushSample(info: {
+    sinkId: string;
+    reason: DiagnosticPushReason;
+    batchIndex: number;
+    batchCount: number;
+    totalDirtyConversations: number;
+    selectedConversations: number;
+    remainingConversations: number;
+    inFlightConversations: number;
+    elapsedMs: number;
+    payloadConversationIds: string[];
+  }): void {
     this.emit({
-      event: ok ? "push:ok" : "push:fail",
-      sinkId,
-      conversationId,
-      ...(error ? { error: error.slice(0, 200) } : {}),
+      event: "push:sample",
+      sinkId: info.sinkId,
+      reason: info.reason,
+      batchIndex: info.batchIndex,
+      batchCount: info.batchCount,
+      totalDirtyConversations: info.totalDirtyConversations,
+      selectedConversations: info.selectedConversations,
+      remainingConversations: info.remainingConversations,
+      inFlightConversations: info.inFlightConversations,
+      elapsedMs: Math.round(info.elapsedMs),
+      payloadConversationIds: info.payloadConversationIds.slice(0, 10),
+    });
+  }
+
+  pushConversation(info: {
+    sinkId: string;
+    reason: DiagnosticPushReason;
+    conversationId: string;
+    attemptedRevision: number;
+    batchIndex: number;
+    totalDirtyConversations: number;
+    selectedConversations: number;
+    ok: boolean;
+    error?: string;
+  }): void {
+    this.emit({
+      event: info.ok ? "push:ok" : "push:fail",
+      sinkId: info.sinkId,
+      reason: info.reason,
+      conversationId: info.conversationId,
+      attemptedRevision: info.attemptedRevision,
+      batchIndex: info.batchIndex,
+      totalDirtyConversations: info.totalDirtyConversations,
+      selectedConversations: info.selectedConversations,
+      ...(info.error ? { error: info.error.slice(0, 200) } : {}),
+    });
+  }
+
+  pushSinkResult(info: {
+    sinkId: string;
+    reason: DiagnosticPushReason;
+    dirtyConversations: number;
+    staleConversations: number;
+    pushed: number;
+    failed: number;
+    skippedConversations: number;
+    durationMs: number;
+  }): void {
+    this.emit({
+      event: "push:sink-result",
+      sinkId: info.sinkId,
+      reason: info.reason,
+      dirtyConversations: info.dirtyConversations,
+      staleConversations: info.staleConversations,
+      pushed: info.pushed,
+      failed: info.failed,
+      skippedConversations: info.skippedConversations,
+      durationMs: Math.round(info.durationMs),
     });
   }
 
@@ -277,9 +383,11 @@ export class DiagnosticLogger {
     summary: PushSummary,
     durationMs: number,
     sinkBreakdown?: { sinkId: string; pushed: number; failed: number }[],
+    reason: DiagnosticPushReason = "scheduled",
   ): void {
     this.emit({
       event: "push:result",
+      reason,
       sinkAttempts: summary.sinkAttempts,
       pushed: summary.pushedConversations,
       failed: summary.failedConversations,

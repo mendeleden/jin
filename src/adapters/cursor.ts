@@ -206,8 +206,8 @@ export class CursorAdapter implements V2Adapter {
       sources.push({
         sourcePath: this.globalStorageDbPath,
         sourceKind: "sqlite-layer1",
-        sizeBytes: layer1Stat?.size ?? 0,
-        mtimeMs: layer1Stat?.mtimeMs ?? 0,
+        sizeBytes: Number(layer1Stat?.size ?? 0),
+        mtimeMs: Number(layer1Stat?.mtimeMs ?? 0),
         signature: stableJson({
           signatures: Array.from(this.layer1Signatures.entries()).sort(sortMapEntries),
           parents: Array.from(this.layer1ParentByChild.entries()).sort(sortMapEntries),
@@ -226,8 +226,8 @@ export class CursorAdapter implements V2Adapter {
       sources.push({
         sourcePath,
         sourceKind: "sqlite-layer3",
-        sizeBytes: stat?.size ?? 0,
-        mtimeMs: stat?.mtimeMs ?? 0,
+        sizeBytes: Number(stat?.size ?? 0),
+        mtimeMs: Number(stat?.mtimeMs ?? 0),
         signature,
         payload: {},
       });

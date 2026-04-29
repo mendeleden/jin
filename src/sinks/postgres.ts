@@ -567,7 +567,7 @@ function quoteIdentifier(identifier: string): string {
 }
 
 function readOptionalString(config: PostgresSinkConfig, key: string): string | undefined {
-  const value = (config as Record<string, unknown>)[key];
+  const value = (config as unknown as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
@@ -594,7 +594,7 @@ function parseSchemaVersion(value: unknown): SchemaVersion | null {
 function isLegacyPayloadArray(
   payloads: LegacyPushPayload[] | SnapshotPushPayload[],
 ): payloads is LegacyPushPayload[] {
-  const first = payloads[0] as Record<string, unknown> | undefined;
+  const first = payloads[0] as unknown as Record<string, unknown> | undefined;
   return !!first && "session" in first;
 }
 

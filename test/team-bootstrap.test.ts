@@ -178,14 +178,27 @@ describe("jin team schema apply", () => {
 
     const output = console_.logs.join("\n");
     expect(output).toContain("dry run");
-    expect(output).toContain("CREATE TABLE IF NOT EXISTS jin_meta");
-    expect(output).toContain("CREATE TABLE IF NOT EXISTS jin_conversations");
-    expect(output).toContain("CREATE TABLE IF NOT EXISTS jin_messages");
-    expect(output).toContain("CREATE TABLE IF NOT EXISTS jin_tool_calls");
+    expect(output).toContain('CREATE TABLE IF NOT EXISTS "public"."jin_meta"');
+    expect(output).toContain('CREATE TABLE IF NOT EXISTS "public"."jin_conversations"');
+    expect(output).toContain('CREATE TABLE IF NOT EXISTS "public"."jin_messages"');
+    expect(output).toContain('CREATE TABLE IF NOT EXISTS "public"."jin_tool_calls"');
     expect(output).toContain("schema_version");
     // connection string should be masked
     expect(output).toContain("***@");
     expect(output).not.toContain("user:pass");
+  });
+
+  test("dry-run can target a non-public schema", async () => {
+    await schemaApplyCommand({
+      connectionString: "postgres://user:pass@host/db",
+      schema: "analytics",
+      dryRun: true,
+    });
+
+    const output = console_.logs.join("\n");
+    expect(output).toContain("-- Schema: analytics");
+    expect(output).toContain('CREATE SCHEMA IF NOT EXISTS "analytics";');
+    expect(output).toContain('CREATE TABLE IF NOT EXISTS "analytics"."jin_conversations"');
   });
 
   test("DDL includes all ontology-required tables and indexes", () => {
@@ -215,12 +228,12 @@ describe("jin team schema apply", () => {
 
   test("schema version stamp is emitted after table repair DDL", () => {
     const ddl = getIntegrationDDL();
-    const schemaStampIndex = ddl.indexOf("INSERT INTO jin_meta (key, value)");
+    const schemaStampIndex = ddl.indexOf('INSERT INTO "public"."jin_meta" (key, value)');
     const conversationRepairIndex = ddl.indexOf(
-      "ALTER TABLE jin_conversations\n  ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT '';",
+      'ALTER TABLE "public"."jin_conversations"\n  ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT \'\';',
     );
     const toolCallRepairIndex = ddl.indexOf(
-      "ALTER TABLE public.jin_tool_calls\n      ADD CONSTRAINT jin_tool_calls_pkey",
+      'EXECUTE \'ALTER TABLE "public"."jin_tool_calls" ADD CONSTRAINT jin_tool_calls_pkey PRIMARY KEY (conversation_id, message_id, id)\'',
     );
 
     expect(schemaStampIndex).toBeGreaterThan(conversationRepairIndex);
@@ -261,6 +274,13 @@ describe("jin team schema check", () => {
 
     const output = console_.logs.join("\n");
     expect(output).toContain("jin team schema check");
+  });
+
+  test("help documents the schema override", async () => {
+    await schemaCheckCommand({});
+
+    const output = console_.logs.join("\n");
+    expect(output).toContain("--schema=analytics");
   });
 });
 

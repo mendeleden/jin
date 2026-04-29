@@ -3,11 +3,16 @@ import { SQL } from "bun";
 import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import type { Conversation, Message, ToolCall } from "../src/contracts/conversations";
+import type { PushPayload } from "../src/contracts/sinks";
+import { PostgresSink } from "../src/sinks/postgres";
 
 const REPO_ROOT = join(import.meta.dir, "..");
 const PG_CONN = "postgresql://jin_test:jin_test@localhost:5444/jin_test";
 const BRIDGE_NAME = "team-local-postgres";
 const REMOTE = "https://github.com/testuser/testapp.git";
+const TEAM_ID = "team-local";
+const USER_ID = "user-local";
 
 const tempHomes: string[] = [];
 let pg: SQL;
@@ -50,7 +55,7 @@ describe("persona local Postgres bootstrap", () => {
       process.env,
     );
     expect(after.exitCode).toBe(0);
-    expect(after.output).toContain("Remote: v2.4 (compatible)");
+    expect(after.output).toContain("Remote: v2.5 (compatible)");
 
     const tables = await pg.unsafe(
       `SELECT table_name
@@ -97,6 +102,8 @@ describe("persona local Postgres bootstrap", () => {
       type: "postgres",
       id: BRIDGE_NAME,
       connectionString: PG_CONN,
+      teamId: TEAM_ID,
+      userId: USER_ID,
     });
   });
 
@@ -130,6 +137,8 @@ describe("persona local Postgres bootstrap", () => {
         id: BRIDGE_NAME,
         type: "postgres",
         connectionString: PG_CONN,
+        teamId: TEAM_ID,
+        userId: USER_ID,
       }),
     );
     expect(config.routes).toContainEqual({
@@ -141,6 +150,44 @@ describe("persona local Postgres bootstrap", () => {
     expect(connections.exitCode).toBe(0);
     expect(connections.output).toContain("remote=github.com/testuser/testapp");
     expect(connections.output).toContain("team-local-postgres (postgres)");
+  });
+
+  test("postgres sink writes configured team_id and user_id to the local integration database", async () => {
+    const apply = runCli(
+      ["team", "schema", "apply", `--connection-string=${PG_CONN}`],
+      process.env,
+    );
+    expect(apply.exitCode).toBe(0);
+
+    const sink = new PostgresSink({
+      type: "postgres",
+      id: BRIDGE_NAME,
+      enabled: true,
+      connectionString: PG_CONN,
+      teamId: TEAM_ID,
+      userId: USER_ID,
+    });
+
+    const result = await sink.push([makePayload("conv-identity")]);
+    await sink.close();
+
+    expect(result).toEqual({
+      pushed: 1,
+      failed: 0,
+      errors: [],
+    });
+
+    const rows = await pg.unsafe(
+      `SELECT team_id, user_id
+         FROM public.jin_conversations
+        WHERE id = 'conv-identity'`,
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        team_id: TEAM_ID,
+        user_id: USER_ID,
+      }),
+    ]);
   });
 });
 
@@ -158,6 +205,8 @@ function createBridgeCode(): string {
       "--type=postgres",
       `--connection-string=${PG_CONN}`,
       `--name=${BRIDGE_NAME}`,
+      `--team-id=${TEAM_ID}`,
+      `--user-id=${USER_ID}`,
     ],
     process.env,
   );
@@ -212,4 +261,85 @@ async function resetPostgres(): Promise<void> {
   await pg.unsafe(`DROP TABLE IF EXISTS public.jin_messages CASCADE`);
   await pg.unsafe(`DROP TABLE IF EXISTS public.jin_conversations CASCADE`);
   await pg.unsafe(`DROP TABLE IF EXISTS public.jin_meta CASCADE`);
+}
+
+function makePayload(conversationId: string): PushPayload {
+  const conversation: Conversation = {
+    id: conversationId,
+    traceId: `trace-${conversationId}`,
+    parentId: "",
+    relationship: "root",
+    forkPoint: -1,
+    adapterId: "claude-code",
+    name: "Identity Verification",
+    cwd: "/tmp",
+    gitRemote: "github.com/testuser/testapp",
+    branch: "main",
+    model: "claude",
+    startedAt: "2026-04-28T10:00:00.000Z",
+    endedAt: "2026-04-28T10:01:00.000Z",
+    sourcePath: "/tmp/source.jsonl",
+    sourceFormat: "jsonl",
+    durationMs: 60_000,
+    messageCount: 2,
+    toolCount: 0,
+    turnCount: 1,
+    inputTokens: 12,
+    outputTokens: 34,
+    cacheRead: 0,
+    cacheWrite: 0,
+    estCost: 0.12,
+  };
+
+  const messages: Message[] = [
+    {
+      id: `${conversationId}-m1`,
+      conversationId,
+      parentMessageId: "",
+      role: "user",
+      content: "hello",
+      recordType: "user",
+      model: "",
+      sequence: 0,
+      turn: 0,
+      isSidechain: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      thinkingContent: "",
+      thinkingTokens: 0,
+      timestamp: "2026-04-28T10:00:00.000Z",
+      toolUses: [],
+    },
+    {
+      id: `${conversationId}-m2`,
+      conversationId,
+      parentMessageId: `${conversationId}-m1`,
+      role: "assistant",
+      content: "world",
+      recordType: "assistant",
+      model: "claude",
+      sequence: 1,
+      turn: 0,
+      isSidechain: false,
+      inputTokens: 12,
+      outputTokens: 34,
+      cacheRead: 0,
+      cacheWrite: 0,
+      thinkingContent: "",
+      thinkingTokens: 0,
+      timestamp: "2026-04-28T10:00:30.000Z",
+      toolUses: [],
+    },
+  ];
+
+  const toolCalls: ToolCall[] = [];
+
+  return {
+    attemptedRevision: 1,
+    conversation,
+    messages,
+    toolCalls,
+  };
 }

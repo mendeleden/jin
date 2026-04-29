@@ -2,12 +2,11 @@
 // Reuses matchesRoute() from routing.ts and project detection from tagger.ts.
 
 import { execSync } from "child_process";
-import type { JinConfig } from "./config";
-import type { SinkConfig } from "./sinks/types";
+import type { JinConfig, PostgresSinkConfig } from "./config";
 import { matchesRoute } from "./routing";
 
 export interface ResolvedSink {
-  sinkConfig: SinkConfig;
+  sinkConfig: PostgresSinkConfig;
   sinkId: string;
   sinkName: string;
 }
@@ -46,18 +45,11 @@ export function resolveSinksForCwd(cwd: string, config: JinConfig): ResolvedSink
   for (const route of config.routes) {
     if (matchesRoute(route.match, projectInfo)) {
       return route.sinks
-        .map((sinkId) => {
-          const sinkConfig = config.sinks.find(
-            (s) => (s.id || `${s.type}-0`) === sinkId
-          );
-          if (!sinkConfig || sinkConfig.type !== "postgres") return null;
-          return {
-            sinkConfig,
-            sinkId: sinkConfig.id || `${sinkConfig.type}-0`,
-            sinkName: sinkConfig.name || sinkConfig.id || "postgres",
-          };
-        })
-        .filter((s): s is ResolvedSink => s !== null);
+        .flatMap((sinkId) => {
+          const sinkConfig = findPostgresSinkConfig(sinkId, config);
+          if (!sinkConfig) return [];
+          return [toResolvedSink(sinkConfig)];
+        });
     }
   }
 
@@ -65,18 +57,11 @@ export function resolveSinksForCwd(cwd: string, config: JinConfig): ResolvedSink
   const defaults = config.defaultSinks || [];
   if (defaults.length > 0) {
     return defaults
-      .map((sinkId) => {
-        const sinkConfig = config.sinks.find(
-          (s) => (s.id || `${s.type}-0`) === sinkId
-        );
-        if (!sinkConfig || sinkConfig.type !== "postgres") return null;
-        return {
-          sinkConfig,
-          sinkId: sinkConfig.id || `${sinkConfig.type}-0`,
-          sinkName: sinkConfig.name || sinkConfig.id || "postgres",
-        };
-      })
-      .filter((s): s is ResolvedSink => s !== null);
+      .flatMap((sinkId) => {
+        const sinkConfig = findPostgresSinkConfig(sinkId, config);
+        if (!sinkConfig) return [];
+        return [toResolvedSink(sinkConfig)];
+      });
   }
 
   return [];
@@ -84,24 +69,32 @@ export function resolveSinksForCwd(cwd: string, config: JinConfig): ResolvedSink
 
 /** Find a specific Postgres sink by ID */
 export function findSinkById(sinkId: string, config: JinConfig): ResolvedSink | null {
-  const sinkConfig = config.sinks.find(
-    (s) => (s.id || `${s.type}-0`) === sinkId
-  );
-  if (!sinkConfig || sinkConfig.type !== "postgres") return null;
-  return {
-    sinkConfig,
-    sinkId: sinkConfig.id || `${sinkConfig.type}-0`,
-    sinkName: sinkConfig.name || sinkConfig.id || "postgres",
-  };
+  const sinkConfig = findPostgresSinkConfig(sinkId, config);
+  return sinkConfig ? toResolvedSink(sinkConfig) : null;
 }
 
 /** Get all Postgres sinks from config */
 export function allPostgresSinks(config: JinConfig): ResolvedSink[] {
   return config.sinks
-    .filter((s) => s.type === "postgres")
-    .map((sinkConfig) => ({
-      sinkConfig,
-      sinkId: sinkConfig.id || `${sinkConfig.type}-0`,
-      sinkName: sinkConfig.name || sinkConfig.id || "postgres",
-    }));
+    .flatMap((sinkConfig) =>
+      sinkConfig.type === "postgres" ? [toResolvedSink(sinkConfig)] : [],
+    );
+}
+
+function findPostgresSinkConfig(
+  sinkId: string,
+  config: JinConfig,
+): PostgresSinkConfig | null {
+  const sinkConfig = config.sinks.find(
+    (s) => (s.id || `${s.type}-0`) === sinkId,
+  );
+  return sinkConfig?.type === "postgres" ? sinkConfig : null;
+}
+
+function toResolvedSink(sinkConfig: PostgresSinkConfig): ResolvedSink {
+  return {
+    sinkConfig,
+    sinkId: sinkConfig.id || `${sinkConfig.type}-0`,
+    sinkName: sinkConfig.name || sinkConfig.id || "postgres",
+  };
 }

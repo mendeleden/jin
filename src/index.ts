@@ -239,11 +239,13 @@ const COMMAND_HELP: Record<string, string> = {
     jin sink remove <id> [--yes]
     jin sink disable <id>
     jin sink enable <id>
+    jin sink repush <id>
 
   EXAMPLES
     $ jin sink add postgres --connection-string=postgres://... --id=team-postgres --team-id=jin-team --user-id=eden
     $ jin sink add webhook --url=https://example.com/jin --id=analytics --user-id=eden
     $ jin sink disable team-postgres
+    $ jin sink repush team-postgres
 `,
   route: `
   Manage low-level routing rules for local conversations
@@ -311,6 +313,7 @@ function usage(): void {
     sink add <type> ...                  Add an integration destination
     sink remove <id>                     Remove a destination
     sink disable|enable <id>             Durable destination control
+    sink repush <id>                     Reset one sink's delivery state and backfill
     route add ... --sink=<id>            Add routing rules
     route remove ...                     Remove routing rules
 
@@ -466,6 +469,7 @@ async function main(): Promise<void> {
         sinkRemoveCommand,
         sinkDisableCommand,
         sinkEnableCommand,
+        sinkRepushCommand,
       } = await import("./commands/sink");
       const action = args[1];
       const sinkId = args[2];
@@ -524,6 +528,13 @@ async function main(): Promise<void> {
             process.exit(1);
           }
           await sinkEnableCommand(sinkId);
+          break;
+        case "repush":
+          if (!sinkId || sinkId.startsWith("--")) {
+            console.error("Usage: jin sink repush <sink-id>");
+            process.exit(1);
+          }
+          await sinkRepushCommand(sinkId);
           break;
         default:
           console.error(`Unknown sink action: ${action || "(missing)"}`);
@@ -667,6 +678,7 @@ async function main(): Promise<void> {
               await schemaApplyCommand({
                 connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
                 dryRun: !!schemaFlags["dry-run"] || !!schemaFlags.dryRun,
+                schema: (schemaFlags.schema as string | undefined),
               });
               break;
             }
@@ -674,6 +686,7 @@ async function main(): Promise<void> {
               const { schemaCheckCommand } = await import("./commands/schema");
               await schemaCheckCommand({
                 connectionString: (schemaFlags["connection-string"] || schemaFlags.connectionString) as string | undefined,
+                schema: (schemaFlags.schema as string | undefined),
               });
               break;
             }
@@ -687,8 +700,8 @@ async function main(): Promise<void> {
   jin team schema — operator escape hatch for Postgres integrations
 
   USAGE
-    jin team schema apply --connection-string="postgres://..."  [--dry-run]
-    jin team schema check --connection-string="postgres://..."
+    jin team schema apply --connection-string="postgres://..."  [--schema=name] [--dry-run]
+    jin team schema check --connection-string="postgres://..."  [--schema=name]
     jin team schema version
 `);
               break;
