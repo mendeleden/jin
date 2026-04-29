@@ -303,11 +303,20 @@ async function windowsInstall(): Promise<void> {
   const binPath = getJinBinaryPath();
   console.log(`  Binary: ${binPath}`);
 
+  // Register a per-user task so installation doesn't require admin rights.
+  // - whoami: full DOMAIN\user (or COMPUTERNAME\user) identity for the principal
+  // - trigger -User: only fires on this user's logon, not at any logon
+  // - principal LogonType=Interactive + RunLevel=Limited: runs unelevated as
+  //   the current user; no stored password, no UAC.
+  // - Register -Force: idempotent re-install overwrites a prior registration.
   const ps = [
+    `$ErrorActionPreference = 'Stop'`,
+    `$me = (whoami)`,
     `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument 'start --foreground'`,
-    `$trigger = New-ScheduledTaskTrigger -AtLogOn`,
+    `$trigger = New-ScheduledTaskTrigger -AtLogOn -User $me`,
+    `$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited`,
     `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
-    `Register-ScheduledTask -TaskName 'jin' -Action $action -Trigger $trigger -Settings $settings -Description 'jin conversation data pipeline'`,
+    `Register-ScheduledTask -TaskName 'jin' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'jin conversation data pipeline' -Force | Out-Null`,
     `Start-ScheduledTask -TaskName 'jin'`,
   ].join("; ");
 
@@ -319,7 +328,10 @@ async function windowsInstall(): Promise<void> {
   if (result.exitCode === 0) {
     console.log(`  Task registered. jin will start at logon and restart on failure.`);
   } else {
-    console.log(`  Failed to register task. Try running as administrator.`);
+    console.log(`  Failed to register task.`);
+    console.log(`  jin registers a per-user task and should not require administrator rights.`);
+    console.log(`  If the error mentions a Group Policy restriction on Task Scheduler,`);
+    console.log(`  ask your admin to allow user-scheduled tasks for your account.`);
   }
 }
 
