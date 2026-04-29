@@ -6,7 +6,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ConversationBundle } from "../src/contracts/conversations";
@@ -17,6 +17,7 @@ import {
   createFakeSink,
   mockProcessExit,
   readTestConfig,
+  removeDirWithRetry,
   writeTestConfig,
 } from "./helpers";
 
@@ -135,7 +136,7 @@ afterEach(() => {
   console_.restore();
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
-  rmSync(tempDir, { recursive: true, force: true });
+  removeDirWithRetry(tempDir);
 });
 
 describe("config mutation and control commands", () => {

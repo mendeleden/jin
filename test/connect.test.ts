@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { defaultConfig } from "../src/config";
@@ -13,6 +13,7 @@ import {
   readTestConfig,
   writeTestConfig,
   ExitError,
+  removeDirWithRetry,
 } from "./helpers";
 
 let fakeSink = createFakeSink();
@@ -75,7 +76,7 @@ afterEach(() => {
   console_.restore();
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
-  rmSync(tempDir, { recursive: true, force: true });
+  removeDirWithRetry(tempDir);
 });
 
 describe("jin connect", () => {
