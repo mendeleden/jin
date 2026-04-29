@@ -45,8 +45,17 @@ export async function runPipeline(
 ): Promise<PipelineHandle> {
   const logger = options.logger ?? NOOP_LOGGER;
   let activeAdapters = await resolveAdapters(options.adapterSource);
-
   const queue = new WorkQueue();
+  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
+  const diag = options.diagnosticLogPath
+    ? new DiagnosticLogger({
+        path: options.diagnosticLogPath,
+        getRssBytes,
+        getQueueSize: () => queue.size,
+        getQueueSnapshot: () => queue.snapshot(),
+      })
+    : null;
+
   const watcher = new WatcherController({
     debounceMs: options.watchDebounceMs ?? DEFAULT_WATCH_DEBOUNCE_MS,
     onChange: (event) => {
@@ -93,7 +102,6 @@ export async function runPipeline(
     options.rssHardLimitBytes,
     DEFAULT_RSS_HARD_LIMIT_BYTES,
   );
-  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
 
   let currentWork: PipelineWorkItem | null = null;
   let stopping = false;
@@ -103,15 +111,6 @@ export async function runPipeline(
   let handedOffWorkItems = 0;
   const idleResolvers: Array<() => void> = [];
   let rssWarningActive = false;
-
-  const diag = options.diagnosticLogPath
-    ? new DiagnosticLogger({
-        path: options.diagnosticLogPath,
-        getRssBytes,
-        getQueueSize: () => queue.size,
-        getQueueSnapshot: () => queue.snapshot(),
-      })
-    : null;
 
   const scanIntervalMs =
     options.scanIntervalMs === undefined
