@@ -304,7 +304,6 @@ cpSync(
 console.log("  Gemini CLI: 1 fixture session");
 
 const totalExpectedSessions = 1 + SYNTHETIC_SESSIONS + 1 + 1; // cc fixture + synth + codex + gemini
-const expectedBootstrapAdapters = ["claude-code", "codex", "gemini-cli"] as const;
 
 // ─── Phase 2: jin start --foreground (bootstrap + daemon lifecycle) ─────
 
@@ -339,21 +338,7 @@ for (let i = 0; i < maxWaitMs / 1000; i++) {
     continue;
   }
 
-  const adapters = Array.isArray(bootstrapStatus.adapters)
-    ? bootstrapStatus.adapters
-    : [];
-  const adapterIds = adapters.map((entry: any) =>
-    typeof entry === "string" ? entry : entry.id,
-  );
-  const hasExpectedAdapters = expectedBootstrapAdapters.every((adapterId) =>
-    adapterIds.includes(adapterId),
-  );
-
-  if (
-    (bootstrapStatus.sessions || 0) > 0 &&
-    (bootstrapStatus.messages || 0) > 0 &&
-    hasExpectedAdapters
-  ) {
+  if ((bootstrapStatus.sessions || 0) > 0 && (bootstrapStatus.messages || 0) > 0) {
     bootstrapComplete = true;
     break;
   }
@@ -368,6 +353,18 @@ if (!bootstrapComplete) {
 
 assert("daemon starts and completes bootstrap ingest", bootstrapComplete,
   `detail: ${bootstrapFailureDetail.slice(-500)}`);
+
+// First-data signal only proves the first adapter finished. Wait for the
+// ingest queue to drain so codex/gemini-cli land before adapter assertions.
+if (bootstrapComplete) {
+  await waitForDeferredWatcherStartup(jinConfigDir);
+  const drainedStatus = await run(["status", "--json"], jinEnv);
+  if (drainedStatus.exitCode === 0) {
+    try {
+      bootstrapStatus = JSON.parse(drainedStatus.stdout);
+    } catch {}
+  }
+}
 
 assert("config file created", existsSync(join(jinConfigDir, "config.json")));
 assert("store.db created", existsSync(join(jinConfigDir, "store.db")));
