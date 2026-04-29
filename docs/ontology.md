@@ -543,10 +543,14 @@ The Postgres schema mirrors SQLite with Postgres-native types:
 | `INTEGER` for booleans | `BOOLEAN` |
 | `REAL` for cost | `DOUBLE PRECISION` |
 
-Additional Postgres-only columns (added by the schema owner, not jin):
+Additional Postgres-only columns:
 - `team_id TEXT` — team identifier for multi-tenant scoping
-- `developer_id TEXT` — developer identifier
+- `user_id TEXT` — export-side user identifier
 - `content_tsv tsvector` — auto-populated FTS column on messages
+
+`content_tsv` is schema-owner populated. `team_id` and `user_id` are
+integration metadata columns that Jin may write when the sink is configured
+with those values.
 
 ### 7.3 Removed from v1
 

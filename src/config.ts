@@ -58,7 +58,7 @@ export interface AdapterConfig extends ContractAdapterConfig {
 
 export interface TeamConfig {
   teamId: string;
-  developerId?: string;
+  userId?: string;
   syncMode?: "realtime" | "periodic" | "manual";
   syncIntervalMs?: number;
 }
@@ -85,6 +85,7 @@ export interface SinkConfigBase extends Omit<ContractSinkConfigBase, "enabled"> 
   enabled?: boolean;
   name?: string;
   teamId?: string;
+  userId?: string;
 }
 
 export interface PostgresSinkConfig extends SinkConfigBase {
@@ -188,6 +189,10 @@ export function configPath(): string {
   return join(configDir(), "config.json");
 }
 
+export function discoveryCachePath(): string {
+  return join(configDir(), "discovery-cache.db");
+}
+
 export function defaultConfig(): JinConfig {
   return {
     adapters: defaultAdapters(),
@@ -229,6 +234,25 @@ export async function loadConfig(): Promise<JinConfig> {
 
   const raw = await Bun.file(cfgPath).text();
   return normalizeConfig(JSON.parse(raw));
+}
+
+export async function loadStartupConfig(): Promise<JinConfig> {
+  ensureConfigDir();
+  const cfgPath = configPath();
+  if (!existsSync(cfgPath)) {
+    const config = defaultConfig();
+    await saveConfig(config);
+    return config;
+  }
+
+  const rawText = await Bun.file(cfgPath).text();
+  const raw = JSON.parse(rawText);
+  const materialized = materializeConfigShape(raw);
+  if (materialized.changed) {
+    await Bun.write(cfgPath, JSON.stringify(materialized.value, null, 2));
+  }
+
+  return normalizeConfig(materialized.value);
 }
 
 export async function saveConfig(config: JinConfig): Promise<void> {
@@ -328,6 +352,12 @@ function normalizeSinkConfig(raw: unknown): SinkConfig | null {
     id,
     type,
     enabled: asBoolean(raw.enabled) ?? true,
+    ...(asNonEmptyString(raw.teamId)
+      ? { teamId: asNonEmptyString(raw.teamId) }
+      : {}),
+    ...(resolveSinkUserId(raw)
+      ? { userId: resolveSinkUserId(raw) }
+      : {}),
   };
 
   switch (type) {
@@ -457,10 +487,106 @@ function normalizeWatchConfig(raw: unknown, fallback: WatchConfig): WatchConfig 
     return { ...fallback };
   }
 
+  const debounceMs = asPositiveInteger(raw.debounceMs);
   return {
     pollIntervalMs:
       asPositiveInteger(raw.pollIntervalMs) ?? fallback.pollIntervalMs,
+    ...(debounceMs !== undefined ? { debounceMs } : {}),
   };
+}
+
+function resolveSinkUserId(raw: Record<string, unknown>): string | undefined {
+  return asNonEmptyString(raw.userId);
+}
+
+function materializeConfigShape(raw: unknown): {
+  value: JinConfig | Record<string, unknown>;
+  changed: boolean;
+} {
+  const base = defaultConfig();
+  if (!isRecord(raw)) {
+    return { value: base, changed: true };
+  }
+
+  const next: Record<string, unknown> = structuredClone(raw);
+  let changed = false;
+
+  const materializedAdapters = materializeAdaptersSection(next.adapters, base.adapters);
+  if (materializedAdapters.changed) {
+    next.adapters = materializedAdapters.value;
+    changed = true;
+  }
+
+  if (!Array.isArray(next.sinks)) {
+    next.sinks = [];
+    changed = true;
+  }
+
+  if (!Array.isArray(next.routes)) {
+    next.routes = [];
+    changed = true;
+  }
+
+  const materializedWatch = materializeWatchSection(next.watch, base.watch);
+  if (materializedWatch.changed) {
+    next.watch = materializedWatch.value;
+    changed = true;
+  }
+
+  return { value: next, changed };
+}
+
+function materializeAdaptersSection(
+  raw: unknown,
+  fallback: Record<string, AdapterConfig>,
+): {
+  value: Record<string, unknown>;
+  changed: boolean;
+} {
+  const next = isRecord(raw) ? structuredClone(raw) : {};
+  let changed = !isRecord(raw);
+
+  for (const [adapterId, defaultAdapter] of Object.entries(fallback)) {
+    const existing = next[adapterId];
+    if (!isRecord(existing)) {
+      next[adapterId] = { ...defaultAdapter };
+      changed = true;
+      continue;
+    }
+
+    const merged = { ...defaultAdapter, ...existing };
+    if (JSON.stringify(existing) !== JSON.stringify(merged)) {
+      next[adapterId] = merged;
+      changed = true;
+    }
+  }
+
+  return { value: next, changed };
+}
+
+function materializeWatchSection(
+  raw: unknown,
+  fallback: WatchConfig,
+): {
+  value: Record<string, unknown>;
+  changed: boolean;
+} {
+  if (!isRecord(raw)) {
+    return {
+      value: { ...fallback },
+      changed: true,
+    };
+  }
+
+  const next = structuredClone(raw);
+  let changed = false;
+
+  if (asPositiveInteger(next.pollIntervalMs) === undefined) {
+    next.pollIntervalMs = fallback.pollIntervalMs;
+    changed = true;
+  }
+
+  return { value: next, changed };
 }
 
 function normalizeStringRecord(

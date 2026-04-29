@@ -1,0 +1,107 @@
+%% First-class Mermaid source for docs/worker-ingest-flow-guide.md
+flowchart TD
+    CLI["CLI entry
+src/index.ts:340-389
+`jin start --foreground`
+`jin start --service`"]
+
+    CLI -->|--service| SERVICE_INSTALL["Install OS service
+src/commands/start.ts:24-50"]
+    SERVICE_INSTALL --> SERVICE_LAUNCH["Service launches
+`start --foreground`
+src/commands/service.ts:61-67
+src/commands/service.ts:167-172"]
+
+    CLI -->|--foreground| WATCH["watchCommand()
+src/commands/watch.ts:22-120"]
+    SERVICE_LAUNCH --> WATCH
+
+    WATCH --> SNAPSHOT["Load runtime config once
+detect adapters
+open store
+src/commands/watch.ts:65-120"]
+    SNAPSHOT --> PIPELINE["runPipeline(...)
+manual startup enqueue
+src/commands/watch.ts:136-166"]
+    PIPELINE --> INGEST_ONE["ingestOne(...)
+src/pipeline/ingest.ts:45-190"]
+    INGEST_ONE --> FIND_CHANGED["adapter.findChanged(hint)
+src/pipeline/ingest.ts:67-78"]
+    FIND_CHANGED --> WORKER_DECISION{"Heavy adapter?
+`claude-code` / `codex`
+and non-`fs-change`
+src/pipeline/ingest.ts:260-285"}
+
+    WORKER_DECISION -->|no| INLINE_LOAD["Inline load
+adapter.loadConversation(ref)
+src/pipeline/ingest.ts:136-148"]
+    INLINE_LOAD --> INLINE_WRITE["store.writeBundle(bundle)
+src/pipeline/ingest.ts:154-158
+src/db/bundle.ts:44-59"]
+
+    WORKER_DECISION -->|yes| WORKER_PARENT["Parent worker helper
+ingestConversationViaWorker(...)
+src/pipeline/ingest-worker.ts:218-477"]
+    WORKER_PARENT --> SPAWN["Spawn subprocess
+`Bun.spawn([...,'__worker'])`
+src/pipeline/ingest-worker.ts:241-246"]
+    SPAWN --> WORKER_ENTRY["Hidden worker entrypoint
+`__worker`
+src/index.ts:385-388"]
+    WORKER_ENTRY --> WORKER_SERVER["runWorkerServerCommand()
+src/pipeline/ingest-worker.ts:106-181"]
+
+    WORKER_PARENT --> INIT_REQ["JSON-RPC initialize
++ loadConversation request
+src/pipeline/ingest-worker.ts:349-372"]
+    INIT_REQ --> WORKER_SERVER
+    WORKER_SERVER --> PARSE_REQ["Parse worker request
+adapter snapshot + ref
+src/pipeline/ingest-worker.ts:557-629"]
+    PARSE_REQ --> CREATE_ADAPTER["createAdapter(snapshot)
+src/pipeline/ingest-worker.ts:488-501
+src/adapters/registry.ts:154-170"]
+    CREATE_ADAPTER --> CHILD_LOAD["Child load
+adapter.loadConversation(ref)
+src/pipeline/ingest-worker.ts:515"]
+    CHILD_LOAD --> CHILD_NOTIFY["JSON-RPC notifications
+started / sample / conversation / message
+src/pipeline/ingest-worker.ts:499-555"]
+
+    CHILD_NOTIFY --> PARENT_STREAM["Parent reads JSON-RPC stream
+src/pipeline/ingest-worker.ts:258-341
+src/pipeline/ingest-worker.ts:683-773"]
+    PARENT_STREAM --> BEGIN_WRITE["store.beginWrite(conversation)
+src/pipeline/ingest-worker.ts:310-319"]
+    BEGIN_WRITE --> APPEND_MSG["session.appendMessage(message)
+src/pipeline/ingest-worker.ts:321-332"]
+    CHILD_NOTIFY --> FINAL_RPC["Final worker result
+`{ kind, bundleHash, messageCount }`
+src/pipeline/ingest-worker.ts:550-555"]
+    FINAL_RPC --> FINISH_WRITE["session.finish(bundleHash)
+src/pipeline/ingest-worker.ts:413-418"]
+
+    INLINE_WRITE --> STORE_ENGINE["Canonical store engine
+src/db/write-session.ts"]
+    FINISH_WRITE --> STORE_ENGINE
+
+    subgraph STORE_DETAILS["Disk-backed parent write session"]
+        STORE_BEGIN["beginWrite(conversation)
+creates `_jin_stage_sessions`
+src/db/write-session.ts:39-77"]
+        STORE_APPEND["appendMessage(message)
+writes `_jin_stage_messages`
+and `_jin_stage_tool_calls`
+src/db/write-session.ts:89-181"]
+        STORE_FINISH["finish(bundleHash)
+promotes staged rows into
+canonical tables atomically
+src/db/write-session.ts:183-287"]
+        STORE_ABORT["abort()
+deletes staged rows by `session_id`
+src/db/write-session.ts:199-209"]
+        STORE_BEGIN --> STORE_APPEND --> STORE_FINISH
+        STORE_BEGIN --> STORE_ABORT
+    end
+
+    STORE_ENGINE --> STORE_BEGIN

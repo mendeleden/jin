@@ -4,6 +4,7 @@
 
 - Runtime: Bun. Use `bun`, not `npm` or `node`.
 - For v2 work, treat `docs/ontology.md` and `docs/blueprint/` as source of truth.
+- If a fix needs behavior that conflicts with a frozen blueprint or contract, stop and surface the drift explicitly before implementing it. Do not hide contract extensions behind duck-typed hooks or packet-local shortcuts.
 - Do not add standalone `.mmd` copies of Mermaid diagrams unless they are generated from a current source-of-truth doc or explicitly owned as first-class artifacts.
 - Prefer small, typed changes to existing files.
 - Run focused validation after changes when practical.

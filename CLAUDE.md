@@ -52,11 +52,10 @@ We are doing a full v2 rewrite. Key decisions:
 
 ## Known Issues (from review)
 
-- **BUG-1**: Route matching uses string equality, not glob — config examples don't work
-- **BUG-2**: Shared-DB stat cache broken for Cursor/Kiro/Warp (one file = many sessions)
-- **ARCH-12/13**: Two competing caches (adapter + ingest level), `ingestSingleFile` assumes 1:1 file:session
-- **ARCH-7**: PID file declared in 4 places, duplicated lifecycle management
-- **ARCH-10**: `newMessages`/`sessionForFile` duck-typed via `as any`, not in Adapter interface
+- **BUG-2**: Shared-DB change detection remains uneven outside Cursor. Cursor now uses adapter-owned signatures, but Kiro/Warp still need revalidation.
+- **ARCH-7**: PID/runtime ownership is still duplicated across 5 places, not 4.
+- **ARCH-10**: `as any` is mostly gone, but typed-intersection duck-typing still exists around heavy-adapter/store extensions and should be formalized instead of guessed by callers.
+- **ARCH-12/13**: The old ingest-level stat cache is gone, but adapter-local caches and the durable discovery cache now form a multi-layer cache stack that still needs explicit lifecycle tests.
 
 ## Coding Conventions
 
@@ -65,7 +64,7 @@ We are doing a full v2 rewrite. Key decisions:
 - Tests: `bun test` (Bun's built-in test runner)
 - No `npm` or `node` commands — always `bun`
 - Prefer editing existing files over creating new ones
-- Adapter methods must be typed on the interface — no duck-typing via `as any`
+- Adapter methods must be typed on the interface or on an explicit extension surface — no hidden duck-typed hooks
 - Store migrations use PRAGMA user_version — no ad-hoc schema checks
 - Sinks never run DDL — they push data only
 

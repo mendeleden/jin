@@ -172,6 +172,9 @@ describe("ClaudeCodeAdapter v2 reference contract", () => {
 
     expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
 
+    adapter.releaseDiscoveryMemory();
+    expect(await adapter.findChanged({ kind: "periodic-scan" })).toEqual([]);
+
     const targetedRefs = await adapter.findChanged({
       kind: "fs-change",
       changedPaths: [parentPath],

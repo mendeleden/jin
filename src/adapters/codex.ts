@@ -5,6 +5,7 @@ import { homedir } from "os";
 import { basename, join } from "path";
 import { createInterface } from "readline";
 import { estimateCost } from "../pricing";
+import type { DiscoveryCacheState } from "./discovery-cache";
 import type {
   Adapter,
   ChangeHint,
@@ -92,6 +93,8 @@ export class CodexAdapter implements Adapter, V2Adapter {
   id = "codex";
   name = "Codex";
   icon = "▶";
+  discoveryCacheContractVersion = 1;
+  discoveryCachePayloadVersion = 1;
 
   private readonly codexHome: string;
   private readonly sessionsDir: string;
@@ -119,6 +122,9 @@ export class CodexAdapter implements Adapter, V2Adapter {
   async findChanged(hint?: ChangeHint): Promise<ConversationRef[]> {
     const files = this.findAllSessionFiles();
     const currentFiles = new Set(files);
+    const warmStartupScan =
+      hint?.kind === "startup-scan" &&
+      (this.statCache.size > 0 || this.fileIndexCache.size > 0);
 
     for (const cachedPath of this.statCache.keys()) {
       if (!currentFiles.has(cachedPath)) {
@@ -131,7 +137,7 @@ export class CodexAdapter implements Adapter, V2Adapter {
     }
 
     let targetFiles: string[] = files;
-    if (hint?.kind === "periodic-scan") {
+    if (hint?.kind === "periodic-scan" || warmStartupScan) {
       targetFiles = files.filter((filePath) => this.hasFileChanged(filePath));
     } else if (hint?.kind === "fs-change" && hint.changedPaths && hint.changedPaths.length > 0) {
       targetFiles = files.filter((filePath) => this.matchesChangedPaths(filePath, hint.changedPaths ?? []));
@@ -218,8 +224,63 @@ export class CodexAdapter implements Adapter, V2Adapter {
   }
 
   releaseDiscoveryMemory(): void {
-    this.fileIndexCache.clear();
     this.loadedFileCache = null;
+  }
+
+  exportDiscoveryState(): DiscoveryCacheState {
+    return {
+      sources: Array.from(this.fileIndexCache.entries())
+        .sort(([leftPath], [rightPath]) => leftPath.localeCompare(rightPath))
+        .map(([sourcePath, entry]) => ({
+          sourcePath,
+          sourceKind: "jsonl",
+          sizeBytes: entry.snapshot.size,
+          mtimeMs: entry.snapshot.mtimeMs,
+          signature: `${entry.snapshot.size}:${entry.snapshot.mtimeMs}`,
+          payload: {
+            sessionId: entry.sessionId,
+            refIds: entry.refIds,
+          },
+        })),
+    };
+  }
+
+  importDiscoveryState(state: DiscoveryCacheState): void {
+    this.statCache.clear();
+    this.fileIndexCache.clear();
+
+    for (const source of state.sources) {
+      if (source.sourceKind !== "jsonl") {
+        continue;
+      }
+
+      const payload = source.payload as {
+        sessionId?: unknown;
+        refIds?: unknown;
+      };
+      const sessionId =
+        typeof payload.sessionId === "string" ? payload.sessionId : "";
+      const refIds = Array.isArray(payload.refIds)
+        ? payload.refIds.filter(
+            (value): value is string =>
+              typeof value === "string" && value.length > 0,
+          )
+        : [];
+      if (!sessionId || refIds.length === 0) {
+        continue;
+      }
+
+      const snapshot = {
+        size: source.sizeBytes,
+        mtimeMs: source.mtimeMs,
+      };
+      this.statCache.set(source.sourcePath, snapshot);
+      this.fileIndexCache.set(source.sourcePath, {
+        snapshot,
+        sessionId,
+        refIds,
+      });
+    }
   }
 
   private findAllSessionFiles(): string[] {

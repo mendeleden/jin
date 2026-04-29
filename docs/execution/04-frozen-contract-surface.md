@@ -25,9 +25,19 @@ new packet that explicitly re-opens the freeze.
   `parentId`, `relationship`, and `forkPoint`
 - adapter work is discover/load based: `findChanged(hint?)` then
   `loadConversation(ref)`
+- `src/contracts/adapters.ts` now includes optional heavy-adapter memory
+  release hooks: `releaseTransientMemory?()` and `releaseDiscoveryMemory?()`
+- heavy adapters may hydrate lightweight discovery state from a separate
+  durable discovery cache; the cache import/export hooks remain a separate
+  explicit extension surface
 - the adapter output unit is `ConversationBundle`
-- store writes are hash-gated `writeBundle()` calls that return
+- store writes are hash-gated canonical store writes that return
   `{ changed, revision }`
+- `src/contracts/store.ts` may expose `hasLocalData?()` so the pipeline can
+  distinguish empty local stores from warm restarts without probing SQLite
+  internals directly
+- `writeBundle()` is the full-bundle convenience wrapper over the canonical
+  store write engine; staged store sessions are part of the same contract
 - push uses full snapshots with `attemptedRevision`
 - sink push results report errors per conversation
 - routing matches `remote`, `adapter`, `branch`, and `name`

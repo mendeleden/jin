@@ -1,20 +1,24 @@
 import {
   configDir,
   configPath,
-  loadConfig,
+  discoveryCachePath,
+  loadStartupConfig,
   resolveAdapterConfig,
   type JinConfig,
 } from "../config";
 import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
+import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
+import { appendDiagnosticEvent } from "../pipeline/diagnostic";
 import { runPipeline } from "../pipeline/loop";
 import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
+import { resolveSelfCommand } from "../runtime/self-command";
 
 type RuntimeLog = (message: string) => void;
 
@@ -60,11 +64,13 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     process.exit(1);
   }
 
-  const config = await loadConfig();
+  const config = await loadStartupConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
+  const diagnosticPath =
+    process.env.JIN_DIAGNOSTIC_LOG || join(configDir(), "debug.jsonl");
   const sinks = await createActiveSinks(config, log);
-  const activeAdapters = await detectActiveAdapters(config);
+  const activeAdapters = await detectActiveAdapters(config, diagnosticPath);
 
   if (activeAdapters.length === 0) {
     log("No supported coding tools detected. Open a supported tool, then rerun `jin start`.");
@@ -91,6 +97,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
 
   const runtimePaths = getRuntimePaths();
   const store = openStoreAtPath(runtimePaths.storePath);
+  const discoveryCache = openDiscoveryCache(log);
   writeFileSync(pidFilePath(), String(process.pid));
 
   console.log(
@@ -107,16 +114,26 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   console.log("");
 
   Bun.gc(true);
-  const pipelineHandle = await startPipeline(config, store, sinks, log, activeAdapters);
-  await runUntilShutdown(pipelineHandle, store, log);
+  const pipelineHandle = await startPipeline(
+    config,
+    store,
+    discoveryCache,
+    sinks,
+    log,
+    activeAdapters,
+    diagnosticPath,
+  );
+  await runUntilShutdown(pipelineHandle, store, discoveryCache, log);
 }
 
 async function startPipeline(
   config: JinConfig,
   store: SqliteConversationStore,
+  discoveryCache: SqliteDiscoveryCache | null,
   sinks: V2Sink[],
   log: RuntimeLog,
   initialAdapters: V2Adapter[],
+  diagnosticPath: string,
 ): Promise<PipelineHandle> {
   let useInitialAdapters = true;
 
@@ -127,7 +144,7 @@ async function startPipeline(
           useInitialAdapters = false;
           return initialAdapters;
         }
-        return detectActiveAdapters(config);
+        return detectActiveAdapters(config, diagnosticPath);
       },
       store,
       sinks,
@@ -140,6 +157,19 @@ async function startPipeline(
       scheduleStartupWork: false,
       deferWatcherStart: true,
       logger: toPipelineLogger(log),
+      diagnosticLogPath: diagnosticPath,
+      workerIngest: {
+        command: resolveSelfCommand(),
+        adapterConfigs: config.adapters,
+      },
+      ...(discoveryCache
+        ? {
+            discoveryCache: {
+              store: discoveryCache,
+              adapterConfigs: config.adapters,
+            },
+          }
+        : {}),
     });
     for (const adapter of initialAdapters) {
       handle.enqueue({
@@ -152,6 +182,7 @@ async function startPipeline(
   } catch (error) {
     await closeSinks(sinks);
     store.close();
+    discoveryCache?.close();
     cleanup();
     throw error;
   }
@@ -160,6 +191,7 @@ async function startPipeline(
 async function runUntilShutdown(
   pipelineHandle: PipelineHandle,
   store: SqliteConversationStore,
+  discoveryCache: SqliteDiscoveryCache | null,
   log: RuntimeLog,
 ): Promise<void> {
   let shuttingDown = false;
@@ -193,6 +225,7 @@ async function runUntilShutdown(
     try {
       const result = await pipelineHandle.shutdown();
       store.close();
+      discoveryCache?.close();
       cleanup();
 
       if (result.timedOut) {
@@ -204,6 +237,7 @@ async function runUntilShutdown(
       return;
     } catch (error) {
       store.close();
+      discoveryCache?.close();
       cleanup();
       log(`Shutdown failed: ${formatError(error)}`);
       finishWithExit(1, error);
@@ -225,6 +259,17 @@ async function runUntilShutdown(
     } catch (error) {
       rejectStopped(fallbackError ?? error);
     }
+  }
+}
+
+function openDiscoveryCache(log: RuntimeLog): SqliteDiscoveryCache | null {
+  try {
+    return new SqliteDiscoveryCache(discoveryCachePath());
+  } catch (error) {
+    log(
+      `Discovery cache disabled: ${formatError(error)}`,
+    );
+    return null;
   }
 }
 
@@ -265,23 +310,75 @@ async function createActiveSinks(
   return sinks;
 }
 
-async function detectActiveAdapters(config: JinConfig): Promise<V2Adapter[]> {
+async function detectActiveAdapters(
+  config: JinConfig,
+  diagnosticPath?: string,
+): Promise<V2Adapter[]> {
   const adapters = allAdapters(config.adapters);
   const activeAdapters: V2Adapter[] = [];
+  const startedAt = performance.now();
+
+  if (diagnosticPath) {
+    appendDiagnosticEvent(diagnosticPath, {
+      event: "detect:start",
+      candidateIds: adapters.map((adapter) => adapter.id),
+    });
+  }
 
   for (const adapter of adapters) {
     if (resolveAdapterConfig(config.adapters, adapter.id).enabled === false) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "disabled",
+        });
+      }
       continue;
     }
     if (startupProbeBlocked(adapter.id, config.adapters)) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "blocked",
+          reason: "protected-source-startup-blocked",
+        });
+      }
       continue;
     }
 
     try {
-      if (await adapter.detect()) {
+      const detected = await adapter.detect();
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: detected ? "detected" : "missing",
+        });
+      }
+      if (detected) {
         activeAdapters.push(adapter as unknown as V2Adapter);
       }
-    } catch {}
+    } catch (error) {
+      if (diagnosticPath) {
+        appendDiagnosticEvent(diagnosticPath, {
+          event: "detect:adapter",
+          adapterId: adapter.id,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  if (diagnosticPath) {
+    appendDiagnosticEvent(diagnosticPath, {
+      event: "detect:result",
+      activeAdapterIds: activeAdapters.map((adapter) => adapter.id),
+      activeAdapterCount: activeAdapters.length,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
   }
 
   return activeAdapters;

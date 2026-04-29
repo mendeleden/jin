@@ -28,11 +28,11 @@ if (jsonKeys.length > 0) {
   const data = await sampleResp.json();
   sample = {
     key: jsonKeys[0],
-    hasSession: !!data.session,
+    hasConversation: !!data.conversation,
     hasMeta: !!data._meta,
     messageCount: (data.messages || []).length,
     teamId: data._meta?.teamId || "",
-    developerId: data._meta?.developerId || "",
+    userId: data._meta?.userId || "",
   };
 }
 
@@ -47,7 +47,7 @@ for (const key of jsonKeys) {
 }
 
 const result = {
-  sessions: jsonKeys.length,
+  conversations: jsonKeys.length,
   totalMessages,
   sample,
 };

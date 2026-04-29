@@ -7,6 +7,10 @@ import { createInterface } from "readline";
 import { estimateCost } from "../pricing";
 import type { Adapter as ContractAdapter, ChangeHint } from "../contracts/adapters";
 import type {
+  DiscoveryCacheJsonValue,
+  DiscoveryCacheState,
+} from "./discovery-cache";
+import type {
   ConversationBundle,
   ConversationRef,
   ConversationRelationship,
@@ -316,6 +320,8 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   name = "Claude Code";
   icon = "◆";
   private static readonly DISCOVERY_RECLAIM_INTERVAL = 25;
+  discoveryCacheContractVersion = 1;
+  discoveryCachePayloadVersion = 1;
 
   private homeDir: string;
   private projectsDir: string;
@@ -368,7 +374,9 @@ export class ClaudeCodeAdapter implements ContractAdapter {
         ? this.collectChangedPaths(hint.changedPaths ?? [])
         : discoveredFiles;
 
-    const shouldReturnAll = !hint || hint.kind === "startup-scan";
+    const shouldReturnAll =
+      !hint ||
+      (hint.kind === "startup-scan" && this.fileIndexCache.size === 0);
 
     for (let fileIndex = 0; fileIndex < candidateFiles.length; fileIndex += 1) {
       const filePath = candidateFiles[fileIndex];
@@ -445,9 +453,76 @@ export class ClaudeCodeAdapter implements ContractAdapter {
   }
 
   releaseDiscoveryMemory(): void {
-    this.fileIndexCache.clear();
-    this.sessionIdToPath.clear();
+    // Keep the lightweight discovery index so periodic scans can still compare
+    // size/mtime and avoid replaying every Claude transcript as "changed".
     this.loadedFileCache = null;
+  }
+
+  exportDiscoveryState(): DiscoveryCacheState {
+    return {
+      sources: Array.from(this.fileIndexCache.entries())
+        .sort(([leftPath], [rightPath]) => leftPath.localeCompare(rightPath))
+        .map(([sourcePath, entry]) => ({
+          sourcePath,
+          sourceKind: "jsonl",
+          sizeBytes: entry.size,
+          mtimeMs: entry.mtimeMs,
+          signature: `${entry.size}:${entry.mtimeMs}`,
+          payload: {
+            sessionId: entry.index.sessionId,
+            refIds: entry.index.refs.map((ref) => ref.id),
+          },
+        })),
+    };
+  }
+
+  importDiscoveryState(state: DiscoveryCacheState): void {
+    const nextFileIndexCache = new Map<string, FileIndexCacheEntry>();
+    const nextSessionIdToPath = new Map<string, string>();
+
+    for (const source of state.sources) {
+      if (source.sourceKind !== "jsonl") {
+        continue;
+      }
+
+      const payload = source.payload as {
+        sessionId?: unknown;
+        refIds?: unknown;
+      };
+      const sessionId =
+        typeof payload.sessionId === "string" ? payload.sessionId : "";
+      const refIds = Array.isArray(payload.refIds)
+        ? payload.refIds.filter(
+            (value): value is string =>
+              typeof value === "string" && value.length > 0,
+          )
+        : [];
+      if (!sessionId || refIds.length === 0) {
+        continue;
+      }
+
+      const refs = refIds.map((id) => ({
+        id,
+        sourcePath: source.sourcePath,
+        adapterId: this.id,
+      }));
+
+      nextFileIndexCache.set(source.sourcePath, {
+        size: source.sizeBytes,
+        mtimeMs: source.mtimeMs,
+        index: {
+          sessionId,
+          refs,
+        },
+      });
+
+      for (const id of refIds) {
+        nextSessionIdToPath.set(id, source.sourcePath);
+      }
+    }
+
+    this.fileIndexCache = nextFileIndexCache;
+    this.sessionIdToPath = nextSessionIdToPath;
   }
 
   watchPaths(): string[] {

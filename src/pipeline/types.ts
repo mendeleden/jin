@@ -1,7 +1,8 @@
 import type { Adapter, ChangeHint } from "../contracts/adapters";
-import type { RouteConfig } from "../contracts/config";
+import type { AdapterConfig, RouteConfig } from "../contracts/config";
 import type { Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
+import type { SqliteDiscoveryCache } from "../db/discovery-cache";
 
 export type PipelineWorkItem =
   | { kind: "reconcile-adapters" }
@@ -26,6 +27,7 @@ export interface PushSummary {
   sinkAttempts: number;
   pushedConversations: number;
   failedConversations: number;
+  sinkBreakdown?: { sinkId: string; pushed: number; failed: number }[];
 }
 
 export interface PipelineLogger {
@@ -73,6 +75,15 @@ export interface RunPipelineOptions {
   onShutdownTimeout?: (
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
+  diagnosticLogPath?: string;
+  workerIngest?: {
+    command: string[];
+    adapterConfigs: Record<string, AdapterConfig>;
+  };
+  discoveryCache?: {
+    store: SqliteDiscoveryCache;
+    adapterConfigs: Record<string, AdapterConfig>;
+  };
 }
 
 export interface PipelineShutdownResult {

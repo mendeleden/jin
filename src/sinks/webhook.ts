@@ -17,11 +17,11 @@ type WebhookConfigInput = LegacySinkConfig | WebhookSinkConfig;
 
 type LegacyWebhookConfig = LegacySinkConfig & {
   batchSize?: number;
-  developerId?: string;
   id?: string;
   name?: string;
   teamId?: string;
   timeoutMs?: number;
+  userId?: string;
 };
 
 interface WebhookBatchItem {
@@ -65,8 +65,8 @@ export class WebhookSink implements LegacySink, SnapshotSink {
     if (normalized.teamId) {
       this.headers["X-Jin-Team"] = normalized.teamId;
     }
-    if (normalized.developerId) {
-      this.headers["X-Jin-Developer"] = normalized.developerId;
+    if (normalized.userId) {
+      this.headers["X-Jin-User"] = normalized.userId;
     }
 
     this.timeoutMs = normalizePositiveInt(

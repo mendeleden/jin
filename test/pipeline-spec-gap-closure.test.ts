@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type {
   Adapter,
   ChangeHint,
@@ -21,6 +24,7 @@ import type {
 } from "../src/contracts/sinks";
 import type { ConversationStore } from "../src/contracts/store";
 import type { PipelineLogger } from "../src/pipeline";
+import { DiagnosticLogger } from "../src/pipeline/diagnostic";
 import { ingestOne, pushDirty, runPipeline } from "../src/pipeline";
 
 const ROUTE_ALL: RouteConfig[] = [
@@ -160,7 +164,7 @@ describe("pipeline spec gap closure", () => {
       { logger },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       sinkAttempts: 1,
       pushedConversations: 1,
       failedConversations: 0,
@@ -239,6 +243,165 @@ describe("pipeline spec gap closure", () => {
       expect(sink.closeCalls).toBe(1);
     } finally {
       await handle.shutdown();
+    }
+  });
+
+  test("diagnostics emit a single failed work:end entry when pipeline work throws", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "jin-pipeline-diagnostic-"));
+    const diagnosticPath = join(tempRoot, "debug.jsonl");
+    const store = new InMemoryConversationStore();
+    const logger = createLogger();
+    let adapterSourceCalls = 0;
+
+    const handle = await runPipeline({
+      adapterSource: async () => {
+        adapterSourceCalls += 1;
+        if (adapterSourceCalls === 1) {
+          return [];
+        }
+        throw new Error("boom");
+      },
+      store,
+      sinks: [],
+      routes: [],
+      logger,
+      diagnosticLogPath: diagnosticPath,
+      scheduleStartupWork: false,
+      scanIntervalMs: null,
+    });
+
+    try {
+      handle.enqueue({
+        kind: "reconcile-adapters",
+      });
+
+      await handle.waitForIdle();
+
+      const entries = readFileSync(diagnosticPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const workEnds = entries.filter(
+        (entry) =>
+          entry.event === "work:end" &&
+          entry.kind === "reconcile-adapters",
+      );
+
+      expect(workEnds).toHaveLength(1);
+      expect(workEnds[0]?.error).toBe("boom");
+      expect(logger.errors).toEqual(["Pipeline work item reconcile-adapters failed"]);
+    } finally {
+      await handle.shutdown();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("push diagnostics emit repush lifecycle, batch progress, and sampled long-push events", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "jin-push-diagnostic-"));
+    const diagnosticPath = join(tempRoot, "debug.jsonl");
+    const store = new InMemoryConversationStore();
+    const logger = createLogger();
+    const sink: Sink = {
+      id: "primary",
+      name: "primary",
+      async push(payloads) {
+        await Bun.sleep(25);
+        return {
+          pushed: payloads.length,
+          failed: 0,
+          errors: [],
+        };
+      },
+      async healthCheck() {
+        return { ok: true };
+      },
+      async close() {},
+    };
+    const diag = new DiagnosticLogger({
+      path: diagnosticPath,
+      getRssBytes: () => process.memoryUsage().rss,
+      getQueueSize: () => 0,
+      getQueueSnapshot: () => [],
+    });
+
+    store.writeBundle(makeBundle("repush-diagnostic", "alpha"));
+
+    try {
+      const summary = await pushDirty(
+        store,
+        [sink],
+        [
+          {
+            match: {},
+            sinks: ["primary"],
+          },
+        ],
+        {
+          logger,
+          diag,
+          reason: "repush",
+          batchSize: 1,
+          sampleIntervalMs: 5,
+        },
+      );
+      diag.pushResult(summary, 25, summary.sinkBreakdown, "repush");
+
+      const entries = readFileSync(diagnosticPath, "utf8")
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            event: "push:start",
+            sinkId: "primary",
+            reason: "repush",
+            dirtyConversations: 1,
+            staleConversations: 0,
+            batchCount: 1,
+          }),
+          expect.objectContaining({
+            event: "push:batch",
+            sinkId: "primary",
+            reason: "repush",
+            batchIndex: 1,
+            batchCount: 1,
+            payloadCount: 1,
+            selectedConversations: 1,
+          }),
+          expect.objectContaining({
+            event: "push:ok",
+            sinkId: "primary",
+            reason: "repush",
+            conversationId: "repush-diagnostic",
+            attemptedRevision: 1,
+          }),
+          expect.objectContaining({
+            event: "push:sink-result",
+            sinkId: "primary",
+            reason: "repush",
+            dirtyConversations: 1,
+            staleConversations: 0,
+            pushed: 1,
+            failed: 0,
+          }),
+          expect.objectContaining({
+            event: "push:result",
+            reason: "repush",
+            sinkAttempts: 1,
+            pushed: 1,
+            failed: 0,
+          }),
+        ]),
+      );
+      expect(
+        entries.some((entry) => entry.event === "push:sample"),
+      ).toBe(true);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
@@ -379,6 +542,43 @@ class InMemoryConversationStore implements ConversationStore {
       }
     >
   >();
+
+  beginWrite(conversation: ParsedConversation) {
+    const store = this;
+    const messages: ParsedMessage[] = [];
+    let active = true;
+    let finished = false;
+
+    return {
+      appendMessage(message: ParsedMessage) {
+        assertActive();
+        messages.push(cloneMessage(message));
+      },
+      finish(_bundleHash: string) {
+        assertActive();
+        finished = true;
+        active = false;
+        return store.writeBundle({
+          conversation: { ...conversation },
+          messages,
+        });
+      },
+      abort() {
+        if (!active) {
+          return;
+        }
+        active = false;
+        finished = false;
+        messages.length = 0;
+      },
+    };
+
+    function assertActive(): void {
+      if (!active || finished) {
+        throw new Error("in-memory write session is no longer active");
+      }
+    }
+  }
 
   writeBundle(bundle: ConversationBundle) {
     const conversationId = bundle.conversation.id;

@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import {
   DEFAULT_S3_PREFIX,
   DEFAULT_S3_REGION,
   DEFAULT_SCAN_INTERVAL_MS,
   DEFAULT_WEBHOOK_TIMEOUT_MS,
   defaultConfig,
+  loadStartupConfig,
   normalizeConfig,
 } from "../src/config";
+
+afterEach(() => {
+  if (process.env.JIN_CONFIG_DIR?.includes("jin-config-test-")) {
+    rmSync(process.env.JIN_CONFIG_DIR, { recursive: true, force: true });
+  }
+  delete process.env.JIN_CONFIG_DIR;
+});
 
 describe("defaultConfig", () => {
   test("creates a v2 zero-state snapshot", () => {
@@ -37,6 +48,8 @@ describe("normalizeConfig", () => {
           type: "postgres",
           connectionString: "postgres://jin:test@localhost:5432/jin",
           enabled: false,
+          teamId: "team-1",
+          userId: "user-1",
         },
         {
           id: "s3-archive",
@@ -44,11 +57,14 @@ describe("normalizeConfig", () => {
           bucket: "jin-archive",
           accessKeyId: "abc",
           secretAccessKey: "def",
+          userId: "user-archive",
         },
         {
           id: "webhook-cursor",
           type: "webhook",
           url: "https://example.com/hooks/jin",
+          teamId: "team-2",
+          userId: "user-2",
           headers: {
             Authorization: "Bearer token",
             ignore: 42,
@@ -96,6 +112,8 @@ describe("normalizeConfig", () => {
         type: "postgres",
         enabled: false,
         connectionString: "postgres://jin:test@localhost:5432/jin",
+        teamId: "team-1",
+        userId: "user-1",
       },
       {
         id: "s3-archive",
@@ -106,12 +124,15 @@ describe("normalizeConfig", () => {
         accessKeyId: "abc",
         secretAccessKey: "def",
         prefix: DEFAULT_S3_PREFIX,
+        userId: "user-archive",
       },
       {
         id: "webhook-cursor",
         type: "webhook",
         enabled: true,
         url: "https://example.com/hooks/jin",
+        teamId: "team-2",
+        userId: "user-2",
         headers: {
           Authorization: "Bearer token",
         },
@@ -131,10 +152,67 @@ describe("normalizeConfig", () => {
     ]);
     expect(normalized.watch).toEqual({
       pollIntervalMs: 120_000,
+      debounceMs: 5_000,
     });
     expect(normalized).not.toHaveProperty("defaultSinks");
     expect(normalized).not.toHaveProperty("routeUnmatchedToAll");
     expect(normalized).not.toHaveProperty("store");
     expect(normalized).not.toHaveProperty("team");
+  });
+});
+
+describe("loadStartupConfig", () => {
+  test("persists default config on first-run startup bootstrap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    const config = await loadStartupConfig();
+
+    expect(config).toEqual(defaultConfig());
+    expect(existsSync(join(dir, "config.json"))).toBe(true);
+  });
+
+  test("materializes missing adapter defaults into an existing config without dropping watch extensions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          adapters: {
+            cursor: {
+              enabled: true,
+            },
+          },
+          sinks: [],
+          routes: [],
+          watch: {
+            pollIntervalMs: 5_000,
+            debounceMs: 500,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const config = await loadStartupConfig();
+    const written = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
+
+    expect(config.watch).toEqual({
+      pollIntervalMs: 5_000,
+      debounceMs: 500,
+    });
+    expect(written.watch).toEqual({
+      pollIntervalMs: 5_000,
+      debounceMs: 500,
+    });
+    expect(written.adapters.cursor).toEqual({
+      enabled: true,
+      allowProtectedSource: false,
+    });
+    expect(written.adapters["claude-code"]).toEqual({ enabled: true });
+    expect(written.adapters.codex).toEqual({ enabled: true });
   });
 });

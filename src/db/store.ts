@@ -8,11 +8,13 @@ import type {
   ToolCall,
 } from "../contracts/conversations";
 import type {
+  ConversationWriteSession,
   ConversationStore,
   OrphanedConversation,
   RecordedPushResult,
 } from "../contracts/store";
 import { writeBundle as writeConversationBundle } from "./bundle";
+import { beginConversationWriteSession } from "./write-session";
 import { getConversation } from "./conversations";
 import { getMessages } from "./messages";
 import {
@@ -57,6 +59,23 @@ export class SqliteConversationStore implements ConversationStore {
 
   writeBundle(bundle: ConversationBundle) {
     return writeConversationBundle(this.database, bundle);
+  }
+
+  hasLocalData(): boolean {
+    try {
+      const row = this.database
+        .prepare("SELECT 1 AS present FROM _jin_sync LIMIT 1")
+        .get() as { present?: number } | undefined;
+      return row?.present === 1;
+    } catch {
+      return false;
+    }
+  }
+
+  beginWrite(
+    conversation: ConversationBundle["conversation"],
+  ): ConversationWriteSession {
+    return beginConversationWriteSession(this.database, conversation);
   }
 
   getConversation(id: string): Conversation | null {

@@ -17,7 +17,13 @@ export async function daemonize(): Promise<void> {
   const isCompiled = !exe.endsWith("bun") && !exe.endsWith("node");
   const cmd = isCompiled
     ? [exe, "start", "--foreground"]
-    : [exe, "run", process.argv[1], "start", "--foreground"];
+    : [
+        exe,
+        "run",
+        process.argv[1],
+        "start",
+        "--foreground",
+      ];
 
   const logFd = openSync(LOG_FILE, "a");
   const proc = Bun.spawn(cmd, {
