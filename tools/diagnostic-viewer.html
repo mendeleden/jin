@@ -220,9 +220,9 @@
   <div class="chart-container">
     <h2>RSS Memory (MB)</h2>
     <div class="legend">
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--accent)"></div>Parent RSS</div>
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple)"></div>Worker RSS</div>
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div>Combined RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--accent);height:10px;width:12px"></div>Parent RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple);height:10px;width:12px"></div>Worker RSS</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div>Total (top edge)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:var(--orange)"></div>Warning (200 MB)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:var(--red)"></div>Hard limit (256 MB)</div>
     </div>
@@ -514,24 +514,18 @@ function renderRssChart(events) {
   const W = rect.width, H = 200;
   ctx.clearRect(0, 0, W, H);
 
-  const parentPoints = buildSeries(events, 'rssMb');
-  const workerPoints = buildSeries(events, 'workerRssMb');
-  const combinedPoints = buildDerivedSeries(events, (e) =>
-    typeof e.combinedRssMb === 'number'
-      ? e.combinedRssMb
-      : (typeof e.workerRssMb === 'number' ? e.rssMb + e.workerRssMb : null)
-  );
-  const points = parentPoints.length > 0 ? parentPoints : workerPoints;
-  if (points.length < 2) return;
+  const stack = events
+    .map(e => ({
+      t: new Date(e.ts).getTime(),
+      parent: typeof e.rssMb === 'number' ? e.rssMb : null,
+      worker: typeof e.workerRssMb === 'number' ? e.workerRssMb : 0,
+    }))
+    .filter(p => p.parent !== null);
+  if (stack.length < 2) return;
 
-  const tMin = points[0].t, tMax = points[points.length - 1].t;
+  const tMin = stack[0].t, tMax = stack[stack.length - 1].t;
   const tRange = Math.max(tMax - tMin, 1);
-  const vMax = Math.max(
-    260,
-    ...parentPoints.map(p => p.v),
-    ...workerPoints.map(p => p.v),
-    ...combinedPoints.map(p => p.v),
-  );
+  const vMax = Math.max(260, ...stack.map(p => p.parent + p.worker));
   const pad = { t: 0, b: 20, l: 40, r: 10 };
   const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
 
@@ -543,19 +537,68 @@ function renderRssChart(events) {
     ctx.fillText(v + '', pad.l - 4, y + 3);
   }
 
-  // Warning + hard limit lines
-  const warnY = pad.t + cH - (200 / vMax) * cH;
-  const hardY = pad.t + cH - (256 / vMax) * cH;
+  const xAt = t => pad.l + ((t - tMin) / tRange) * cW;
+  const yAt = v => pad.t + cH - (v / vMax) * cH;
+  const baseY = pad.t + cH;
+
+  // Parent layer (bottom of stack): fill from baseline to parent value
+  ctx.fillStyle = '#58a6ff';
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.moveTo(xAt(stack[0].t), baseY);
+  stack.forEach(p => ctx.lineTo(xAt(p.t), yAt(p.parent)));
+  ctx.lineTo(xAt(stack[stack.length - 1].t), baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Worker layer (stacked on top of parent): fill from parent to parent + worker
+  ctx.fillStyle = '#bc8cff';
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  stack.forEach((p, i) => {
+    const x = xAt(p.t);
+    const y = yAt(p.parent);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const p = stack[i];
+    ctx.lineTo(xAt(p.t), yAt(p.parent + p.worker));
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Boundary line between parent and worker layers
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  stack.forEach((p, i) => {
+    const x = xAt(p.t);
+    const y = yAt(p.parent);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Top edge = total RSS
+  ctx.strokeStyle = '#39d2c0';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  stack.forEach((p, i) => {
+    const x = xAt(p.t);
+    const y = yAt(p.parent + p.worker);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Warning + hard limit lines (drawn last so they sit above the stack)
+  const warnY = yAt(200);
+  const hardY = yAt(256);
   ctx.setLineDash([4, 4]);
   ctx.strokeStyle = '#d29922'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(pad.l, warnY); ctx.lineTo(W - pad.r, warnY); ctx.stroke();
   ctx.strokeStyle = '#f85149';
   ctx.beginPath(); ctx.moveTo(pad.l, hardY); ctx.lineTo(W - pad.r, hardY); ctx.stroke();
   ctx.setLineDash([]);
-
-  drawLineSeries(ctx, parentPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#58a6ff', width: 1.8 });
-  drawLineSeries(ctx, workerPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#bc8cff', width: 1.4 });
-  drawLineSeries(ctx, combinedPoints, { tMin, tRange, vMax, pad, cW, cH, color: '#39d2c0', width: 1.4 });
 
   drawTimeAxis(ctx, tMin, tMax, pad, cW, H);
 }
