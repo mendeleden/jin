@@ -14,6 +14,7 @@ import {
   runModeLabel,
 } from "../daemon/runtime-state";
 import { readProgress } from "../progress";
+import { readIngestActivity } from "../daemon/ingest-activity";
 
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
@@ -87,6 +88,24 @@ async function printJson(
     };
   }
 
+  const activity = readIngestActivity();
+  if (activity?.active) {
+    const a = activity.active;
+    const pct =
+      a.totalRefs !== undefined && a.processedRefs !== undefined && a.totalRefs > 0
+        ? Math.round((a.processedRefs / a.totalRefs) * 100)
+        : null;
+    output.activity = {
+      adapter: a.adapter,
+      coldStart: activity.coldStart,
+      processedRefs: a.processedRefs ?? null,
+      totalRefs: a.totalRefs ?? null,
+      pct,
+      currentSourcePath: a.currentSourcePath ?? null,
+      queued: activity.queued,
+    };
+  }
+
   console.log(JSON.stringify(output, null, 2));
 }
 
@@ -156,6 +175,23 @@ async function printFull(
   if (progress) {
     const pct = Math.round((progress.current / progress.total) * 100);
     console.log(`\n  ${cyan("ingesting")}  ${progress.adapter}  ${progress.current}/${progress.total} sessions (${pct}%)`);
+  }
+
+  const activity = readIngestActivity();
+  if (activity?.active) {
+    const a = activity.active;
+    const phaseLabel = activity.coldStart ? "cold start" : "ingesting";
+    const progressText =
+      a.totalRefs !== undefined && a.processedRefs !== undefined && a.totalRefs > 0
+        ? `${a.processedRefs}/${a.totalRefs} files (${Math.round((a.processedRefs / a.totalRefs) * 100)}%)`
+        : "scanning";
+    console.log(`\n  ${cyan(phaseLabel)}  ${a.adapter}    ${progressText}`);
+    if (a.currentSourcePath) {
+      console.log(`  ${dim("current")}     ${shortenPath(a.currentSourcePath, 80)}`);
+    }
+    if (activity.queued.length > 0) {
+      console.log(`  ${dim("queued")}      ${activity.queued.join(", ")}`);
+    }
   }
 
   console.log("");
@@ -325,4 +361,11 @@ function describeRuntimeOwner(runtime: RuntimeStatus): string {
 
 function padRight(value: string, length: number): string {
   return value + " ".repeat(Math.max(0, length - value.length));
+}
+
+function shortenPath(path: string, maxLen: number): string {
+  if (path.length <= maxLen) return path;
+  const head = path.slice(0, 20);
+  const tail = path.slice(path.length - (maxLen - 23));
+  return `${head}...${tail}`;
 }
