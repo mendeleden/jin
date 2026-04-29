@@ -24,8 +24,8 @@ type RuntimeLog = (message: string) => void;
 
 export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const {
+    getRuntimeStatus,
     getRuntimePaths,
-    isServiceActive,
     isServiceInstalled,
   } = await import("../daemon/runtime-state");
 
@@ -36,7 +36,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     process.env.INVOCATION_ID ||
     process.env.JOURNAL_STREAM
   );
-  if (!launchedByService && isServiceActive()) {
+  const runtime = getRuntimeStatus();
+  if (!launchedByService && runtime.owner?.mode === "service" && runtime.state !== "stopped") {
     console.log("  jin is already running as an OS service.");
     console.log("  Use `jin service uninstall` to remove it first, or `jin service status` for details.");
     process.exit(1);

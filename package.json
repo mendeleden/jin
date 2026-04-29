@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "bun test",
+    "test:release-gates": "bun test test/lifecycle-boundary.test.ts test/local-control-boundary.test.ts test/runtime-state-local-owner.test.ts",
     "dev": "bun run src/index.ts",
     "build": "bun build ./src/index.ts --compile --outfile jin",
     "typecheck": "tsc --noEmit",

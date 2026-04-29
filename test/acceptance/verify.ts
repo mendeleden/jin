@@ -125,17 +125,23 @@ async function waitForDeferredWatcherStartup(
 async function waitForRuntimeShutdown(
   env: Record<string, string>,
   maxWaitMs = 15_000,
-): Promise<void> {
+): Promise<{ stopped: boolean; detail: string }> {
   const deadline = Date.now() + maxWaitMs;
+  let lastDetail = "jin status did not return usable shutdown state";
   while (Date.now() < deadline) {
     const statusResult = await run(["status", "--json"], env);
+    lastDetail = `exit ${statusResult.exitCode}: ${statusResult.stderr || statusResult.stdout}`.slice(0, 500);
     if (statusResult.exitCode === 0) {
       try {
         const status = JSON.parse(statusResult.stdout) as {
           runtime?: { state?: string };
         };
+        lastDetail = statusResult.stdout.slice(0, 500);
         if (status.runtime?.state === "stopped") {
-          return;
+          return {
+            stopped: true,
+            detail: lastDetail,
+          };
         }
       } catch {
         // keep polling
@@ -143,6 +149,11 @@ async function waitForRuntimeShutdown(
     }
     await Bun.sleep(500);
   }
+
+  return {
+    stopped: false,
+    detail: lastDetail,
+  };
 }
 
 function safeParse(line: string): Record<string, unknown> | null {
@@ -151,6 +162,23 @@ function safeParse(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function readDiagnosticTail(configDir: string, lineCount = 12): string {
+  const debugPath = join(configDir, "debug.jsonl");
+  if (!existsSync(debugPath)) {
+    return "debug log missing";
+  }
+
+  const lines = readFileSync(debugPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return "debug log empty";
+  }
+
+  return lines.slice(-lineCount).join("\n");
 }
 
 // ─── Setup temp home ─────────────────────────────────────────────────────
@@ -324,9 +352,11 @@ if (bootstrapComplete) {
   }
 }
 
-// ─── Phase 3: Watcher smoke test (best-effort) ───────────────────────────
+// ─── Phase 3: Watcher smoke test ──────────────────────────────────────────
 
-// Write a new JSONL file while the daemon runs, verify it gets picked up
+// Mutate an existing Claude transcript while the daemon runs and verify the
+// updated message count is observed. This matches the common hot path better
+// than relying on brand-new file creation semantics.
 if (bootstrapComplete) {
   console.log("");
   console.log("PHASE 3: WATCHER SMOKE TEST");
@@ -334,14 +364,25 @@ if (bootstrapComplete) {
 
   const preStatus = await run(["status", "--json"], jinEnv);
   let preCount = 0;
+  let preMessages = 0;
   try { preCount = JSON.parse(preStatus.stdout).sessions || 0; } catch {}
+  try { preMessages = JSON.parse(preStatus.stdout).messages || 0; } catch {}
 
-  // Write a new session file into the watched directory
-  const watchTestSession = `watch-test-${Date.now()}`;
-  const watchLines = Array.from({ length: 5 }, (_, i) => JSON.stringify({
+  const watchedTranscriptPath = join(ccProjectDir, "synth-0.jsonl");
+  const existingLines = readFileSync(watchedTranscriptPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0);
+  const existingFirstLine = safeParse(existingLines[0] ?? "");
+  const watchTestSession = typeof existingFirstLine?.sessionId === "string"
+    ? existingFirstLine.sessionId
+    : "";
+  assert("watcher smoke fixture exposes a Claude session id", watchTestSession.length > 0);
+
+  const watchLines = Array.from({ length: 4 }, (_, i) => JSON.stringify({
     type: i % 2 === 0 ? "user" : "assistant",
     sessionId: watchTestSession,
-    uuid: `${watchTestSession}-msg-${i}`,
+    uuid: `${watchTestSession}-watch-msg-${i}-${Date.now()}`,
     timestamp: new Date(Date.now() + i * 1000).toISOString(),
     message: {
       role: i % 2 === 0 ? "user" : "assistant",
@@ -351,7 +392,10 @@ if (bootstrapComplete) {
     },
     cwd: "/tmp/watcher-test",
   }));
-  await Bun.write(join(ccProjectDir, "watcher-test.jsonl"), watchLines.join("\n") + "\n");
+  await Bun.write(
+    watchedTranscriptPath,
+    `${existingLines.join("\n")}\n${watchLines.join("\n")}\n`,
+  );
 
   // Wait for the watcher debounce + ingest (up to 15 seconds)
   let watcherPickedUp = false;
@@ -359,17 +403,23 @@ if (bootstrapComplete) {
     await Bun.sleep(1000);
     const postStatus = await run(["status", "--json"], jinEnv);
     let postCount = 0;
+    let postMessages = 0;
     try { postCount = JSON.parse(postStatus.stdout).sessions || 0; } catch {}
-    if (postCount > preCount) {
+    try { postMessages = JSON.parse(postStatus.stdout).messages || 0; } catch {}
+    if (postMessages > preMessages) {
       watcherPickedUp = true;
-      console.log(`  session count: ${preCount} → ${postCount}`);
+      console.log(`  message count: ${preMessages} → ${postMessages}`);
       break;
     }
   }
   if (watcherPickedUp) {
-    assert("watcher picks up new file while daemon runs", true);
+    assert("watcher picks up transcript updates while daemon runs", true);
   } else {
-    console.log("  ⚠ watcher smoke did not observe a new session within the wait window");
+    console.log(
+      `  ⚠ watcher smoke did not observe transcript updates within the wait window\n` +
+      `    sessions=${preCount}; messages=${preMessages}\n` +
+      `    debug tail:\n${readDiagnosticTail(jinConfigDir)}`,
+    );
   }
 }
 
@@ -389,7 +439,7 @@ const exitCode = await Promise.race([
 // Exit 0 = graceful, 130 = SIGINT (128+2), 143 = SIGTERM (128+15),
 // 1 = TerminateProcess on Windows, null = safety timeout fired
 assert("daemon exits after signal",
-  exitCode === 0 || exitCode === 1 || exitCode === 130 || exitCode === 143 || exitCode === null,
+  exitCode === 0 || exitCode === 1 || exitCode === 130 || exitCode === 143,
   `unexpected exit code: ${exitCode}`);
 
 // PID file should be cleaned up by the shutdown handler
@@ -400,7 +450,12 @@ if (existsSync(pidFile)) {
   console.log(`  ⚠ PID file not cleaned up (platform-specific signal handling)`);
   rmSync(pidFile, { force: true });
 }
-await waitForRuntimeShutdown(jinEnv);
+const shutdownState = await waitForRuntimeShutdown(jinEnv);
+assert(
+  "jin status reaches stopped after daemon shutdown",
+  shutdownState.stopped,
+  shutdownState.detail,
+);
 
 // ─── Phase 4: Post-shutdown SQLite verification ──────────────────────────
 
@@ -415,6 +470,8 @@ let afterData: any = {};
 try {
   afterData = JSON.parse(statusAfter.stdout);
 } catch {}
+
+assertEq("runtime reports stopped after daemon shutdown", afterData.runtime?.state, "stopped");
 
 if (afterData.sessions !== undefined) {
   assertGt("sessions still in store after restart", afterData.sessions, 0);
@@ -432,14 +489,7 @@ console.log("");
 console.log("PHASE 5: IDEMPOTENCY");
 
 const ingest2 = await run(["ingest"], jinEnv);
-const ingestBlockedByExternalService =
-  ingest2.exitCode !== 0 &&
-  ingest2.stderr.includes("already running under OS service manager");
-if (ingestBlockedByExternalService) {
-  console.log("  ⚠ jin ingest skipped because an external OS service owner is active on this machine");
-} else {
-  assert("jin ingest exits cleanly after bootstrap", ingest2.exitCode === 0, `exit ${ingest2.exitCode}: ${ingest2.stderr}`);
-}
+assert("jin ingest exits cleanly after bootstrap", ingest2.exitCode === 0, `exit ${ingest2.exitCode}: ${ingest2.stderr}`);
 
 const status2 = await run(["status", "--json"], jinEnv);
 let status2Data: any = {};

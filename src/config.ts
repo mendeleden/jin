@@ -68,10 +68,7 @@ export interface StoreConfig {
   rawDir: string;
 }
 
-export type RouteMatch = ContractRouteMatch & {
-  project?: string;
-  directory?: string;
-};
+export type RouteMatch = ContractRouteMatch;
 
 export interface RouteConfig extends Omit<ContractRouteConfig, "match"> {
   match: RouteMatch;
@@ -122,8 +119,6 @@ export interface JinConfig extends Omit<ContractJinConfig, "sinks" | "routes" | 
   watch: WatchConfig;
   team?: TeamConfig;
   store?: StoreConfig;
-  defaultSinks?: string[];
-  routeUnmatchedToAll?: boolean;
 }
 
 const DEFAULT_ADAPTER_IDS = [

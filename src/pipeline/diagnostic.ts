@@ -421,6 +421,18 @@ export class DiagnosticLogger {
     });
   }
 
+  watcherReconciled(
+    adapterIds: string[],
+    deferred: boolean,
+  ): void {
+    this.emit({
+      event: "watcher:reconciled",
+      adapterCount: adapterIds.length,
+      adapterIds,
+      deferred,
+    });
+  }
+
   periodicTick(): void {
     this.emit({ event: "periodic:tick" });
   }

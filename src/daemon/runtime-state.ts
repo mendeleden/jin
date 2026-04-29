@@ -277,13 +277,9 @@ function detectActiveOwner(modeHint?: RuntimeMode): RuntimeOwnershipRecord | nul
   const paths = getRuntimePaths();
   const livePid = readLivePid();
 
-  if (isServiceActive()) {
-    const pid = livePid ?? getServicePid();
-    if (!pid) {
-      return persisted?.owner?.mode === "service" ? persisted.owner : null;
-    }
-
-    return buildOwnershipRecord(pid, "service", paths, persisted?.owner);
+  const serviceOwner = detectServiceOwner(paths, persisted, livePid, modeHint);
+  if (serviceOwner) {
+    return serviceOwner;
   }
 
   if (!livePid) {
@@ -298,6 +294,48 @@ function detectActiveOwner(modeHint?: RuntimeMode): RuntimeOwnershipRecord | nul
         : inferProcessMode(livePid);
 
   return buildOwnershipRecord(livePid, inferredMode, paths, persisted?.owner);
+}
+
+function detectServiceOwner(
+  paths: RuntimePaths,
+  persisted: PersistedRuntimeState | null,
+  livePid: number | null,
+  modeHint?: RuntimeMode,
+): RuntimeOwnershipRecord | null {
+  if (!isServiceActive()) {
+    return null;
+  }
+
+  const persistedOwner = persisted?.owner;
+  const persistedServiceOwner =
+    persistedOwner?.mode === "service" &&
+    ownershipMatchesRuntime(persistedOwner, paths)
+      ? persistedOwner
+      : null;
+  const servicePid = getServicePid();
+
+  if (modeHint === "service") {
+    const pid = livePid ?? servicePid ?? persistedServiceOwner?.pid;
+    if (!pid) {
+      return null;
+    }
+    return buildOwnershipRecord(pid, "service", paths, persistedOwner);
+  }
+
+  if (servicePid && livePid && servicePid === livePid) {
+    return buildOwnershipRecord(servicePid, "service", paths, persistedOwner);
+  }
+
+  if (persistedServiceOwner) {
+    return buildOwnershipRecord(
+      servicePid ?? persistedServiceOwner.pid,
+      "service",
+      paths,
+      persistedOwner,
+    );
+  }
+
+  return null;
 }
 
 function buildOwnershipRecord(
@@ -355,11 +393,6 @@ function isPidAlive(pid: number): boolean {
 }
 
 function getServicePid(): number | null {
-  const livePid = readLivePid();
-  if (livePid) {
-    return livePid;
-  }
-
   try {
     if (process.platform === "linux") {
       const result = Bun.spawnSync(
@@ -473,6 +506,17 @@ function hasOwnerDrifted(
     previous.configDir !== owner.configDir ||
     previous.storePath !== owner.storePath ||
     previous.logPath !== owner.logPath
+  );
+}
+
+function ownershipMatchesRuntime(
+  owner: RuntimeOwnershipRecord,
+  paths: RuntimePaths,
+): boolean {
+  return (
+    owner.configDir === paths.configDir &&
+    owner.storePath === paths.storePath &&
+    (owner.logPath ?? paths.logPath) === paths.logPath
   );
 }
 

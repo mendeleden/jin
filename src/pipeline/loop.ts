@@ -66,6 +66,7 @@ export async function runPipeline(
   if (!deferWatcherStart) {
     watcher.reconcile(activeAdapters);
     watcherStarted = true;
+    diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), false);
   }
 
   const ingestBatchSize = normalizeBatchSize(
@@ -245,6 +246,7 @@ export async function runPipeline(
             activeAdapters = await resolveAdapters(options.adapterSource);
             if (watcherStarted) {
               watcher.reconcile(activeAdapters);
+              diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), deferWatcherStart);
             }
             diag?.reconcileResult(activeAdapters.length, activeAdapters.map(a => a.id), performance.now() - t0);
             break;
@@ -460,6 +462,7 @@ export async function runPipeline(
     if (!stopping && deferWatcherStart && !watcherStarted) {
       watcher.reconcile(activeAdapters);
       watcherStarted = true;
+      diag?.watcherReconciled(activeAdapters.map((adapter) => adapter.id), true);
     }
 
     while (idleResolvers.length > 0) {
