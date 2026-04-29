@@ -181,6 +181,32 @@ function readDiagnosticTail(configDir: string, lineCount = 12): string {
   return lines.slice(-lineCount).join("\n");
 }
 
+function readDiagnosticEvents(
+  configDir: string,
+  events: string[],
+  lineCount = 20,
+): string {
+  const debugPath = join(configDir, "debug.jsonl");
+  if (!existsSync(debugPath)) {
+    return "debug log missing";
+  }
+
+  const wanted = new Set(events);
+  const matches = readFileSync(debugPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => ({ raw: line, parsed: safeParse(line) }))
+    .filter((entry) => wanted.has(typeof entry.parsed?.event === "string" ? entry.parsed.event : ""))
+    .map((entry) => entry.raw);
+
+  if (matches.length === 0) {
+    return `no matching events for: ${events.join(", ")}`;
+  }
+
+  return matches.slice(-lineCount).join("\n");
+}
+
 // ─── Setup temp home ─────────────────────────────────────────────────────
 
 const tmpHome = mkdtempSync(join(tmpdir(), "jin-accept-"));
@@ -344,11 +370,20 @@ if (bootstrapComplete) {
     const adapterIds = adapters.map((entry: any) =>
       typeof entry === "string" ? entry : entry.id,
     );
-    assert("claude-code adapter detected", adapterIds.includes("claude-code"));
-    assert("codex adapter detected", adapterIds.includes("codex"));
-    assert("gemini-cli adapter detected", adapterIds.includes("gemini-cli"));
+    const adapterDetail = [
+      `got: ${JSON.stringify(adapters)}`,
+      `codex fixture exists: ${existsSync(join(codexDir, "fixture-codex.jsonl"))}`,
+      `gemini fixture exists: ${existsSync(join(geminiDir, "session-623e21e2-8e7c-4cab-8f23-791b74a26033.json"))}`,
+      "detect tail:",
+      readDiagnosticEvents(jinConfigDir, ["detect:start", "detect:adapter", "detect:result"]),
+      "ingest tail:",
+      readDiagnosticEvents(jinConfigDir, ["work:start", "discovery:result", "ingest:result"], 12),
+    ].join("\n");
+    assert("claude-code adapter detected", adapterIds.includes("claude-code"), adapterDetail);
+    assert("codex adapter detected", adapterIds.includes("codex"), adapterDetail);
+    assert("gemini-cli adapter detected", adapterIds.includes("gemini-cli"), adapterDetail);
     assert("multiple adapters in store", adapterIds.length >= 2,
-      `got: ${JSON.stringify(adapters)}`);
+      adapterDetail);
   }
 }
 

@@ -40,21 +40,21 @@ describe("persona local Postgres bootstrap", () => {
       ["team", "schema", "check", `--connection-string=${PG_CONN}`],
       process.env,
     );
-    expect(before.exitCode).toBe(0);
+    expectCliOk("team schema check before apply", before);
     expect(before.output).toContain("Remote: not initialized");
 
     const apply = runCli(
       ["team", "schema", "apply", `--connection-string=${PG_CONN}`],
       process.env,
     );
-    expect(apply.exitCode).toBe(0);
+    expectCliOk("team schema apply", apply);
     expect(apply.output).toContain("Schema applied successfully.");
 
     const after = runCli(
       ["team", "schema", "check", `--connection-string=${PG_CONN}`],
       process.env,
     );
-    expect(after.exitCode).toBe(0);
+    expectCliOk("team schema check after apply", after);
     expect(after.output).toContain("Remote: v2.5 (compatible)");
 
     const tables = await pg.unsafe(
@@ -94,7 +94,7 @@ describe("persona local Postgres bootstrap", () => {
       ],
       process.env,
     );
-    expect(bridge.exitCode).toBe(0);
+    expectCliOk("team bridge", bridge);
     expect(bridge.output).toContain("jin connect --team=");
 
     const payload = JSON.parse(Buffer.from(extractBridgeCode(bridge.output), "base64").toString("utf8"));
@@ -120,7 +120,7 @@ describe("persona local Postgres bootstrap", () => {
       ],
       env,
     );
-    expect(connect.exitCode).toBe(0);
+    expectCliOk("connect --team", connect);
     expect(connect.output).toContain(
       "Connected remote:github.com/testuser/testapp -> team-local-postgres (postgres).",
     );
@@ -147,7 +147,7 @@ describe("persona local Postgres bootstrap", () => {
     });
 
     const connections = runCli(["connections"], env);
-    expect(connections.exitCode).toBe(0);
+    expectCliOk("connections", connections);
     expect(connections.output).toContain("remote=github.com/testuser/testapp");
     expect(connections.output).toContain("team-local-postgres (postgres)");
   });
@@ -157,7 +157,7 @@ describe("persona local Postgres bootstrap", () => {
       ["team", "schema", "apply", `--connection-string=${PG_CONN}`],
       process.env,
     );
-    expect(apply.exitCode).toBe(0);
+    expectCliOk("team schema apply for direct sink write", apply);
 
     const sink = new PostgresSink({
       type: "postgres",
@@ -196,7 +196,7 @@ function createBridgeCode(): string {
     ["team", "schema", "apply", `--connection-string=${PG_CONN}`],
     process.env,
   );
-  expect(apply.exitCode).toBe(0);
+  expectCliOk("team schema apply for bridge creation", apply);
 
   const bridge = runCli(
     [
@@ -210,8 +210,17 @@ function createBridgeCode(): string {
     ],
     process.env,
   );
-  expect(bridge.exitCode).toBe(0);
+  expectCliOk("team bridge for bridge creation", bridge);
   return extractBridgeCode(bridge.output);
+}
+
+function expectCliOk(
+  label: string,
+  result: { exitCode: number; output: string },
+): void {
+  if (result.exitCode !== 0) {
+    throw new Error(`${label} failed with exit ${result.exitCode}\n${result.output}`);
+  }
 }
 
 function extractBridgeCode(output: string): string {
