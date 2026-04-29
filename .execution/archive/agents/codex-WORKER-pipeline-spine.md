@@ -1,0 +1,24 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-pipeline-spine`
+- preferred session name: `codex-WORKER-pipeline-spine`
+- packet id: `W1-PIPE-01`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-02 00:13:11 EDT`
+- current focus: `Packet implementation completed; queue, ingest, push, watcher integration, and shutdown behavior are ready for review.`
+- recent updates:
+  - `2026-04-01 23:56:10 EDT` — Read the execution rules, packet, shared control plane, and upstream review artifacts; beginning packet-local blueprint and code review.
+  - `2026-04-02 00:13:11 EDT` — Added the new `src/pipeline/**` coordinator modules and `test/pipeline-spine.test.ts`; packet-owned tests pass.
+- files changed:
+  - `src/pipeline/types.ts`
+  - `src/pipeline/queue.ts`
+  - `src/pipeline/ingest.ts`
+  - `src/pipeline/push.ts`
+  - `src/pipeline/watcher.ts`
+  - `src/pipeline/loop.ts`
+  - `src/pipeline/index.ts`
+  - `test/pipeline-spine.test.ts`
+- tests run:
+  - `bun test test/pipeline-spine.test.ts`
+- current blocker: `none`

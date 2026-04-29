@@ -1,0 +1,34 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-perf-tdd-baseline`
+- preferred session name: `codex-WORKER-perf-tdd-baseline`
+- packet id: `W3-PERF-05`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-11T21:38:20Z`
+- current focus: `Baseline audit and pinned before/after perf commands are complete; handoff is ready for review while the streamed/staged worker stays packet-local.`
+- recent updates:
+  - `2026-04-11T21:35:05Z` Read the required execution docs, program state, and `W3-PERF-03`/`04`/`05` packets; now pinning the baseline test matrix, perf command set, and any missing focused coverage before the streamed/staged experiment widens.
+  - `2026-04-11T21:37:25Z` Focused baseline is green with no new functional test gap found in-scope: Claude adapter `14/14`, Cursor adapter `12/12`, runtime/pipeline spine `11/11`, perf harness `5/5`, sink/bootstrap surfaces `24/24`. Writing the packet-local audit and exact before/after command set next.
+  - `2026-04-11T21:38:20Z` Wrote `docs/execution/audits/2026-04-11-W3-PERF-05-tdd-baseline-and-command-set.md`, pinned the canonical benchmark plus disposable-foreground command set, and left production code untouched because no in-scope baseline gap required new tests or runtime edits.
+- pinned perf commands:
+  - benchmark harness:
+    - `tmp_root=$(mktemp -d /tmp/jin-w3-perf05-benchmark.XXXXXX)`
+    - `config_dir="$tmp_root/config"`
+    - `out_dir="$tmp_root/results"`
+    - `mkdir -p "$config_dir" "$out_dir"`
+    - `cp "$HOME/.config/jin/config.json" "$config_dir/config.json"`
+    - `JIN_CONFIG_DIR="$config_dir" JIN_BENCHMARK_OUTPUT_DIR="$out_dir" bash test/perf-harness/run-v2-benchmark.sh`
+  - frozen-guard disposable foreground:
+    - `OUTPUT_PATH="$(mktemp /tmp/jin-w3-perf05-foreground-256.XXXXXX.json)" RSS_WARNING_MB=200 RSS_HARD_LIMIT_MB=256 python3 - <<'PY' ... bun run src/index.ts start --foreground ... PY`
+  - completion control:
+    - same disposable foreground command, changing only `RSS_HARD_LIMIT_MB=400`
+- files changed:
+  - `docs/execution/audits/2026-04-11-W3-PERF-05-tdd-baseline-and-command-set.md`
+- tests run:
+  - `bun test test/claude-code-reference-adapter.test.ts`
+  - `bun test test/cursor-adapter.test.ts`
+  - `bun test test/runtime-store-cutover.test.ts test/pipeline-spine.test.ts`
+  - `bun test test/perf-harness/benchmark-v2.test.ts`
+  - `bun test test/postgres-reference-sink.test.ts test/team-bootstrap.test.ts test/live-validation/run.test.ts`
+- current blocker: `none`

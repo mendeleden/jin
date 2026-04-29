@@ -1,0 +1,34 @@
+# Worker Heartbeat
+
+- agent id: `codex-WORKER-live-runtime-store-cutover`
+- preferred session name: `codex-WORKER-live-runtime-store-cutover`
+- internal Codex agent id: `019d65e7-b587-7121-b09b-73b302251361`
+- nickname: `Mendel`
+- packet id: `W3-RUNTIME-01`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-06`
+- current focus: `W3-RUNTIME-01 implementation complete; cutover verified with focused runtime/store tests`
+- recent updates:
+  - `2026-04-06`: completed live runtime/store cutover: `watch.ts` now launches `runPipeline(...)` on `src/db/store.ts`, one-shot `ingest.ts` moved to v2 ingest/push/store path, and runtime read surfaces (`status.ts`, `analyze.ts`) now read from v2 db/query surface
+  - `2026-04-06`: added focused cutover verification in `test/runtime-store-cutover.test.ts` and updated `test/init.test.ts` adapter fixtures for the v2 one-shot ingest path
+  - `2026-04-06`: added v1-compat migration guard in `src/db/schema.ts` to safely handle legacy `messages(session_id, ...)` tables during v2 store open
+  - `2026-04-06`: detected interrupted partial edit (`src/commands/watch.ts` deleted) and resumed packet implementation to restore and complete v2 cutover
+  - `2026-04-06`: internal Codex worker `Mendel` launched and assigned to `W3-RUNTIME-01`
+  - `2026-04-06`: worker session started; executing required docs in order and beginning packet implementation
+  - `2026-04-06`: packet opened from the reconciled BP-05 runtime/store drift after W3-TEAM-01 approval
+- files changed:
+  - `src/commands/watch.ts`
+  - `src/commands/ingest.ts`
+  - `src/commands/status.ts`
+  - `src/commands/analyze.ts`
+  - `src/db/schema.ts`
+  - `src/tui/app.tsx`
+  - `test/runtime-store-cutover.test.ts`
+  - `test/init.test.ts`
+- tests run:
+  - `bun test test/runtime-store-cutover.test.ts` (pass)
+  - `bun test test/init.test.ts` (pass)
+  - `bun test test/lifecycle-boundary.test.ts` (pass)
+  - `bun test test/config-mutation-control.test.ts` (pass)
+- current blocker: `none`

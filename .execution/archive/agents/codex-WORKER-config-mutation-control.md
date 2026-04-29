@@ -1,0 +1,25 @@
+# Worker Heartbeat
+
+- agent id: `codex-WORKER-config-mutation-control`
+- preferred session name: `codex-WORKER-config-mutation-control`
+- packet id: `W2-CONFIG-02`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-02 00:30:50 EDT`
+- current focus: `handoff ready; BP-08 mutation/control command layer implemented and verified with focused tests`
+- recent updates:
+  - `2026-04-02 00:19:59 EDT`: claimed the config mutation/control lane, read the execution protocol, and started the shared control-plane review
+  - `2026-04-02 00:30:50 EDT`: added v2 sink/route mutation command modules plus controlled restart and selective pause/resume control helpers in `src/commands/`
+  - `2026-04-02 00:30:50 EDT`: rewrote `connect` to bridge project selection onto BP-08 remote-based routes and cleaned `init` / `team-config` to keep workspace metadata out of generic sink config
+  - `2026-04-02 00:30:50 EDT`: added `test/config-mutation-control.test.ts` and verified the owned command surface with `bun test test/config-mutation-control.test.ts`
+- files changed:
+  - `src/commands/config-control.ts`
+  - `src/commands/sink.ts`
+  - `src/commands/route.ts`
+  - `src/commands/connect.ts`
+  - `src/commands/init.ts`
+  - `src/commands/team-config.ts`
+  - `test/config-mutation-control.test.ts`
+- tests run:
+  - `bun test test/config-mutation-control.test.ts`
+- current blocker: `none`

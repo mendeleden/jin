@@ -1,0 +1,24 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-performance-blueprint`
+- preferred session name: `codex-WORKER-performance-blueprint`
+- packet id: `W3-BP-01`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-08`
+- current focus: `Handoff ready. Added BP-10 as the release-validation contract, hardened BP-01/BP-02/BP-04 to point at it, and recorded the packet decision artifact.`
+- recent updates:
+  - `2026-04-08`: Read global rules, dispatch protocol, frozen contract surface, live control plane, the performance persona council, the W3-BP-01 task packet, and the current shared control-plane state for W3-BP-01, W3-ADAPTER-05, and W3-PERF-02.
+  - `2026-04-08`: Read BP-01/BP-02/BP-03/BP-04/BP-05, the W3-ADAPTER-05 and W3-PERF-02 task packets, the recent perf solution notes, and the related audit artifacts to decide whether release perf validation needed a dedicated blueprint.
+  - `2026-04-08`: Added `docs/blueprint/BP-10-performance-validation.md`, hardened `docs/blueprint/BP-01-module-map.md`, `docs/blueprint/BP-02-data-flow.md`, `docs/blueprint/BP-04-adapter-contract.md`, updated `docs/blueprint/README.md`, and wrote `docs/execution/audits/2026-04-08-W3-BP-01-performance-validation-blueprint-decision.md`.
+- files changed:
+  - `docs/blueprint/BP-01-module-map.md`
+  - `docs/blueprint/BP-02-data-flow.md`
+  - `docs/blueprint/BP-04-adapter-contract.md`
+  - `docs/blueprint/BP-10-performance-validation.md`
+  - `docs/blueprint/README.md`
+  - `docs/execution/audits/2026-04-08-W3-BP-01-performance-validation-blueprint-decision.md`
+  - `.execution/agents/codex-WORKER-performance-blueprint.md`
+- tests run:
+  - `git diff --check -- docs/blueprint/BP-01-module-map.md docs/blueprint/BP-02-data-flow.md docs/blueprint/BP-04-adapter-contract.md docs/blueprint/BP-10-performance-validation.md docs/blueprint/README.md docs/execution/audits/2026-04-08-W3-BP-01-performance-validation-blueprint-decision.md .execution/agents/codex-WORKER-performance-blueprint.md`
+- current blocker: `none`

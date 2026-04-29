@@ -1,0 +1,31 @@
+# Worker Heartbeat
+
+- agent id: `codex-WORKER-protected-source-opt-in`
+- preferred session name: `codex-WORKER-protected-source-opt-in`
+- external session id: `019d6526-e1e2-7962-9d3e-f349f954a4d1`
+- tmux session: `jin-w3-startup`
+- log path: `.execution/logs/codex-W3-STARTUP-01.jsonl`
+- last-message path: `.execution/logs/codex-W3-STARTUP-01-last.txt`
+- packet id: `W3-STARTUP-01`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-06 20:01:18 EDT`
+- current focus: `handoff ready; startup protected-source probing is gated behind explicit opt-in and focused verification is green`
+- recent updates:
+  - `2026-04-06 19:36:21 EDT`: claimed the protected-source opt-in lane, read the execution protocol and shared control-plane state, and started packet-scoped inspection
+  - `2026-04-06 19:55:33 EDT`: added startup policy/config handling for protected or app-private adapter sources and wired `watch` / `init` through packet-scoped detection gating
+  - `2026-04-06 19:55:33 EDT`: added focused startup/privacy regression coverage for opt-in gating, user-provided data paths, and the retained no-auto-enable startup behavior
+  - `2026-04-06 19:56:31 EDT`: reran the focused startup/detection verification suite after the final registry cleanup and confirmed the packet is green
+  - `2026-04-06 20:01:18 EDT`: added a direct human-output regression for `jin init` opt-in wording and reran the focused packet-local suite cleanly
+  - `2026-04-06 20:00:31 EDT`: worker resumed in detached mode under tmux session `jin-w3-startup`
+- files changed:
+  - `src/config.ts`
+  - `src/adapters/registry.ts`
+  - `src/commands/watch.ts`
+  - `src/commands/init.ts`
+  - `test/config-mutation-control.test.ts`
+  - `test/init.test.ts`
+  - `test/startup-protected-source-opt-in.test.ts`
+- tests run:
+  - `bun test test/startup-protected-source-opt-in.test.ts test/config-mutation-control.test.ts test/init.test.ts test/cursor-adapter.test.ts`
+- current blocker: `none`

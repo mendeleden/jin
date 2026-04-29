@@ -1,0 +1,26 @@
+# Agent Heartbeat
+
+- agent id: `codex-WORKER-simple-adapters-bulk-port`
+- preferred session name: `codex-WORKER-simple-adapters-bulk-port`
+- packet id: `W2-ADAPTER-04`
+- branch / worktree / container: `feat/rewrite-ontology` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-03 00:50:41 EDT`
+- current focus: `Packet implementation complete; the simple adapters now expose the frozen v2 contract with packet-local coverage and are ready for review.`
+- recent updates:
+  - `2026-04-03 00:27:15 EDT` — heartbeat created after reading the execution docs, shared control plane, packet state, and approved reference-adapter reviews; packet-owned blueprint and adapter source review next
+  - `2026-04-03 00:44:09 EDT` — rewrote the owned simple adapters onto the frozen v2 contract with deterministic IDs, stat/signature-based change detection, root-conversation defaults, and local legacy bridge methods
+  - `2026-04-03 00:49:57 EDT` — packet-local TypeScript check and focused adapter tests passed for Amp, Gemini CLI, OpenCode, Pi, PiAgent, Kiro, and Warp
+- files changed:
+  - `src/adapters/amp.ts`
+  - `src/adapters/gemini-cli.ts`
+  - `src/adapters/kiro.ts`
+  - `src/adapters/opencode.ts`
+  - `src/adapters/pi.ts`
+  - `src/adapters/piagent.ts`
+  - `src/adapters/warp.ts`
+  - `test/simple-adapters-bulk-port.test.ts`
+- tests run:
+  - `bun x tsc --noEmit --pretty false src/adapters/amp.ts src/adapters/gemini-cli.ts src/adapters/kiro.ts src/adapters/opencode.ts src/adapters/pi.ts src/adapters/piagent.ts src/adapters/warp.ts test/simple-adapters-bulk-port.test.ts`
+  - `bun test test/simple-adapters-bulk-port.test.ts`
+- current blocker: `none`

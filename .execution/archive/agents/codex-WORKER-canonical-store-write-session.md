@@ -1,0 +1,35 @@
+# Worker Heartbeat
+
+- agent id: `codex-WORKER-canonical-store-write-session`
+- preferred session name: `codex-WORKER-canonical-store-write-session`
+- packet id: `W3-PERF-10`
+- branch / worktree / container: `feat/post-ontology-rewrite-fixes` / `canonical repo workspace` / `local`
+- status: `review_ready`
+- last heartbeat: `2026-04-15`
+- current focus: `W3-PERF-10 implementation complete; canonical store-owned write sessions now back bundle writes and the parent-side worker ingest helper`
+- recent updates:
+  - `2026-04-15`: added `ConversationStore.createWriteSession(...)` to the store contract, implemented the canonical SQLite session engine in `src/db/write-session.ts`, and routed `src/db/bundle.ts` through that engine instead of keeping a parallel write implementation
+  - `2026-04-15`: restored `src/pipeline/ingest-worker.ts` against the store-owned session contract so worker frame ingestion no longer reaches into SQLite-specific writer internals
+  - `2026-04-15`: added focused regression coverage in `test/db-write-session.test.ts` for direct session parity, unchanged revision behavior, abort rollback, and subprocess worker-frame ingestion
+  - `2026-04-15`: updated benchmark and in-memory pipeline store doubles for the new explicit session contract and captured the durable lesson in `docs/solutions/2026-04-15-store-owned-write-session-unifies-bundle-and-worker-persistence.md`
+  - `2026-04-15`: read required execution docs, packet state, live control-plane state, ontology, BP-04, and the current store/ingest implementation surface
+  - `2026-04-15`: confirmed `src/pipeline/ingest-worker.ts` is absent from the current branch and started tracing the prior `StreamingConversationWriteSession` implementation to reconcile packet intent with the present tree
+  - `2026-04-15`: narrowed the packet implementation to a canonical store-owned write session shared by bundle writes and parent-side staged worker frame ingestion, without restoring adapter-to-store shortcuts or worker-owned persistence
+- current blocker: `none`
+- files changed:
+  - `src/contracts/store.ts`
+  - `src/db/bundle.ts`
+  - `src/db/store.ts`
+  - `src/db/write-session.ts`
+  - `src/db/index.ts`
+  - `src/pipeline/ingest-worker.ts`
+  - `src/index.ts`
+  - `src/pipeline/index.ts`
+  - `src/commands/benchmark.ts`
+  - `test/db-write-session.test.ts`
+  - `test/pipeline-spine.test.ts`
+  - `test/pipeline-spec-gap-closure.test.ts`
+  - `docs/solutions/2026-04-15-store-owned-write-session-unifies-bundle-and-worker-persistence.md`
+- tests run:
+  - `bun test test/db-write-session.test.ts test/db-store-spine.test.ts test/pipeline-spine.test.ts test/pipeline-spec-gap-closure.test.ts` (pass)
+  - `bun run typecheck` (fails on pre-existing unrelated errors in `src/commands/sink.ts`, `src/commands/status.ts`, `src/sink-resolver.ts`, and `src/sinks/postgres.ts`)
