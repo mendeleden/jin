@@ -5,6 +5,7 @@ import { existsSync, chmodSync, renameSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir, platform, arch } from "os";
 import { configDir } from "./config";
+import { windowsTaskIdentityPowerShellLines } from "./windows-task";
 
 const REPO = "mendeleden/jin";
 const PID_FILE = join(configDir(), "jin.pid");
@@ -104,8 +105,12 @@ function detectRunState(): "service" | "daemon" | "none" {
       if (line && line.trim().split(/\s+/)[0] !== "-") return "service";
     }
     if (platform() === "win32") {
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
+      ].join("; ");
       const r = Bun.spawnSync(
-        ["powershell", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
+        ["powershell", "-Command", ps],
         { stdout: "pipe", stderr: "pipe" }
       );
       if (new TextDecoder().decode(r.stdout).trim() === "Running") return "service";
@@ -129,8 +134,13 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
   if (mode === "service") {
     log("Restarting service...");
     if (platform() === "win32") {
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
+        "Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName",
+      ].join("; ");
       Bun.spawnSync(
-        ["powershell", "-Command", "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'jin'"],
+        ["powershell", "-Command", ps],
         { stdout: "inherit", stderr: "inherit" }
       );
     } else if (platform() === "linux") {

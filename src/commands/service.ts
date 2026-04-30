@@ -9,6 +9,11 @@ import {
   markRuntimeRunning,
   markRuntimeStarting,
 } from "../daemon/runtime-state";
+import {
+  WINDOWS_TASK_FOLDER_NAME,
+  windowsTaskIdentityPowerShellLines,
+  windowsTaskReferenceForDocs,
+} from "../windows-task";
 
 const PLATFORM = process.platform;
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
@@ -312,12 +317,16 @@ async function windowsInstall(): Promise<void> {
   const ps = [
     `$ErrorActionPreference = 'Stop'`,
     `$me = (whoami)`,
+    ...windowsTaskIdentityPowerShellLines(),
+    `$schedule = New-Object -ComObject 'Schedule.Service'`,
+    `$schedule.Connect()`,
+    `try { $null = $schedule.GetFolder($taskPath) } catch { $null = $schedule.GetFolder('\\').CreateFolder('${WINDOWS_TASK_FOLDER_NAME}') }`,
     `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument 'start --foreground'`,
     `$trigger = New-ScheduledTaskTrigger -AtLogOn -User $me`,
     `$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited`,
     `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
-    `Register-ScheduledTask -TaskName 'jin' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'jin conversation data pipeline' -Force | Out-Null`,
-    `Start-ScheduledTask -TaskName 'jin'`,
+    `Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'jin conversation data pipeline' -Force | Out-Null`,
+    `Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName`,
   ].join("; ");
 
   const result = Bun.spawnSync(["powershell", "-Command", ps], {
@@ -337,8 +346,9 @@ async function windowsInstall(): Promise<void> {
 
 async function windowsUninstall(): Promise<void> {
   const ps = [
-    `Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue`,
-    `Unregister-ScheduledTask -TaskName 'jin' -Confirm:$false`,
+    ...windowsTaskIdentityPowerShellLines(),
+    `Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue`,
+    `Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue`,
   ].join("; ");
 
   const result = Bun.spawnSync(["powershell", "-Command", ps], {
@@ -354,7 +364,10 @@ async function windowsUninstall(): Promise<void> {
 }
 
 async function windowsStatus(): Promise<void> {
-  const ps = `Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue | Format-List TaskName,State`;
+  const ps = [
+    ...windowsTaskIdentityPowerShellLines(),
+    `Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue | Format-List TaskPath,TaskName,State`,
+  ].join("; ");
 
   const result = Bun.spawnSync(["powershell", "-Command", ps], {
     stdout: "pipe",
@@ -453,7 +466,7 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
         console.log(`  Plist:    ~/Library/LaunchAgents/com.jin.agent.plist`);
       } else if (PLATFORM === "win32") {
         console.log(`  Platform: Windows (Task Scheduler)`);
-        console.log(`  Task:     jin`);
+        console.log(`  Task:     ${windowsTaskReferenceForDocs()}`);
       }
       console.log(``);
     }

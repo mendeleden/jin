@@ -13,6 +13,7 @@ import {
   getRuntimeStatus,
   markRuntimeStopping,
 } from "./runtime-state";
+import { windowsTaskIdentityPowerShellLines } from "../windows-task";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const DEFAULT_STOP_WAIT_MS = 2_000;
@@ -229,12 +230,12 @@ async function requestServiceStop(): Promise<void> {
     }
 
     if (process.platform === "win32") {
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
+      ].join("; ");
       Bun.spawnSync(
-        [
-          "powershell",
-          "-Command",
-          "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue",
-        ],
+        ["powershell", "-Command", ps],
         { stdout: "pipe", stderr: "pipe" },
       );
     }

@@ -14,6 +14,7 @@ import type {
   RuntimeState,
   RuntimeStatus,
 } from "../contracts/lifecycle";
+import { windowsTaskIdentityPowerShellLines } from "../windows-task";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");
@@ -66,12 +67,12 @@ export function isServiceInstalled(): boolean {
       return existsSync(join(HOME, "Library", "LaunchAgents", "com.jin.agent.plist"));
     }
     if (process.platform === "win32") {
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
+      ].join("; ");
       const result = Bun.spawnSync(
-        [
-          "powershell",
-          "-Command",
-          "Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue",
-        ],
+        ["powershell", "-Command", ps],
         { stdout: "pipe", stderr: "pipe" },
       );
       return result.exitCode === 0 && decode(result.stdout).trim().length > 0;
@@ -96,12 +97,12 @@ export function isServiceActive(): boolean {
       return status?.running === true;
     }
     if (process.platform === "win32") {
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
+      ].join("; ");
       const result = Bun.spawnSync(
-        [
-          "powershell",
-          "-Command",
-          "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State",
-        ],
+        ["powershell", "-Command", ps],
         { stdout: "pipe", stderr: "pipe" },
       );
       return decode(result.stdout).trim() === "Running";
