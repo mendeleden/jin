@@ -105,8 +105,8 @@ function detectRunState(): "service" | "daemon" | "none" {
     }
     if (platform() === "win32") {
       const r = Bun.spawnSync(
-        ["powershell", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
-        { stdout: "pipe", stderr: "pipe" }
+        ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
+        { stdout: "pipe", stderr: "pipe", windowsHide: true } as Parameters<typeof Bun.spawnSync>[1],
       );
       if (new TextDecoder().decode(r.stdout).trim() === "Running") return "service";
     }
@@ -130,8 +130,8 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
     log("Restarting service...");
     if (platform() === "win32") {
       Bun.spawnSync(
-        ["powershell", "-Command", "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'jin'"],
-        { stdout: "inherit", stderr: "inherit" }
+        ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'jin'"],
+        { stdout: "inherit", stderr: "inherit", windowsHide: true } as Parameters<typeof Bun.spawnSync>[1],
       );
     } else if (platform() === "linux") {
       Bun.spawnSync(["systemctl", "--user", "restart", "jin.service"], { stdout: "inherit", stderr: "inherit" });

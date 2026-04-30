@@ -32,6 +32,10 @@ export async function daemonize(): Promise<void> {
     stdin: "ignore",
     detached: true,
     env: { ...process.env, JIN_DAEMON: "1" },
+    // On Windows, suppress the console window for the detached daemon and any
+    // children it later spawns; without this each Bun.spawn from the daemon
+    // pops a conhost.exe window because the daemon has no inheritable console.
+    windowsHide: true,
   });
   closeSync(logFd);
 

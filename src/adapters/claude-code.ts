@@ -1603,6 +1603,7 @@ export class ClaudeCodeAdapter implements ContractAdapter {
           cwd: resolvedCwd,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
         }).trim();
       } catch {
         return "";

@@ -323,12 +323,14 @@ export class WarpAdapter implements Adapter, V2Adapter {
       const remote = execFileSync("git", ["remote", "get-url", "origin"], {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       })
         .toString()
         .trim();
       const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       })
         .toString()
         .trim();

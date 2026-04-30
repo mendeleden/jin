@@ -232,10 +232,14 @@ async function requestServiceStop(): Promise<void> {
       Bun.spawnSync(
         [
           "powershell",
+          "-NoLogo",
+          "-NonInteractive",
+          "-WindowStyle",
+          "Hidden",
           "-Command",
           "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue",
         ],
-        { stdout: "pipe", stderr: "pipe" },
+        { stdout: "pipe", stderr: "pipe", windowsHide: true },
       );
     }
   } catch {}

@@ -23,7 +23,7 @@ function projectNameFromCwd(cwd: string): string {
 /** Detect git remote origin URL from a directory (returns undefined if not a git repo) */
 function gitRemoteFromCwd(cwd: string): string | undefined {
   try {
-    return execSync("git remote get-url origin", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"] })
+    return execSync("git remote get-url origin", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
       .toString()
       .trim() || undefined;
   } catch {
@@ -34,7 +34,7 @@ function gitRemoteFromCwd(cwd: string): string | undefined {
 /** Detect current git branch from a directory */
 function gitBranchFromCwd(cwd: string): string | undefined {
   try {
-    return execSync("git rev-parse --abbrev-ref HEAD", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"] })
+    return execSync("git rev-parse --abbrev-ref HEAD", { cwd, timeout: 3000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
       .toString()
       .trim() || undefined;
   } catch {

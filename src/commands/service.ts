@@ -311,10 +311,14 @@ async function windowsInstall(): Promise<void> {
     `Start-ScheduledTask -TaskName 'jin'`,
   ].join("; ");
 
-  const result = Bun.spawnSync(["powershell", "-Command", ps], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
+  const result = Bun.spawnSync(
+    ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+    {
+      stdout: "inherit",
+      stderr: "inherit",
+      windowsHide: true,
+    },
+  );
 
   if (result.exitCode === 0) {
     console.log(`  Task registered. jin will start at logon and restart on failure.`);
@@ -329,10 +333,14 @@ async function windowsUninstall(): Promise<void> {
     `Unregister-ScheduledTask -TaskName 'jin' -Confirm:$false`,
   ].join("; ");
 
-  const result = Bun.spawnSync(["powershell", "-Command", ps], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
+  const result = Bun.spawnSync(
+    ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+    {
+      stdout: "inherit",
+      stderr: "inherit",
+      windowsHide: true,
+    },
+  );
 
   if (result.exitCode === 0) {
     console.log(`  Task unregistered.`);
@@ -344,10 +352,14 @@ async function windowsUninstall(): Promise<void> {
 async function windowsStatus(): Promise<void> {
   const ps = `Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue | Format-List TaskName,State`;
 
-  const result = Bun.spawnSync(["powershell", "-Command", ps], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const result = Bun.spawnSync(
+    ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    },
+  );
 
   const output = new TextDecoder().decode(result.stdout).trim();
   if (output) {
