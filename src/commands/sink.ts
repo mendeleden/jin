@@ -18,6 +18,7 @@ import {
   getRuntimePaths,
   getRuntimeStatus,
   runModeLabel,
+  type RunMode,
 } from "../daemon/runtime-state";
 import { DiagnosticLogger } from "../pipeline/diagnostic";
 import { pushDirty } from "../pipeline/push";
@@ -124,9 +125,7 @@ export async function sinkRepushCommand(sinkId: string): Promise<void> {
 
   const runtime = getRuntimeStatus();
   if (runtime.owner && runtime.state !== "stopped") {
-    fail(
-      `jin is already running under ${runModeLabel(runtime.owner.mode)}; stop the active runtime before repushing sink state`,
-    );
+    fail(buildRunningRuntimeGuidance(runtime.owner.mode, sinkId));
   }
 
   const config = await loadConfig();
@@ -451,4 +450,28 @@ function createSinkCommandLogger(): PipelineLogger {
 function fail(message: string): never {
   console.error(`  Error: ${message}`);
   process.exit(1);
+}
+
+export function buildRunningRuntimeGuidance(
+  mode: RunMode,
+  sinkId: string,
+): string {
+  const startCmd =
+    mode === "service"
+      ? "jin start --service"
+      : mode === "foreground"
+        ? "jin start --foreground"
+        : "jin start";
+
+  return [
+    `jin is running under ${runModeLabel(mode)}; stop it before repushing:`,
+    "",
+    "    jin stop",
+    `    jin sink repush ${sinkId}`,
+    `    ${startCmd}`,
+    "",
+    "  Repush rewrites push state and re-sends conversations to the sink. The",
+    "  daemon's normal push loop would conflict with that, so it must be",
+    "  paused for the operation.",
+  ].join("\n");
 }
