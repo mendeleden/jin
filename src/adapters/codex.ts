@@ -889,11 +889,13 @@ export class CodexAdapter implements Adapter, V2Adapter {
         cwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
       const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
       const result = { remote, branch };
       this.gitCache.set(cwd, result);

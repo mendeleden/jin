@@ -274,6 +274,9 @@ export async function ingestConversationViaWorker(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    // Suppress the new console window each worker would otherwise pop on
+    // Windows when the daemon parent has no inheritable console.
+    windowsHide: true,
   });
   const stderrPromise = readStreamText(subprocess.stderr);
   let session: ConversationWriteSession | null = null;
@@ -549,6 +552,9 @@ export async function findChangedViaWorker(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    // Suppress the new console window each worker would otherwise pop on
+    // Windows when the daemon parent has no inheritable console.
+    windowsHide: true,
   });
   const stderrPromise = readStreamText(subprocess.stderr);
   let nextRequestId = 1;
