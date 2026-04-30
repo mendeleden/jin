@@ -235,8 +235,16 @@ async function requestServiceStop(): Promise<void> {
         "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
       ].join("; ");
       Bun.spawnSync(
-        ["powershell", "-Command", ps],
-        { stdout: "pipe", stderr: "pipe" },
+        [
+          "powershell",
+          "-NoLogo",
+          "-NonInteractive",
+          "-WindowStyle",
+          "Hidden",
+          "-Command",
+          ps,
+        ],
+        { stdout: "pipe", stderr: "pipe", windowsHide: true },
       );
     }
   } catch {}

@@ -23,6 +23,32 @@ const LOG_FILE = join(configDir(), "jin.log");
 const STARTING_GRACE_MS = 10_000;
 const decoder = new TextDecoder();
 
+// Run a powershell command without flashing a console window. Without
+// `windowsHide` + `-WindowStyle Hidden`, every probe pops a visible powershell
+// console because the daemon process has no inheritable console of its own.
+function runHiddenPowerShell(script: string): {
+  exitCode: number | null;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
+} {
+  return Bun.spawnSync(
+    [
+      "powershell",
+      "-NoLogo",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-Command",
+      script,
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    },
+  );
+}
+
 export type RunMode = RuntimeMode | "none";
 
 interface PersistedRuntimeState {
@@ -71,10 +97,7 @@ export function isServiceInstalled(): boolean {
         ...windowsTaskIdentityPowerShellLines(),
         "Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
       ].join("; ");
-      const result = Bun.spawnSync(
-        ["powershell", "-Command", ps],
-        { stdout: "pipe", stderr: "pipe" },
-      );
+      const result = runHiddenPowerShell(ps);
       return result.exitCode === 0 && decode(result.stdout).trim().length > 0;
     }
   } catch {}
@@ -101,10 +124,7 @@ export function isServiceActive(): boolean {
         ...windowsTaskIdentityPowerShellLines(),
         "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
       ].join("; ");
-      const result = Bun.spawnSync(
-        ["powershell", "-Command", ps],
-        { stdout: "pipe", stderr: "pipe" },
-      );
+      const result = runHiddenPowerShell(ps);
       return decode(result.stdout).trim() === "Running";
     }
   } catch {}

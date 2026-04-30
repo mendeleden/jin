@@ -150,6 +150,7 @@ async function executeLifecycleAction(
     stderr: "pipe",
     stdin: "ignore",
     env: { ...process.env },
+    windowsHide: true,
   });
 
   return {

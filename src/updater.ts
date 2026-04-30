@@ -41,6 +41,25 @@ function isNewer(remote: string, local: string): boolean {
   return false;
 }
 
+function runHiddenPowerShell(script: string, stdio: "pipe" | "inherit") {
+  return Bun.spawnSync(
+    [
+      "powershell",
+      "-NoLogo",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-Command",
+      script,
+    ],
+    {
+      stdout: stdio,
+      stderr: stdio,
+      windowsHide: true,
+    } as Parameters<typeof Bun.spawnSync>[1],
+  );
+}
+
 /** Fetch the latest release metadata from GitHub */
 async function fetchLatestRelease(): Promise<GithubRelease | null> {
   try {
@@ -109,10 +128,7 @@ function detectRunState(): "service" | "daemon" | "none" {
         ...windowsTaskIdentityPowerShellLines(),
         "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
       ].join("; ");
-      const r = Bun.spawnSync(
-        ["powershell", "-Command", ps],
-        { stdout: "pipe", stderr: "pipe" }
-      );
+      const r = runHiddenPowerShell(ps, "pipe");
       if (new TextDecoder().decode(r.stdout).trim() === "Running") return "service";
     }
   } catch {}
@@ -139,10 +155,7 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
         "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
         "Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName",
       ].join("; ");
-      Bun.spawnSync(
-        ["powershell", "-Command", ps],
-        { stdout: "inherit", stderr: "inherit" }
-      );
+      runHiddenPowerShell(ps, "inherit");
     } else if (platform() === "linux") {
       Bun.spawnSync(["systemctl", "--user", "restart", "jin.service"], { stdout: "inherit", stderr: "inherit" });
     } else if (platform() === "darwin") {

@@ -88,6 +88,7 @@ case ":$PATH:" in
 esac
 
 echo "  Get started:"
-echo "    jin init          # detect your coding tools"
-echo "    jin start           # start background monitoring"
+echo "    jin start         # start local monitoring"
+echo "    jin status        # check daemon and sink health"
+echo "    jin connect --team=<code>   # join a workspace, if you have one"
 echo "    jin update        # self-update to latest version"
