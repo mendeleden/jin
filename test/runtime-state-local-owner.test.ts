@@ -64,11 +64,11 @@ Bun.spawnSync = ((cmd) => {
   if (process.platform === "win32") {
     if (binary.toLowerCase() === "powershell") {
       const command = joined;
-      if (command.includes("Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State")) {
+      if (command.includes("Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State")) {
         return response(opts.serviceActive ? "Running\\r\\n" : "\\r\\n");
       }
-      if (command.includes("Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue")) {
-        return response(opts.serviceInstalled ? "jin\\r\\n" : "\\r\\n");
+      if (command.includes("Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue")) {
+        return response(opts.serviceInstalled ? "\\\\Jin\\\\jin-agent-S-1-5-21-test\\r\\n" : "\\r\\n");
       }
       return response("\\r\\n");
     }

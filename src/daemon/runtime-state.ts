@@ -14,6 +14,7 @@ import type {
   RuntimeState,
   RuntimeStatus,
 } from "../contracts/lifecycle";
+import { windowsTaskIdentityPowerShellLines } from "../windows-task";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");
@@ -92,9 +93,11 @@ export function isServiceInstalled(): boolean {
       return existsSync(join(HOME, "Library", "LaunchAgents", "com.jin.agent.plist"));
     }
     if (process.platform === "win32") {
-      const result = runHiddenPowerShell(
-        "Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue",
-      );
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
+      ].join("; ");
+      const result = runHiddenPowerShell(ps);
       return result.exitCode === 0 && decode(result.stdout).trim().length > 0;
     }
   } catch {}
@@ -117,9 +120,11 @@ export function isServiceActive(): boolean {
       return status?.running === true;
     }
     if (process.platform === "win32") {
-      const result = runHiddenPowerShell(
-        "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State",
-      );
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
+      ].join("; ");
+      const result = runHiddenPowerShell(ps);
       return decode(result.stdout).trim() === "Running";
     }
   } catch {}

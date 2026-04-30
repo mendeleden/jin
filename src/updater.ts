@@ -5,6 +5,7 @@ import { existsSync, chmodSync, renameSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir, platform, arch } from "os";
 import { configDir } from "./config";
+import { windowsTaskIdentityPowerShellLines } from "./windows-task";
 
 const REPO = "mendeleden/jin";
 const PID_FILE = join(configDir(), "jin.pid");
@@ -38,6 +39,25 @@ function isNewer(remote: string, local: string): boolean {
     if ((r[i] || 0) < (l[i] || 0)) return false;
   }
   return false;
+}
+
+function runHiddenPowerShell(script: string, stdio: "pipe" | "inherit") {
+  return Bun.spawnSync(
+    [
+      "powershell",
+      "-NoLogo",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-Command",
+      script,
+    ],
+    {
+      stdout: stdio,
+      stderr: stdio,
+      windowsHide: true,
+    } as Parameters<typeof Bun.spawnSync>[1],
+  );
 }
 
 /** Fetch the latest release metadata from GitHub */
@@ -104,10 +124,11 @@ function detectRunState(): "service" | "daemon" | "none" {
       if (line && line.trim().split(/\s+/)[0] !== "-") return "service";
     }
     if (platform() === "win32") {
-      const r = Bun.spawnSync(
-        ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "(Get-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue).State"],
-        { stdout: "pipe", stderr: "pipe", windowsHide: true } as Parameters<typeof Bun.spawnSync>[1],
-      );
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "(Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue).State",
+      ].join("; ");
+      const r = runHiddenPowerShell(ps, "pipe");
       if (new TextDecoder().decode(r.stdout).trim() === "Running") return "service";
     }
   } catch {}
@@ -129,10 +150,12 @@ async function restartRunning(mode: "service" | "daemon", log: (msg: string) => 
   if (mode === "service") {
     log("Restarting service...");
     if (platform() === "win32") {
-      Bun.spawnSync(
-        ["powershell", "-NoLogo", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "Stop-ScheduledTask -TaskName 'jin' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'jin'"],
-        { stdout: "inherit", stderr: "inherit", windowsHide: true } as Parameters<typeof Bun.spawnSync>[1],
-      );
+      const ps = [
+        ...windowsTaskIdentityPowerShellLines(),
+        "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
+        "Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName",
+      ].join("; ");
+      runHiddenPowerShell(ps, "inherit");
     } else if (platform() === "linux") {
       Bun.spawnSync(["systemctl", "--user", "restart", "jin.service"], { stdout: "inherit", stderr: "inherit" });
     } else if (platform() === "darwin") {
