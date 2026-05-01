@@ -27,3 +27,4 @@ tools/parser-spike/go-parser-bin
 tools/parser-spike/go-parser/go.sum
 .claude/scheduled_tasks.lock
 tools/parser-spike/results.json
+tools/parser-spike/codex-review.md
