@@ -18,6 +18,7 @@ import {
 } from "./ingest-worker";
 import type { WorkerSampleDiagnosticFields } from "./diagnostic";
 import type { IngestResult, PipelineLogger } from "./types";
+import { selectWorkerCommand } from "./worker-command";
 
 export interface IngestOptions {
   batchSize?: number;
@@ -119,7 +120,10 @@ export async function ingestOne(
     discoverySummary = restoreAdapterDiscoveryState(adapter, hint, store, options);
     if (workerDiscoverySnapshot) {
       const result = await findChangedViaWorker(
-        options.workerIngest!.command,
+        selectWorkerCommand(options.workerIngest!, {
+          adapterId: adapter.id,
+          operation: "findChanged",
+        }),
         {
           hint,
           adapter: workerDiscoverySnapshot,
@@ -191,7 +195,10 @@ export async function ingestOne(
       try {
         if (workerSnapshot) {
           const result = await ingestConversationViaWorker(
-            options.workerIngest!.command,
+            selectWorkerCommand(options.workerIngest!, {
+              adapterId: adapter.id,
+              operation: "loadConversation",
+            }),
             store,
             {
               ref,

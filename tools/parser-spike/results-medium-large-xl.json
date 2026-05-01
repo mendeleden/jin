@@ -1,0 +1,152 @@
+[
+  {
+    "fixture": "/home/edmininode/here-we-code/jin/.spike-target-big.jsonl",
+    "size_mb": 3.617,
+    "lines": 1352,
+    "iterations": 5,
+    "ts": {
+      "wall_ms": {
+        "mean": 130.0,
+        "min": 130.0,
+        "max": 130.0,
+        "stdev": 0.0
+      },
+      "rss_mb": {
+        "mean": 86.646,
+        "min": 85.652,
+        "max": 87.105,
+        "stdev": 0.509
+      },
+      "cpu_pct": {
+        "mean": 129.6,
+        "min": 129.0,
+        "max": 131.0,
+        "stdev": 0.8
+      },
+      "n": 5
+    },
+    "go": {
+      "wall_ms": {
+        "mean": 86.0,
+        "min": 70.0,
+        "max": 110.0,
+        "stdev": 16.248
+      },
+      "rss_mb": {
+        "mean": 12.272,
+        "min": 11.355,
+        "max": 14.391,
+        "stdev": 1.139
+      },
+      "cpu_pct": {
+        "mean": 98.4,
+        "min": 81.0,
+        "max": 110.0,
+        "stdev": 12.674
+      },
+      "n": 5
+    },
+    "speedup_wall": 1.51,
+    "rss_reduction": 7.06
+  },
+  {
+    "fixture": "/home/edmininode/here-we-code/jin/.spike-target-10mb.jsonl",
+    "size_mb": 11.316,
+    "lines": 6072,
+    "iterations": 5,
+    "ts": {
+      "wall_ms": {
+        "mean": 488.0,
+        "min": 470.0,
+        "max": 510.0,
+        "stdev": 13.266
+      },
+      "rss_mb": {
+        "mean": 136.259,
+        "min": 134.168,
+        "max": 137.445,
+        "stdev": 1.177
+      },
+      "cpu_pct": {
+        "mean": 131.2,
+        "min": 130.0,
+        "max": 132.0,
+        "stdev": 0.748
+      },
+      "n": 5
+    },
+    "go": {
+      "wall_ms": {
+        "mean": 480.0,
+        "min": 420.0,
+        "max": 560.0,
+        "stdev": 49.396
+      },
+      "rss_mb": {
+        "mean": 57.291,
+        "min": 44.875,
+        "max": 61.0,
+        "stdev": 6.246
+      },
+      "cpu_pct": {
+        "mean": 109.8,
+        "min": 108.0,
+        "max": 111.0,
+        "stdev": 1.166
+      },
+      "n": 5
+    },
+    "speedup_wall": 1.02,
+    "rss_reduction": 2.38
+  },
+  {
+    "fixture": "/home/edmininode/here-we-code/jin/.spike-target-50mb.jsonl",
+    "size_mb": 50.921,
+    "lines": 27324,
+    "iterations": 5,
+    "ts": {
+      "wall_ms": {
+        "mean": 1828.0,
+        "min": 1810.0,
+        "max": 1850.0,
+        "stdev": 14.697
+      },
+      "rss_mb": {
+        "mean": 244.616,
+        "min": 234.613,
+        "max": 250.23,
+        "stdev": 5.829
+      },
+      "cpu_pct": {
+        "mean": 127.6,
+        "min": 127.0,
+        "max": 128.0,
+        "stdev": 0.49
+      },
+      "n": 5
+    },
+    "go": {
+      "wall_ms": {
+        "mean": 1774.0,
+        "min": 1690.0,
+        "max": 1900.0,
+        "stdev": 72.277
+      },
+      "rss_mb": {
+        "mean": 211.13,
+        "min": 178.242,
+        "max": 234.297,
+        "stdev": 26.273
+      },
+      "cpu_pct": {
+        "mean": 107.0,
+        "min": 106.0,
+        "max": 109.0,
+        "stdev": 1.095
+      },
+      "n": 5
+    },
+    "speedup_wall": 1.03,
+    "rss_reduction": 1.16
+  }
+]

@@ -14,6 +14,7 @@ import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
 import { appendDiagnosticEvent } from "../pipeline/diagnostic";
 import { runPipeline } from "../pipeline/loop";
+import { createExperimentWorkerResolver } from "../pipeline/worker-command";
 import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
@@ -160,7 +161,8 @@ async function startPipeline(
       logger: toPipelineLogger(log),
       diagnosticLogPath: diagnosticPath,
       workerIngest: {
-        command: resolveSelfCommand(),
+        command: [...resolveSelfCommand(), "__worker"],
+        resolveCommand: createExperimentWorkerResolver(log),
         adapterConfigs: config.adapters,
       },
       ...(discoveryCache

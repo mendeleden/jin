@@ -43,7 +43,7 @@ test("worker ingest routes heavy codex startup refs through the worker path", as
     kind: "startup-scan",
   }, {
     workerIngest: {
-      command: [process.execPath, join(process.cwd(), "src/index.ts")],
+      command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
       adapterConfigs: {
         codex: {
           enabled: true,
@@ -101,7 +101,7 @@ test("worker ingest routes heavy cursor startup refs through the worker path", a
     kind: "startup-scan",
   }, {
     workerIngest: {
-      command: [process.execPath, join(process.cwd(), "src/index.ts")],
+      command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
       adapterConfigs: {
         cursor: {
           enabled: true,
@@ -143,7 +143,7 @@ test("worker ingest routes codex fs-change refs through the worker path", async 
     },
     {
       workerIngest: {
-        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
         adapterConfigs: {
           codex: {
             enabled: true,
@@ -186,7 +186,7 @@ test("worker ingest routes simple gemini startup refs through the worker path", 
     { kind: "startup-scan" },
     {
       workerIngest: {
-        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
         adapterConfigs: {
           "gemini-cli": {
             enabled: true,
@@ -232,7 +232,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
     { kind: "startup-scan" },
     {
       workerIngest: {
-        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
         adapterConfigs: {
           codex: {
             enabled: true,
@@ -272,7 +272,7 @@ test("worker discovery uses durable cache to suppress unchanged codex periodic r
     { kind: "periodic-scan" },
     {
       workerIngest: {
-        command: [process.execPath, join(process.cwd(), "src/index.ts")],
+        command: [process.execPath, join(process.cwd(), "src/index.ts"), "__worker"],
         adapterConfigs: {
           codex: {
             enabled: true,

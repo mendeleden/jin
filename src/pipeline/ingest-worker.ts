@@ -270,7 +270,7 @@ export async function ingestConversationViaWorker(
 > {
   const { ref } = request;
   const subprocess = Bun.spawn({
-    cmd: [...workerCommand, "__worker"],
+    cmd: workerCommand,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -548,7 +548,7 @@ export async function findChangedViaWorker(
   } = {},
 ): Promise<WorkerFindChangedResult> {
   const subprocess = Bun.spawn({
-    cmd: [...workerCommand, "__worker"],
+    cmd: workerCommand,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

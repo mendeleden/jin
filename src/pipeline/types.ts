@@ -3,6 +3,7 @@ import type { AdapterConfig, RouteConfig } from "../contracts/config";
 import type { Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
 import type { SqliteDiscoveryCache } from "../db/discovery-cache";
+import type { WorkerCommandConfig } from "./worker-command";
 
 export type PipelineWorkItem =
   | { kind: "reconcile-adapters" }
@@ -76,8 +77,7 @@ export interface RunPipelineOptions {
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
   diagnosticLogPath?: string;
-  workerIngest?: {
-    command: string[];
+  workerIngest?: WorkerCommandConfig & {
     adapterConfigs: Record<string, AdapterConfig>;
   };
   discoveryCache?: {

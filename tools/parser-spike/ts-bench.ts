@@ -52,6 +52,7 @@ const bundles: unknown[] = [];
 for (const ref of refs) {
   const bundle = await adapter.loadConversation(ref);
   if (!bundle) continue;
+  bundle.conversation.sourcePath = targetAbs;
   bundles.push(bundle);
   totalMessages += bundle.messages.length;
   for (const m of bundle.messages) {
