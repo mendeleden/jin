@@ -216,6 +216,9 @@ export async function ingestOne(
             },
           );
           if (result.kind === "missing") {
+            logger.warn(
+              `Adapter ${adapter.id} worker reported missing conversation ${ref.id} from ${ref.sourcePath}`,
+            );
             excludedDiscoverySourcePaths.add(ref.sourcePath);
             continue;
           }

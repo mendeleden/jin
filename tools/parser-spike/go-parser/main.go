@@ -94,6 +94,7 @@ type rawRecord struct {
 	Subtype         string          `json:"subtype"`
 	UUID            string          `json:"uuid"`
 	ParentUUID      *string         `json:"parentUuid"`
+	AgentID         string          `json:"agentId"`
 	IsSidechain     bool            `json:"isSidechain"`
 	Timestamp       string          `json:"timestamp"`
 	SessionID       string          `json:"sessionId"`
@@ -347,6 +348,23 @@ type parsedRecord struct {
 	raw       rawRecord
 }
 
+type fileMetadata struct {
+	conversationID     string
+	traceSessionID     string
+	parentSessionID    string
+	parentLookupNeedles []string
+	initialCwd         string
+	initialGitBranch   string
+	isSubagent         bool
+}
+
+type parentLinkInfo struct {
+	relationship string
+	traceID      string
+	parentID     string
+	forkPoint    int
+}
+
 func messageIdentitySeed(record parsedRecord, sessionID, kind, timestamp string, msg rawMessage) string {
 	raw := record.raw
 	if strings.TrimSpace(raw.UUID) != "" {
@@ -365,6 +383,192 @@ func messageIdentitySeed(record parsedRecord, sessionID, kind, timestamp string,
 		timestamp,
 		fmt.Sprintf("%d", record.lineIndex),
 	)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func isSubagentPath(file string) bool {
+	return strings.Contains(filepath.Clean(file), string(os.PathSeparator)+"subagents"+string(os.PathSeparator))
+}
+
+func parentSessionIDFromPath(file string) string {
+	normalized := filepath.Clean(file)
+	marker := string(os.PathSeparator) + "subagents" + string(os.PathSeparator)
+	markerIndex := strings.LastIndex(normalized, marker)
+	if markerIndex < 0 {
+		return ""
+	}
+	return filepath.Base(normalized[:markerIndex])
+}
+
+func structuralParentSourcePath(file, parentSessionID string) string {
+	normalized := filepath.Clean(file)
+	marker := string(os.PathSeparator) + "subagents" + string(os.PathSeparator)
+	markerIndex := strings.LastIndex(normalized, marker)
+	if markerIndex < 0 {
+		return ""
+	}
+	parentStem := normalized[:markerIndex]
+	if filepath.Base(parentStem) != parentSessionID {
+		return ""
+	}
+	return parentStem + ".jsonl"
+}
+
+func subagentConversationID(parentScopeID, sourceConversationID, file string) string {
+	fileStem := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+	if parentScopeID == "" {
+		parentScopeID = fileStem
+	}
+	if sourceConversationID == "" {
+		sourceConversationID = fileStem
+	}
+	return "agent-" + stableHash(parentScopeID, sourceConversationID, fileStem)
+}
+
+func inspectFile(records []parsedRecord, file string) fileMetadata {
+	expectsAgentID := isSubagentPath(file)
+	parentSessionID := parentSessionIDFromPath(file)
+	traceSessionID := ""
+	agentID := ""
+	initialCwd := ""
+	initialGitBranch := ""
+
+	for _, record := range records {
+		if traceSessionID == "" && strings.TrimSpace(record.raw.SessionID) != "" {
+			traceSessionID = strings.TrimSpace(record.raw.SessionID)
+		}
+		if agentID == "" && strings.TrimSpace(record.raw.AgentID) != "" {
+			agentID = strings.TrimSpace(record.raw.AgentID)
+		}
+		if initialCwd == "" && strings.TrimSpace(record.raw.Cwd) != "" {
+			initialCwd = record.raw.Cwd
+		}
+		if initialGitBranch == "" && strings.TrimSpace(record.raw.GitBranch) != "" {
+			initialGitBranch = record.raw.GitBranch
+		}
+		hasConversationID := false
+		if expectsAgentID {
+			hasConversationID = agentID != "" || traceSessionID != ""
+		} else {
+			hasConversationID = traceSessionID != ""
+		}
+		if hasConversationID && initialCwd != "" && initialGitBranch != "" {
+			break
+		}
+	}
+
+	fallbackID := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+	sourceConversationID := ""
+	if expectsAgentID {
+		sourceConversationID = firstNonEmpty(agentID, traceSessionID, fallbackID)
+	} else {
+		sourceConversationID = firstNonEmpty(traceSessionID, fallbackID)
+	}
+	conversationID := sourceConversationID
+	if expectsAgentID {
+		conversationID = subagentConversationID(
+			firstNonEmpty(parentSessionID, traceSessionID, fallbackID),
+			sourceConversationID,
+			file,
+		)
+	}
+
+	return fileMetadata{
+		conversationID:  conversationID,
+		traceSessionID:  firstNonEmpty(traceSessionID, parentSessionID, fallbackID),
+		parentSessionID: parentSessionID,
+		parentLookupNeedles: uniqueStrings([]string{
+			sourceConversationID,
+			strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)),
+			filepath.Base(file),
+			strings.TrimPrefix(strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)), "agent-"),
+		}),
+		initialCwd:       initialCwd,
+		initialGitBranch: initialGitBranch,
+		isSubagent:       expectsAgentID,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func resolveParentLink(file string, metadata fileMetadata) parentLinkInfo {
+	parentSessionID := metadata.parentSessionID
+	if parentSessionID == "" {
+		return parentLinkInfo{
+			relationship: "root",
+			traceID:      metadata.conversationID,
+			parentID:     "",
+			forkPoint:    -1,
+		}
+	}
+
+	fallback := parentLinkInfo{
+		relationship: "spawned",
+		traceID:      firstNonEmpty(metadata.traceSessionID, parentSessionID),
+		parentID:     parentSessionID,
+		forkPoint:    -1,
+	}
+	parentPath := structuralParentSourcePath(file, parentSessionID)
+	if parentPath == "" {
+		return fallback
+	}
+	parentPath = filepath.Clean(parentPath)
+	if parentPath == filepath.Clean(file) {
+		return fallback
+	}
+	parentBundles, err := parse(parentPath)
+	if err != nil || len(parentBundles) == 0 {
+		return fallback
+	}
+
+	matchedParentID := parentBundles[len(parentBundles)-1].Conversation.ID
+	forkPoint := -1
+outer:
+	for _, bundle := range parentBundles {
+		for _, message := range bundle.Messages {
+			for _, toolUse := range message.ToolUses {
+				haystack := toolUse.Name + "\n" + toolUse.Input + "\n" + toolUse.Output
+				for _, needle := range metadata.parentLookupNeedles {
+					if needle != "" && strings.Contains(haystack, needle) {
+						matchedParentID = bundle.Conversation.ID
+						forkPoint = message.Turn
+						break outer
+					}
+				}
+			}
+		}
+	}
+
+	return parentLinkInfo{
+		relationship: "spawned",
+		traceID:      firstNonEmpty(parentBundles[0].Conversation.TraceID, fallback.traceID),
+		parentID:     firstNonEmpty(matchedParentID, fallback.parentID),
+		forkPoint:    forkPoint,
+	}
 }
 
 func nextMessageID(seg *segment, seed string) string {
@@ -456,29 +660,22 @@ func parse(file string) ([]ConversationBundle, error) {
 		return nil, nil
 	}
 
-	rootSession := ""
-	rootCwd := ""
-	rootBranch := ""
-	for _, record := range records {
-		if rootSession == "" && strings.TrimSpace(record.raw.SessionID) != "" {
-			rootSession = strings.TrimSpace(record.raw.SessionID)
-		}
-		if rootCwd == "" && strings.TrimSpace(record.raw.Cwd) != "" {
-			rootCwd = record.raw.Cwd
-		}
-		if rootBranch == "" && strings.TrimSpace(record.raw.GitBranch) != "" {
-			rootBranch = record.raw.GitBranch
-		}
-		if rootSession != "" && rootCwd != "" && rootBranch != "" {
-			break
-		}
-	}
-	if rootSession == "" {
-		rootSession = strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
-	}
+	metadata := inspectFile(records, file)
+	rootSession := metadata.conversationID
+	rootCwd := metadata.initialCwd
+	rootBranch := metadata.initialGitBranch
+	parentLink := resolveParentLink(file, metadata)
 
 	segments := []*segment{
-		newSegment(rootSession, "root", "", rootSession, rootCwd, rootBranch, -1),
+		newSegment(
+			rootSession,
+			parentLink.relationship,
+			parentLink.parentID,
+			firstNonEmpty(parentLink.traceID, metadata.traceSessionID, rootSession),
+			rootCwd,
+			rootBranch,
+			parentLink.forkPoint,
+		),
 	}
 	current := segments[0]
 	pendingCompactionSeed := ""
@@ -754,7 +951,16 @@ func parse(file string) ([]ConversationBundle, error) {
 			Relationship: s.relationship,
 			ForkPoint:    s.forkPoint,
 			AdapterID:    "claude-code",
-			Name:         func() string { if s.name != "" { return s.name }; return deriveName(s.messages, rootSession[:min(8, len(rootSession))]) }(),
+			Name: func() string {
+				fallback := rootSession[:min(8, len(rootSession))]
+				if s.relationship == "spawned" {
+					fallback = strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+				}
+				if s.name != "" {
+					return s.name
+				}
+				return deriveName(s.messages, fallback)
+			}(),
 			Cwd:          s.cwd,
 			GitRemote:    resolveGitRemote(s.cwd),
 			Branch:       s.branch,
@@ -955,6 +1161,18 @@ func strconvJSONString(value string) string {
 	return string(raw)
 }
 
+func goWorkerDebugEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("JIN_EXPERIMENT_CLAUDE_CODE_GO_DEBUG")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func goWorkerDebugf(format string, args ...any) {
+	if !goWorkerDebugEnabled() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "go-claude-worker: "+format+"\n", args...)
+}
+
 func writeFramedJSON(w io.Writer, value any) error {
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -1077,6 +1295,16 @@ func runWorkerServer() error {
 				}
 			}
 			if bundle == nil {
+				parsedIDs := make([]string, 0, len(bundles))
+				for _, candidate := range bundles {
+					parsedIDs = append(parsedIDs, candidate.Conversation.ID)
+				}
+				goWorkerDebugf(
+					"missing requested ref id=%s source=%s parsed_ids=%v",
+					params.Ref.ID,
+					params.Ref.SourcePath,
+					parsedIDs,
+				)
 				if err := writeWorkerNotification(ingestMissingMethod, map[string]any{
 					"adapterId": "claude-code",
 					"refId":     params.Ref.ID,
