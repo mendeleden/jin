@@ -23,6 +23,7 @@ flowchart LR
 
 - archived packet state: `.execution/archive/packets/`
 - live packets:
+  - `W3-ADAPTER-13` — `queued`
   - `W3-CLEANUP-02` — `approved`
   - `W3-VALIDATE-02` — `in_progress`
   - `W3-SINK-04` — `needs_codex`
@@ -46,6 +47,8 @@ flowchart LR
 
 - `codex-BRAIN`
 - `codex-WORKER-release-gate-hardening`
+- `codex-WORKER-codex-go-worker` — `in_progress`
+- `codex-REVIEWER-codex-go-worker` — `in_progress`
 
 Archived historical heartbeats live under:
 
@@ -53,6 +56,8 @@ Archived historical heartbeats live under:
 
 ## Next Dispatches
 
+- dispatch `W3-ADAPTER-13` on `experiment/go-codex-worker-integration` with a
+  TDD-first Codex Go-worker parity contract
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
 - reconcile `W3-SINK-04` once release-path CI noise is gone
 - retag/release only after `main` CI is green again

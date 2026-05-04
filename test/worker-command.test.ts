@@ -10,6 +10,8 @@ import {
 afterEach(() => {
   delete process.env.JIN_EXPERIMENT_CLAUDE_CODE_WORKER;
   delete process.env.JIN_EXPERIMENT_CLAUDE_CODE_GO_BINARY;
+  delete process.env.JIN_EXPERIMENT_CODEX_WORKER;
+  delete process.env.JIN_EXPERIMENT_CODEX_GO_BINARY;
 });
 
 test("worker command selector keeps the default TS worker when no experiment flag is set", () => {
@@ -56,6 +58,41 @@ test("worker command selector routes only claude-code loadConversation to the Go
   expect(
     selectWorkerCommand(config, {
       adapterId: "codex",
+      operation: "loadConversation",
+    }),
+  ).toEqual(defaultCommand);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("worker command selector routes only codex loadConversation to the Go worker", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jin-go-worker-test-"));
+  const bin = join(dir, "go-parser-bin");
+  writeFileSync(bin, "");
+  process.env.JIN_EXPERIMENT_CODEX_WORKER = "go";
+  process.env.JIN_EXPERIMENT_CODEX_GO_BINARY = bin;
+
+  const defaultCommand = ["bun", "src/index.ts", "__worker"];
+  const config = {
+    command: defaultCommand,
+    resolveCommand: createExperimentWorkerResolver(),
+  };
+
+  expect(
+    selectWorkerCommand(config, {
+      adapterId: "codex",
+      operation: "loadConversation",
+    }),
+  ).toEqual([bin, "worker"]);
+  expect(
+    selectWorkerCommand(config, {
+      adapterId: "codex",
+      operation: "findChanged",
+    }),
+  ).toEqual(defaultCommand);
+  expect(
+    selectWorkerCommand(config, {
+      adapterId: "claude-code",
       operation: "loadConversation",
     }),
   ).toEqual(defaultCommand);

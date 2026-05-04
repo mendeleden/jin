@@ -17,6 +17,8 @@ export interface WorkerCommandConfig {
 
 const CLAUDE_CODE_GO_WORKER_ENV = "JIN_EXPERIMENT_CLAUDE_CODE_WORKER";
 const CLAUDE_CODE_GO_BINARY_ENV = "JIN_EXPERIMENT_CLAUDE_CODE_GO_BINARY";
+const CODEX_GO_WORKER_ENV = "JIN_EXPERIMENT_CODEX_WORKER";
+const CODEX_GO_BINARY_ENV = "JIN_EXPERIMENT_CODEX_GO_BINARY";
 
 export function selectWorkerCommand(
   config: WorkerCommandConfig,
@@ -33,11 +35,29 @@ export function createExperimentWorkerResolver(
   let announcedGoWorker = false;
 
   return ({ adapterId, operation }) => {
-    if (adapterId !== "claude-code" || operation !== "loadConversation") {
+    if (operation !== "loadConversation") {
       return null;
     }
 
-    const mode = String(process.env[CLAUDE_CODE_GO_WORKER_ENV] ?? "")
+    const experiment =
+      adapterId === "claude-code"
+        ? {
+            modeEnv: CLAUDE_CODE_GO_WORKER_ENV,
+            binaryEnv: CLAUDE_CODE_GO_BINARY_ENV,
+            label: "Claude Code",
+          }
+        : adapterId === "codex"
+          ? {
+              modeEnv: CODEX_GO_WORKER_ENV,
+              binaryEnv: CODEX_GO_BINARY_ENV,
+              label: "Codex",
+            }
+          : null;
+    if (!experiment) {
+      return null;
+    }
+
+    const mode = String(process.env[experiment.modeEnv] ?? "")
       .trim()
       .toLowerCase();
     if (mode !== "go") {
@@ -45,14 +65,14 @@ export function createExperimentWorkerResolver(
     }
 
     const binaryPath =
-      process.env[CLAUDE_CODE_GO_BINARY_ENV] ||
+      process.env[experiment.binaryEnv] ||
       join(process.cwd(), "tools", "parser-spike", "go-parser-bin");
 
     if (!existsSync(binaryPath)) {
       if (!warnedMissingBinary) {
         warnedMissingBinary = true;
         log?.(
-          `Experimental Claude Code Go worker requested via ${CLAUDE_CODE_GO_WORKER_ENV}=go, but binary was not found at ${binaryPath}; falling back to TS worker.`,
+          `Experimental ${experiment.label} Go worker requested via ${experiment.modeEnv}=go, but binary was not found at ${binaryPath}; falling back to TS worker.`,
         );
       }
       return null;
@@ -61,7 +81,7 @@ export function createExperimentWorkerResolver(
     if (!announcedGoWorker) {
       announcedGoWorker = true;
       log?.(
-        `Experimental Claude Code Go worker enabled for loadConversation via ${CLAUDE_CODE_GO_WORKER_ENV}=go (${binaryPath}). findChanged remains on the TS worker.`,
+        `Experimental ${experiment.label} Go worker enabled for loadConversation via ${experiment.modeEnv}=go (${binaryPath}). findChanged remains on the TS worker.`,
       );
     }
 

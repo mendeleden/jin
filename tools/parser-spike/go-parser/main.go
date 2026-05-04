@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
@@ -975,6 +976,1015 @@ func parse(file string) ([]ConversationBundle, error) {
 	return bundles, nil
 }
 
+type codexTokenUsage struct {
+	InputTokens     int
+	OutputTokens    int
+	CacheRead       int
+	ReasoningTokens int
+}
+
+type codexLocalSegment struct {
+	ID         string
+	Messages    []ParsedMessage
+	StartedAt   string
+	EndedAt     string
+	ModelCounts map[string]int
+}
+
+type codexLocalFileModel struct {
+	SessionID       string
+	SourcePath      string
+	Cwd             string
+	GitRemote       string
+	Branch          string
+	RootName        string
+	AgentNickname   string
+	ParentThreadID  string
+	SessionTimestamp string
+	Segments        []codexLocalSegment
+}
+
+type codexResolvedBase struct {
+	TraceID      string
+	ParentID     string
+	Relationship string
+	ForkPoint    int
+}
+
+type codexLoadedFileModel struct {
+	Model codexLocalFileModel
+	Base  codexResolvedBase
+}
+
+func parseWorkerBundles(params loadConversationParams) ([]ConversationBundle, error) {
+	switch strings.TrimSpace(params.Ref.AdapterID) {
+	case "", "claude-code":
+		return parse(params.Ref.SourcePath)
+	case "codex":
+		bundle, err := parseCodexBundle(params.Ref.SourcePath, params.Ref.ID)
+		if err != nil {
+			return nil, err
+		}
+		if bundle == nil {
+			return []ConversationBundle{}, nil
+		}
+		return []ConversationBundle{*bundle}, nil
+	default:
+		return nil, fmt.Errorf("unsupported adapter %s", params.Ref.AdapterID)
+	}
+}
+
+func parseCodexBundle(sourcePath, refID string) (*ConversationBundle, error) {
+	loaded, err := loadCodexFileModel(sourcePath)
+	if err != nil || loaded == nil {
+		return nil, err
+	}
+
+	segmentIndex := -1
+	for idx := range loaded.Model.Segments {
+		if loaded.Model.Segments[idx].ID == refID {
+			segmentIndex = idx
+			break
+		}
+	}
+	if segmentIndex < 0 {
+		return nil, nil
+	}
+
+	bundle := buildCodexBundle(*loaded, segmentIndex)
+	return &bundle, nil
+}
+
+func loadCodexFileModel(sourcePath string) (*codexLoadedFileModel, error) {
+	model, err := buildCodexFileModel(sourcePath)
+	if err != nil || model == nil {
+		return nil, err
+	}
+
+	base, err := resolveCodexBase(*model, map[string]struct{}{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &codexLoadedFileModel{
+		Model: *model,
+		Base:  base,
+	}, nil
+}
+
+func buildCodexFileModel(sourcePath string) (*codexLocalFileModel, error) {
+	fileTimestamp := codexFileTimestamp(sourcePath)
+	sessionID := codexDefaultSessionID(sourcePath)
+	sessionIDLocked := false
+	parentThreadID := ""
+	agentNickname := ""
+	cwd := ""
+	gitRemote := ""
+	branch := ""
+	sessionTimestamp := fileTimestamp
+	currentTurn := -1
+	currentModel := ""
+	firstUserText := ""
+	var currentSegment *codexLocalSegment
+	segments := []codexLocalSegment{}
+	pendingTools := []ParsedToolCall{}
+	pendingToolIndex := map[string]int{}
+	pendingThinkingContent := ""
+	pendingThinkingTokens := 0
+	pendingUsage := codexTokenUsage{}
+	pendingAssistantTimestamp := ""
+	pendingAssistantModel := ""
+	sawLine := false
+
+	ensureSegment := func(timestamp string) *codexLocalSegment {
+		if currentSegment == nil {
+			segment := codexLocalSegment{
+				ID:         sessionID,
+				Messages:    []ParsedMessage{},
+				StartedAt:   timestamp,
+				EndedAt:     timestamp,
+				ModelCounts: map[string]int{},
+			}
+			segments = append(segments, segment)
+			currentSegment = &segments[len(segments)-1]
+		}
+		return currentSegment
+	}
+
+	clearPendingAssistant := func() {
+		pendingTools = []ParsedToolCall{}
+		pendingToolIndex = map[string]int{}
+		pendingThinkingContent = ""
+		pendingThinkingTokens = 0
+		pendingUsage = codexTokenUsage{}
+		pendingAssistantTimestamp = ""
+		pendingAssistantModel = ""
+	}
+
+	hasPendingAssistantState := func() bool {
+		return len(pendingTools) > 0 ||
+			pendingThinkingContent != "" ||
+			pendingThinkingTokens > 0 ||
+			pendingUsage.InputTokens > 0 ||
+			pendingUsage.OutputTokens > 0 ||
+			pendingUsage.CacheRead > 0 ||
+			pendingUsage.ReasoningTokens > 0
+	}
+
+	addMessage := func(segment *codexLocalSegment, message ParsedMessage) {
+		message.Sequence = len(segment.Messages)
+		segment.Messages = append(segment.Messages, message)
+		if message.Timestamp != "" {
+			if segment.StartedAt == "" || message.Timestamp < segment.StartedAt {
+				segment.StartedAt = message.Timestamp
+			}
+			if segment.EndedAt == "" || message.Timestamp > segment.EndedAt {
+				segment.EndedAt = message.Timestamp
+			}
+		}
+		if message.Model != "" {
+			segment.ModelCounts[message.Model] = segment.ModelCounts[message.Model] + 1
+		}
+		if message.Role == "user" && firstUserText == "" && strings.TrimSpace(message.Content) != "" {
+			firstUserText = message.Content
+		}
+	}
+
+	flushPendingAssistant := func(timestamp, recordType string) {
+		if !hasPendingAssistantState() {
+			return
+		}
+		assistantTimestamp := pendingAssistantTimestamp
+		if assistantTimestamp == "" {
+			assistantTimestamp = timestamp
+		}
+		if assistantTimestamp == "" {
+			assistantTimestamp = sessionTimestamp
+		}
+		assistantModel := pendingAssistantModel
+		if assistantModel == "" {
+			assistantModel = currentModel
+		}
+		segment := ensureSegment(assistantTimestamp)
+		messageID := stableHashSHA1(
+			sessionID,
+			segment.ID,
+			recordType,
+			fmt.Sprintf("%d", len(segment.Messages)),
+		)
+		addMessage(segment, ParsedMessage{
+			ID:              messageID,
+			Role:            "assistant",
+			Content:         "Tool call output",
+			RecordType:      recordType,
+			Model:           assistantModel,
+			Turn:            currentTurn,
+			IsSidechain:     false,
+			ParentMessageID: "",
+			InputTokens:     pendingUsage.InputTokens,
+			OutputTokens:    pendingUsage.OutputTokens,
+			CacheRead:       pendingUsage.CacheRead,
+			CacheWrite:      0,
+			ThinkingContent: pendingThinkingContent,
+			ThinkingTokens:  maxInt(pendingThinkingTokens, pendingUsage.ReasoningTokens),
+			Timestamp:       assistantTimestamp,
+			ToolUses:        cloneToolUses(pendingTools),
+		})
+		clearPendingAssistant()
+	}
+
+	err := scanCodexJSONLFile(sourcePath, func(line map[string]any, index int) {
+		sawLine = true
+		envelopeType := stringValue(line["type"])
+		payload := mapValue(line["payload"])
+		timestamp := stringValue(line["timestamp"])
+		if timestamp == "" {
+			timestamp = sessionTimestamp
+		}
+		if timestamp != "" && sessionTimestamp == "" {
+			sessionTimestamp = timestamp
+		}
+
+		switch envelopeType {
+		case "session_meta":
+			if len(payload) == 0 {
+				return
+			}
+			recordSessionID := stringValue(payload["id"])
+			if recordSessionID != "" && !sessionIDLocked {
+				sessionID = recordSessionID
+				sessionIDLocked = true
+				if len(segments) == 1 && len(segments[0].Messages) == 0 {
+					segments[0].ID = recordSessionID
+				}
+			}
+			if value := stringValue(payload["timestamp"]); value != "" {
+				sessionTimestamp = value
+			}
+			if value := stringValue(payload["cwd"]); value != "" {
+				cwd = value
+			}
+			git := mapValue(payload["git"])
+			if value := stringValue(git["repository_url"]); value != "" {
+				gitRemote = value
+			}
+			if value := stringValue(git["branch"]); value != "" {
+				branch = value
+			}
+			parentThreadID = codexExtractParentThreadID(payload["source"], parentThreadID)
+			if value := stringValue(payload["forked_from_id"]); parentThreadID == "" && value != "" {
+				parentThreadID = value
+			}
+			if value := codexExtractAgentNickname(payload["source"]); value != "" {
+				agentNickname = value
+			}
+		case "turn_context":
+			if len(payload) == 0 {
+				return
+			}
+			if currentTurn < 0 {
+				currentTurn = 1
+			} else {
+				currentTurn += 1
+			}
+			if value := stringValue(payload["cwd"]); value != "" {
+				cwd = value
+			}
+			if value := stringValue(payload["model"]); value != "" {
+				currentModel = value
+			}
+		case "event_msg":
+			if stringValue(payload["type"]) == "token_count" {
+				pendingUsage = codexExtractTokenUsage(payload)
+				if timestamp != "" {
+					pendingAssistantTimestamp = timestamp
+				}
+				if currentModel != "" {
+					pendingAssistantModel = currentModel
+				}
+			}
+		case "compacted":
+			flushPendingAssistant(timestamp, "synthetic_assistant")
+			boundarySeed := stringValue(payload["id"])
+			if boundarySeed == "" {
+				boundarySeed = stringValue(payload["turn_id"])
+			}
+			if boundarySeed == "" {
+				boundarySeed = timestamp
+			}
+			if boundarySeed == "" {
+				boundarySeed = fmt.Sprintf("%d", index)
+			}
+			segment := codexLocalSegment{
+				ID: stableHashSHA1(
+					sessionID,
+					fmt.Sprintf("compacted:%d:%s", len(segments), boundarySeed),
+				),
+				Messages:    []ParsedMessage{},
+				StartedAt:   timestamp,
+				EndedAt:     timestamp,
+				ModelCounts: map[string]int{},
+			}
+			segments = append(segments, segment)
+			currentSegment = &segments[len(segments)-1]
+			for historyIndex, item := range arrayValue(payload["replacement_history"]) {
+				history := mapValue(item)
+				historyType := stringValue(history["type"])
+				switch historyType {
+				case "message":
+					role := codexNormalizeRole(stringValue(history["role"]))
+					content := codexFlattenMessageContent(history["content"])
+					if content == "" {
+						continue
+					}
+					messageID := stringValue(history["id"])
+					if messageID == "" {
+						messageID = stableHashSHA1(
+							sessionID,
+							currentSegment.ID,
+							"replacement_message",
+							fmt.Sprintf("%d", historyIndex),
+						)
+					}
+					addMessage(currentSegment, ParsedMessage{
+						ID:              messageID,
+						Role:            role,
+						Content:         content,
+						RecordType:      "message",
+						Model:           stringValue(history["model"]),
+						Turn:            -1,
+						IsSidechain:     false,
+						ParentMessageID: "",
+						InputTokens:     0,
+						OutputTokens:    0,
+						CacheRead:       0,
+						CacheWrite:      0,
+						ThinkingContent: "",
+						ThinkingTokens:  0,
+						Timestamp:       timestamp,
+						ToolUses:        []ParsedToolCall{},
+					})
+				case "compaction":
+					addMessage(currentSegment, ParsedMessage{
+						ID: stableHashSHA1(
+							sessionID,
+							currentSegment.ID,
+							"replacement_compaction",
+							fmt.Sprintf("%d", historyIndex),
+						),
+						Role:            "system",
+						Content:         "Context compacted",
+						RecordType:      "compaction",
+						Model:           "",
+						Turn:            -1,
+						IsSidechain:     false,
+						ParentMessageID: "",
+						InputTokens:     0,
+						OutputTokens:    0,
+						CacheRead:       0,
+						CacheWrite:      0,
+						ThinkingContent: "",
+						ThinkingTokens:  0,
+						Timestamp:       timestamp,
+						ToolUses:        []ParsedToolCall{},
+					})
+				}
+			}
+		case "response_item":
+			if len(payload) == 0 {
+				return
+			}
+			itemType := stringValue(payload["type"])
+			switch itemType {
+			case "message":
+				role := codexNormalizeRole(stringValue(payload["role"]))
+				content := codexFlattenMessageContent(payload["content"])
+				if role != "assistant" {
+					flushPendingAssistant(timestamp, "synthetic_assistant")
+					if content == "" {
+						return
+					}
+					segment := ensureSegment(timestamp)
+					messageID := stringValue(payload["id"])
+					if messageID == "" {
+						messageID = stableHashSHA1(
+							sessionID,
+							segment.ID,
+							"message",
+							fmt.Sprintf("%d", len(segment.Messages)),
+						)
+					}
+					addMessage(segment, ParsedMessage{
+						ID:              messageID,
+						Role:            role,
+						Content:         content,
+						RecordType:      "message",
+						Model:           "",
+						Turn:            currentTurn,
+						IsSidechain:     false,
+						ParentMessageID: "",
+						InputTokens:     0,
+						OutputTokens:    0,
+						CacheRead:       0,
+						CacheWrite:      0,
+						ThinkingContent: "",
+						ThinkingTokens:  0,
+						Timestamp:       timestamp,
+						ToolUses:        []ParsedToolCall{},
+					})
+					return
+				}
+
+				usage := codexSelectUsage(payload, pendingUsage)
+				model := stringValue(payload["model"])
+				if model == "" {
+					model = currentModel
+				}
+				if model != "" {
+					currentModel = model
+				}
+				segment := ensureSegment(timestamp)
+				messageID := stringValue(payload["id"])
+				if messageID == "" {
+					messageID = stableHashSHA1(
+						sessionID,
+						segment.ID,
+						"assistant",
+						fmt.Sprintf("%d", len(segment.Messages)),
+					)
+				}
+				addMessage(segment, ParsedMessage{
+					ID:              messageID,
+					Role:            "assistant",
+					Content:         valueOrDefault(content, "Tool call output"),
+					RecordType:      "message",
+					Model:           model,
+					Turn:            currentTurn,
+					IsSidechain:     false,
+					ParentMessageID: "",
+					InputTokens:     usage.InputTokens,
+					OutputTokens:    usage.OutputTokens,
+					CacheRead:       usage.CacheRead,
+					CacheWrite:      0,
+					ThinkingContent: pendingThinkingContent,
+					ThinkingTokens:  maxInt(pendingThinkingTokens, pendingUsage.ReasoningTokens),
+					Timestamp:       timestamp,
+					ToolUses:        cloneToolUses(pendingTools),
+				})
+				clearPendingAssistant()
+			case "reasoning":
+				pendingThinkingContent = codexFlattenReasoningSummary(payload["summary"])
+				pendingThinkingTokens = maxInt(pendingThinkingTokens, pendingUsage.ReasoningTokens)
+				if timestamp != "" {
+					pendingAssistantTimestamp = timestamp
+				}
+				if currentModel != "" {
+					pendingAssistantModel = currentModel
+				}
+			case "function_call", "custom_tool_call", "web_search_call":
+				segment := ensureSegment(timestamp)
+				toolIndex := len(pendingTools)
+				tool := codexParseToolCall(payload, itemType, timestamp, sessionID, segment.ID, toolIndex)
+				pendingTools = append(pendingTools, tool)
+				callKey := stringValue(payload["call_id"])
+				if callKey == "" {
+					callKey = stringValue(payload["id"])
+				}
+				if callKey != "" {
+					pendingToolIndex[callKey] = toolIndex
+				}
+				if timestamp != "" {
+					pendingAssistantTimestamp = timestamp
+				}
+				if currentModel != "" {
+					pendingAssistantModel = currentModel
+				}
+			case "function_call_output", "custom_tool_call_output":
+				callKey := stringValue(payload["call_id"])
+				if callKey == "" {
+					callKey = stringValue(payload["id"])
+				}
+				if toolIndex, ok := pendingToolIndex[callKey]; ok && toolIndex < len(pendingTools) {
+					output, isError, durationMs := codexParseToolOutput(payload, itemType)
+					pendingTools[toolIndex].Output = output
+					pendingTools[toolIndex].IsError = pendingTools[toolIndex].IsError || isError
+					if durationMs >= 0 {
+						pendingTools[toolIndex].DurationMs = durationMs
+					}
+				}
+				if timestamp != "" {
+					pendingAssistantTimestamp = timestamp
+				}
+			}
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !sawLine {
+		return nil, nil
+	}
+
+	flushPendingAssistant(sessionTimestamp, "synthetic_assistant")
+	if len(segments) == 0 {
+		segments = append(segments, codexLocalSegment{
+			ID:         sessionID,
+			Messages:    []ParsedMessage{},
+			StartedAt:   sessionTimestamp,
+			EndedAt:     sessionTimestamp,
+			ModelCounts: map[string]int{},
+		})
+	}
+
+	return &codexLocalFileModel{
+		SessionID:        sessionID,
+		SourcePath:       sourcePath,
+		Cwd:              cwd,
+		GitRemote:        gitRemote,
+		Branch:           branch,
+		RootName:         codexSummarizeName(firstUserText, valueOrDefault(agentNickname, sliceString(sessionID, 8))),
+		AgentNickname:    agentNickname,
+		ParentThreadID:   parentThreadID,
+		SessionTimestamp: sessionTimestamp,
+		Segments:         segments,
+	}, nil
+}
+
+func buildCodexBundle(loaded codexLoadedFileModel, index int) ConversationBundle {
+	segment := loaded.Model.Segments[index]
+	parentID := loaded.Base.ParentID
+	relationship := loaded.Base.Relationship
+	forkPoint := loaded.Base.ForkPoint
+	if index > 0 {
+		parentID = loaded.Model.Segments[index-1].ID
+		relationship = "compacted"
+		forkPoint = -1
+	}
+
+	conversation := ParsedConversation{
+		ID:           segment.ID,
+		TraceID:      loaded.Base.TraceID,
+		ParentID:     parentID,
+		Relationship: relationship,
+		ForkPoint:    forkPoint,
+		AdapterID:    "codex",
+		Name:         loaded.Model.RootName,
+		Cwd:          loaded.Model.Cwd,
+		GitRemote:    loaded.Model.GitRemote,
+		Branch:       loaded.Model.Branch,
+		Model:        mostFrequentModel(segment.ModelCounts),
+		StartedAt:    valueOrDefault(segment.StartedAt, loaded.Model.SessionTimestamp),
+		EndedAt:      valueOrDefault(segment.EndedAt, loaded.Model.SessionTimestamp),
+		SourcePath:   loaded.Model.SourcePath,
+		SourceFormat: "jsonl",
+	}
+
+	return ConversationBundle{
+		Conversation: conversation,
+		Messages:     segment.Messages,
+	}
+}
+
+func resolveCodexBase(model codexLocalFileModel, visited map[string]struct{}) (codexResolvedBase, error) {
+	if model.ParentThreadID == "" || model.ParentThreadID == model.SessionID {
+		traceID := model.SessionID
+		if len(model.Segments) > 0 {
+			traceID = model.Segments[0].ID
+		}
+		return codexResolvedBase{
+			TraceID:      traceID,
+			ParentID:     "",
+			Relationship: "root",
+			ForkPoint:    -1,
+		}, nil
+	}
+
+	if _, ok := visited[model.SourcePath]; ok {
+		return codexResolvedBase{
+			TraceID:      model.ParentThreadID,
+			ParentID:     model.ParentThreadID,
+			Relationship: "spawned",
+			ForkPoint:    -1,
+		}, nil
+	}
+	visited[model.SourcePath] = struct{}{}
+
+	sessionIndex, err := buildCodexSessionIndex(model.SourcePath)
+	if err != nil {
+		return codexResolvedBase{}, err
+	}
+	parentPath := sessionIndex[model.ParentThreadID]
+	if parentPath == "" {
+		return codexResolvedBase{
+			TraceID:      model.ParentThreadID,
+			ParentID:     model.ParentThreadID,
+			Relationship: "spawned",
+			ForkPoint:    -1,
+		}, nil
+	}
+
+	parentModel, err := buildCodexFileModel(parentPath)
+	if err != nil || parentModel == nil {
+		return codexResolvedBase{
+			TraceID:      model.ParentThreadID,
+			ParentID:     model.ParentThreadID,
+			Relationship: "spawned",
+			ForkPoint:    -1,
+		}, err
+	}
+	parentBase, err := resolveCodexBase(*parentModel, visited)
+	if err != nil {
+		return codexResolvedBase{}, err
+	}
+	spawnParentID, forkPoint := codexFindSpawnLink(*parentModel, model.SessionID, model.AgentNickname)
+	if spawnParentID == "" {
+		if len(parentModel.Segments) > 0 {
+			spawnParentID = parentModel.Segments[0].ID
+		} else {
+			spawnParentID = model.ParentThreadID
+		}
+		forkPoint = -1
+	}
+
+	return codexResolvedBase{
+		TraceID:      parentBase.TraceID,
+		ParentID:     spawnParentID,
+		Relationship: "spawned",
+		ForkPoint:    forkPoint,
+	}, nil
+}
+
+func codexFindSpawnLink(parentModel codexLocalFileModel, childSessionID, childNickname string) (string, int) {
+	for _, segment := range parentModel.Segments {
+		for _, message := range segment.Messages {
+			for _, tool := range message.ToolUses {
+				if tool.Name != "spawn_agent" {
+					continue
+				}
+				output := parseJSONString(tool.Output)
+				outputObject := mapValue(output)
+				agentID := stringValue(outputObject["agent_id"])
+				nickname := stringValue(outputObject["nickname"])
+				if agentID == childSessionID || (childNickname != "" && nickname == childNickname) {
+					return segment.ID, message.Turn
+				}
+			}
+		}
+	}
+	return "", -1
+}
+
+func buildCodexSessionIndex(sourcePath string) (map[string]string, error) {
+	codexHome := codexHomeFromSourcePath(sourcePath)
+	if codexHome == "" {
+		return map[string]string{}, nil
+	}
+	roots := []string{
+		filepath.Join(codexHome, "sessions"),
+		filepath.Join(codexHome, "archived_sessions"),
+	}
+	index := map[string]string{}
+	for _, root := range roots {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if filepath.Ext(path) != ".jsonl" {
+				return nil
+			}
+			sessionID := codexDefaultSessionID(path)
+			_ = scanCodexJSONLFile(path, func(line map[string]any, _ int) {
+				if stringValue(line["type"]) != "session_meta" {
+					return
+				}
+				payload := mapValue(line["payload"])
+				if recordSessionID := stringValue(payload["id"]); recordSessionID != "" {
+					sessionID = recordSessionID
+				}
+			})
+			if sessionID != "" {
+				index[sessionID] = path
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return index, nil
+}
+
+func codexDefaultSessionID(sourcePath string) string {
+	name := strings.TrimSuffix(filepath.Base(sourcePath), ".jsonl")
+	return strings.TrimPrefix(name, "rollout-")
+}
+
+func codexFileTimestamp(sourcePath string) string {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	return info.ModTime().UTC().Format(time.RFC3339Nano)
+}
+
+func codexHomeFromSourcePath(sourcePath string) string {
+	cleaned := filepath.Clean(sourcePath)
+	segments := strings.Split(cleaned, string(os.PathSeparator))
+	for idx, segment := range segments {
+		if segment == "sessions" || segment == "archived_sessions" {
+			return strings.Join(segments[:idx], string(os.PathSeparator))
+		}
+	}
+	return ""
+}
+
+func scanCodexJSONLFile(sourcePath string, visit func(map[string]any, int)) error {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 8*1024*1024)
+	index := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(line), &parsed); err != nil {
+			continue
+		}
+		visit(parsed, index)
+		index += 1
+	}
+	return scanner.Err()
+}
+
+func codexExtractParentThreadID(source any, fallback string) string {
+	sourceObject := mapValue(source)
+	subagent := mapValue(sourceObject["subagent"])
+	threadSpawn := mapValue(subagent["thread_spawn"])
+	if value := stringValue(threadSpawn["parent_thread_id"]); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func codexExtractAgentNickname(source any) string {
+	sourceObject := mapValue(source)
+	subagent := mapValue(sourceObject["subagent"])
+	threadSpawn := mapValue(subagent["thread_spawn"])
+	return stringValue(threadSpawn["agent_nickname"])
+}
+
+func codexExtractTokenUsage(payload map[string]any) codexTokenUsage {
+	info := mapValue(payload["info"])
+	lastTokenUsage := mapValue(info["last_token_usage"])
+	return codexTokenUsage{
+		InputTokens:     intValue(lastTokenUsage["input_tokens"]),
+		OutputTokens:    intValue(lastTokenUsage["output_tokens"]),
+		CacheRead:       intValue(lastTokenUsage["cached_input_tokens"]),
+		ReasoningTokens: intValue(lastTokenUsage["reasoning_output_tokens"]),
+	}
+}
+
+func codexSelectUsage(payload map[string]any, pendingUsage codexTokenUsage) codexTokenUsage {
+	usage := mapValue(payload["usage"])
+	direct := codexTokenUsage{
+		InputTokens:  intValue(usage["input_tokens"]),
+		OutputTokens: intValue(usage["output_tokens"]),
+		CacheRead:    intValue(usage["cached_input_tokens"]),
+	}
+	if direct.InputTokens != 0 || direct.OutputTokens != 0 || direct.CacheRead != 0 {
+		return direct
+	}
+	return pendingUsage
+}
+
+func codexParseToolCall(payload map[string]any, itemType, timestamp, sessionID, segmentID string, toolIndex int) ParsedToolCall {
+	name := itemType
+	if itemType == "web_search_call" {
+		name = "web_search"
+	} else if value := stringValue(payload["name"]); value != "" {
+		name = value
+	}
+	callID := stringValue(payload["call_id"])
+	if callID == "" {
+		callID = stringValue(payload["id"])
+	}
+	input := ""
+	switch itemType {
+	case "custom_tool_call":
+		input = stringValue(payload["input"])
+	case "function_call":
+		input = stringValue(payload["arguments"])
+	default:
+		input = mustJSON(payload)
+	}
+	id := callID
+	if id == "" {
+		id = stableHashSHA1(sessionID, segmentID, name, fmt.Sprintf("%d", toolIndex))
+	}
+	return ParsedToolCall{
+		ID:         id,
+		Name:       name,
+		Input:      input,
+		Output:     "",
+		IsError:    stringValue(payload["status"]) == "failed",
+		DurationMs: -1,
+		Timestamp:  timestamp,
+	}
+}
+
+func codexParseToolOutput(payload map[string]any, itemType string) (string, bool, int) {
+	rawOutput := stringValue(payload["output"])
+	if rawOutput == "" {
+		return "", false, -1
+	}
+	if itemType == "custom_tool_call_output" {
+		parsed := parseJSONString(rawOutput)
+		parsedObject := mapValue(parsed)
+		if len(parsedObject) > 0 {
+			output := stringValue(parsedObject["output"])
+			if output == "" {
+				output = stringValue(parsedObject["stdout"])
+			}
+			if output == "" {
+				output = rawOutput
+			}
+			durationSeconds, hasDuration := floatValue(parsedObject["duration_seconds"])
+			durationMs := -1
+			if hasDuration {
+				durationMs = int(durationSeconds * 1000)
+			}
+			return output, intValue(parsedObject["exit_code"]) != 0, durationMs
+		}
+	}
+	return rawOutput, false, -1
+}
+
+func codexFlattenMessageContent(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			block := mapValue(item)
+			text := stringValue(block["text"])
+			if text == "" {
+				continue
+			}
+			parts = append(parts, text)
+		}
+		return strings.Join(parts, "\n\n")
+	default:
+		return ""
+	}
+}
+
+func codexFlattenReasoningSummary(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			block := mapValue(item)
+			text := stringValue(block["text"])
+			if text == "" {
+				text = stringValue(block["summary"])
+			}
+			if text == "" {
+				continue
+			}
+			parts = append(parts, text)
+		}
+		return strings.Join(parts, "\n\n")
+	default:
+		return ""
+	}
+}
+
+func codexNormalizeRole(role string) string {
+	if role == "assistant" || role == "user" {
+		return role
+	}
+	return "system"
+}
+
+func codexSummarizeName(content, fallback string) string {
+	flattened := strings.Join(strings.Fields(content), " ")
+	if flattened == "" {
+		return fallback
+	}
+	if len(flattened) > 120 {
+		return flattened[:120]
+	}
+	return flattened
+}
+
+func stableHashSHA1(parts ...string) string {
+	sum := sha1.Sum([]byte(strings.Join(parts, "\u241f")))
+	return fmt.Sprintf("%x", sum)
+}
+
+func mapValue(value any) map[string]any {
+	if mapped, ok := value.(map[string]any); ok {
+		return mapped
+	}
+	return map[string]any{}
+}
+
+func arrayValue(value any) []any {
+	if values, ok := value.([]any); ok {
+		return values
+	}
+	return []any{}
+}
+
+func stringValue(value any) string {
+	if typed, ok := value.(string); ok {
+		return typed
+	}
+	return ""
+}
+
+func intValue(value any) int {
+	if asInt, ok := value.(int); ok {
+		return asInt
+	}
+	if asFloat, ok := value.(float64); ok {
+		return int(asFloat)
+	}
+	return 0
+}
+
+func floatValue(value any) (float64, bool) {
+	if asFloat, ok := value.(float64); ok {
+		return asFloat, true
+	}
+	if asInt, ok := value.(int); ok {
+		return float64(asInt), true
+	}
+	return 0, false
+}
+
+func parseJSONString(raw string) any {
+	var parsed any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil
+	}
+	return parsed
+}
+
+func mustJSON(value any) string {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
+}
+
+func valueOrDefault(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func sliceString(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func cloneToolUses(toolUses []ParsedToolCall) []ParsedToolCall {
+	if len(toolUses) == 0 {
+		return []ParsedToolCall{}
+	}
+	return append([]ParsedToolCall(nil), toolUses...)
+}
+
 // --- summary stats matching ts-bench.ts ---
 
 type summary struct {
@@ -1220,12 +2230,12 @@ func readFramedJSON(r *bufio.Reader) ([]byte, error) {
 	return body, nil
 }
 
-func writeWorkerStarted(refID, sourcePath string) error {
+func writeWorkerStarted(adapterID, refID, sourcePath string) error {
 	return writeFramedJSON(os.Stdout, map[string]any{
 		"jsonrpc": jsonRPCVersion,
 		"method":  workerStartedMethod,
 		"params": map[string]any{
-			"adapterId":  "claude-code",
+			"adapterId":  adapterID,
 			"refId":      refID,
 			"sourcePath": sourcePath,
 			"pid":        os.Getpid(),
@@ -1280,10 +2290,14 @@ func runWorkerServer() error {
 			if err := json.Unmarshal(request.Params, &params); err != nil {
 				return err
 			}
-			if err := writeWorkerStarted(params.Ref.ID, params.Ref.SourcePath); err != nil {
+			adapterID := strings.TrimSpace(params.Ref.AdapterID)
+			if adapterID == "" {
+				adapterID = "claude-code"
+			}
+			if err := writeWorkerStarted(adapterID, params.Ref.ID, params.Ref.SourcePath); err != nil {
 				return err
 			}
-			bundles, err := parse(params.Ref.SourcePath)
+			bundles, err := parseWorkerBundles(params)
 			if err != nil {
 				return err
 			}
@@ -1306,7 +2320,7 @@ func runWorkerServer() error {
 					parsedIDs,
 				)
 				if err := writeWorkerNotification(ingestMissingMethod, map[string]any{
-					"adapterId": "claude-code",
+					"adapterId": adapterID,
 					"refId":     params.Ref.ID,
 				}); err != nil {
 					return err
@@ -1322,7 +2336,7 @@ func runWorkerServer() error {
 			}
 
 			if err := writeWorkerNotification(ingestConversationMethod, map[string]any{
-				"adapterId":     "claude-code",
+				"adapterId":     adapterID,
 				"refId":         params.Ref.ID,
 				"conversation":  bundle.Conversation,
 			}); err != nil {
@@ -1331,7 +2345,7 @@ func runWorkerServer() error {
 			messages := orderedMessages(bundle.Messages)
 			for _, message := range messages {
 				if err := writeWorkerNotification(ingestMessageMethod, map[string]any{
-					"adapterId": "claude-code",
+					"adapterId": adapterID,
 					"refId":     params.Ref.ID,
 					"message":   message,
 				}); err != nil {

@@ -281,6 +281,8 @@ export async function ingestConversationViaWorker(
   const stderrPromise = readStreamText(subprocess.stderr);
   let session: ConversationWriteSession | null = null;
   let conversationId = ref.id;
+  let streamedConversation: ParsedConversation | null = null;
+  const streamedMessages: ParsedMessage[] = [];
   let timedOut = false;
   let failNotified = false;
   let nextRequestId = 1;
@@ -347,6 +349,7 @@ export async function ingestConversationViaWorker(
             `worker conversation notification arrived twice for ${ref.id}`,
           );
         }
+        streamedConversation = params.conversation;
         session = store.beginWrite(params.conversation);
         conversationId = params.conversation.id;
         return;
@@ -360,6 +363,7 @@ export async function ingestConversationViaWorker(
           );
         }
         session.appendMessage(params.message);
+        streamedMessages.push(params.message);
         streamedMessageCount += 1;
         return;
       }
@@ -456,7 +460,13 @@ export async function ingestConversationViaWorker(
       );
     }
 
-    const write = activeSession.finish(result.bundleHash);
+    const bundleHash = streamedConversation
+      ? computeBundleHash({
+          conversation: streamedConversation,
+          messages: streamedMessages,
+        })
+      : result.bundleHash;
+    const write = activeSession.finish(bundleHash);
     session = null;
     await options.onWorkerEvent?.("end", {
       adapterId: ref.adapterId,
