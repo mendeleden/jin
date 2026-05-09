@@ -24,6 +24,7 @@ import {
 } from "./search";
 import { getRevision, conversationsNeedingPush, findConversationsMissingSync, findOrphanedConversations, recordPushResult } from "./sync";
 import { runMigrations } from "./schema";
+import { getRow } from "./statements";
 import { getToolCalls } from "./tool-calls";
 
 const STORE_FILENAME = "store.db";
@@ -63,9 +64,10 @@ export class SqliteConversationStore implements ConversationStore {
 
   hasLocalData(): boolean {
     try {
-      const row = this.database
-        .prepare("SELECT 1 AS present FROM _jin_sync LIMIT 1")
-        .get() as { present?: number } | undefined;
+      const row = getRow<{ present?: number }>(
+        this.database,
+        "SELECT 1 AS present FROM _jin_sync LIMIT 1",
+      );
       return row?.present === 1;
     } catch {
       return false;
@@ -132,7 +134,14 @@ export class SqliteConversationStore implements ConversationStore {
       // Best-effort checkpoint so temp test directories can be removed cleanly.
     }
 
-    this.database.close();
+    try {
+      this.database.exec("PRAGMA journal_mode = DELETE");
+    } catch {
+      // Reopen enables WAL again; this close-time switch releases WAL sidecars on Windows.
+    }
+
+    // Strict close fails on leaked prepared statements instead of deferring locks to GC.
+    this.database.close(true);
     storeCache.delete(this.dbPath);
   }
 }

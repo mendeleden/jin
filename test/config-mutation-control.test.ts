@@ -41,6 +41,7 @@ mock.module("../src/sinks/registry", () => ({
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => watcherState,
+  getAllState: () => [watcherState],
   getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
   stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
   stopDashboard: async () => {},

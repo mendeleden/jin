@@ -138,6 +138,40 @@ describe("read-only query surface", () => {
     expect(tracePayload.view).toBe("trace");
     expect(tracePayload.conversations).toHaveLength(3);
 
+    const detailRoute = matchRoute(routes, "GET", "/api/conversations/trace-child");
+    expect(detailRoute).not.toBeNull();
+    const detailResponse = await detailRoute!.handler(
+      new Request("http://localhost/api/conversations/trace-child"),
+      detailRoute!.params,
+    );
+    const detailPayload = await detailResponse.json();
+    expect(detailPayload.conversation.id).toBe("trace-child");
+    expect(detailPayload.parent.id).toBe("trace-root");
+    expect(detailPayload.messages).toHaveLength(2);
+
+    const treeRoute = matchRoute(routes, "GET", "/api/conversations/trace-root");
+    expect(treeRoute).not.toBeNull();
+    const treeResponse = await treeRoute!.handler(
+      new Request("http://localhost/api/conversations/trace-root?view=tree"),
+      treeRoute!.params,
+    );
+    const treePayload = await treeResponse.json();
+    expect(treePayload.view).toBe("tree");
+    expect(treePayload.tree.conversation.id).toBe("trace-root");
+    expect(
+      treePayload.tree.children.map((child: any) => child.conversation.id).sort(),
+    ).toEqual(["trace-child", "trace-root-c1"]);
+
+    const searchRoute = matchRoute(routes, "GET", "/api/search");
+    expect(searchRoute).not.toBeNull();
+    const searchResponse = await searchRoute!.handler(
+      new Request("http://localhost/api/search?q=stopped%20runtime"),
+      searchRoute!.params,
+    );
+    const searchPayload = await searchResponse.json();
+    expect(searchPayload).toHaveLength(1);
+    expect(searchPayload[0].conversationId).toBe("trace-child");
+
     const overviewRoute = matchRoute(routes, "GET", "/api/overview");
     expect(overviewRoute).not.toBeNull();
     const overviewResponse = await overviewRoute!.handler(

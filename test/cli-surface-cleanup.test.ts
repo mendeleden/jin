@@ -19,6 +19,7 @@ test("jin help no longer advertises removed UI and v1 bridge commands", async ()
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("conversations [--adapter=X]");
+  expect(result.stdout).toContain("desktop [--yes|--update]");
   expect(result.stdout).not.toContain(" ui ");
   expect(result.stdout).not.toContain(" init ");
   expect(result.stdout).not.toContain(" team-config ");
@@ -37,6 +38,15 @@ test("jin help for connect/start/stop no longer shows removed compatibility flag
   expect(start.stdout).not.toContain("--all");
   expect(start.stdout).not.toContain("--port");
   expect(stop.stdout).not.toContain("--ui");
+});
+
+test("jin help for desktop documents optional install and update flow", async () => {
+  const result = await runCli(["help", "desktop"]);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("optional Jin Desktop app");
+  expect(result.stdout).toContain("--yes");
+  expect(result.stdout).toContain("--update");
 });
 
 test("removed command aliases fail with migration guidance", async () => {

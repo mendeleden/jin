@@ -24,6 +24,7 @@ let ingestFailure: unknown = null;
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => ({ status: "stopped" }),
+  getAllState: () => [{ status: "stopped" }],
   getDashboardState: () => ({ status: "stopped" }),
   stopDashboard: async () => {},
   stopWatcher: async () => ({ completed: true }),

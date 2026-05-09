@@ -26,6 +26,7 @@ mock.module("../src/daemon/runtime-state", () => ({
 }));
 
 const {
+  buildLifecycleCommand,
   createLocalControlBoundary,
   getLocalControlStatus,
 } = await import("../src/api/control");
@@ -48,6 +49,7 @@ beforeEach(() => {
     configPath: "/tmp/jin/config.json",
     storePath: "/tmp/jin/store.db",
     logPath: "/tmp/jin/jin.log",
+    socketPath: "/tmp/jin/jin.sock",
   };
   runtimeStatus = { state: "stopped", issues: [] };
   components = [
@@ -64,6 +66,7 @@ describe("local control boundary", () => {
     expect(status.health.ingest).toBe("inactive");
     expect(status.health.push).toBe("inactive");
     expect(status.paths.store).toBe(runtimePaths.storePath);
+    expect(status.paths.socket).toBe(runtimePaths.socketPath);
     expect(status.components[0].status).toBe("stopped");
   });
 
@@ -160,6 +163,7 @@ describe("local control boundary", () => {
             config: runtimePaths.configPath,
             store: runtimePaths.storePath,
             log: runtimePaths.logPath,
+            socket: runtimePaths.socketPath,
           },
         }),
         executeAction: async (action) => {
@@ -187,6 +191,7 @@ describe("local control boundary", () => {
     expect(startResponse.status).toBe(409);
     expect(startPayload.action).toBe("start");
     expect(startPayload.status.runtime.owner.mode).toBe("service");
+    expect(startPayload.status.paths.socket).toBe(runtimePaths.socketPath);
 
     const restartRoute = matchRoute(routes, "POST", "/api/control/restart");
     expect(restartRoute).not.toBeNull();
@@ -197,5 +202,86 @@ describe("local control boundary", () => {
 
     expect(restartResponse.status).toBe(200);
     expect(actionCalls).toEqual(["start", "restart"]);
+  });
+
+  test("packaged Desktop lifecycle actions resolve the installed jin CLI from PATH", () => {
+    const command = buildLifecycleCommand("restart", {
+      electron: true,
+      env: {
+        PATH: "/Applications/Jin.app/Contents/MacOS:/opt/homebrew/bin:/usr/bin",
+      },
+      exists: (path) => path === "/opt/homebrew/bin/jin",
+      platform: "darwin",
+    });
+
+    expect(command).toEqual(["/opt/homebrew/bin/jin", "restart"]);
+    expect(command).not.toContain("bun");
+    expect(command).not.toContain("src/index.ts");
+  });
+
+  test("packaged Desktop lifecycle actions fall back to known install paths outside shell PATH", () => {
+    const command = buildLifecycleCommand("start", {
+      electron: true,
+      env: {
+        HOME: "/Users/tester",
+        PATH: "/usr/bin:/bin",
+      },
+      exists: (path) => path === "/Users/tester/.local/bin/jin",
+      platform: "darwin",
+    });
+
+    expect(command).toEqual(["/Users/tester/.local/bin/jin", "start"]);
+  });
+
+  test("packaged Desktop lifecycle actions allow an explicit CLI path override", () => {
+    const command = buildLifecycleCommand("stop", {
+      electron: true,
+      env: {
+        JIN_DESKTOP_CLI_PATH: "/custom/bin/jin",
+        PATH: "",
+      },
+      exists: () => false,
+      platform: "linux",
+    });
+
+    expect(command).toEqual(["/custom/bin/jin", "stop"]);
+  });
+
+  test("packaged Desktop lifecycle actions use Windows PATH semantics on Windows", () => {
+    const command = buildLifecycleCommand("restart", {
+      electron: true,
+      env: {
+        PATH: "C:\\Tools;C:\\Jin\\bin",
+      },
+      exists: (path) => path === "C:\\Jin\\bin\\jin.exe",
+      platform: "win32",
+    });
+
+    expect(command).toEqual(["C:\\Jin\\bin\\jin.exe", "restart"]);
+  });
+
+  test("packaged Desktop lifecycle actions use Windows install paths on Windows", () => {
+    const command = buildLifecycleCommand("start", {
+      electron: true,
+      env: {
+        PATH: "C:\\Windows\\System32",
+        USERPROFILE: "C:\\Users\\tester",
+      },
+      exists: (path) => path === "C:\\Users\\tester\\.local\\bin\\jin.exe",
+      platform: "win32",
+    });
+
+    expect(command).toEqual(["C:\\Users\\tester\\.local\\bin\\jin.exe", "start"]);
+  });
+
+  test("repo-local lifecycle command remains available outside Electron", () => {
+    const command = buildLifecycleCommand("stop", {
+      argv: ["bun", "/repo/src/index.ts", "stop"],
+      electron: false,
+      execPath: "/usr/local/bin/bun",
+      platform: "darwin",
+    });
+
+    expect(command).toEqual(["/usr/local/bin/bun", "run", "/repo/src/index.ts", "stop"]);
   });
 });

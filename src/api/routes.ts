@@ -1,5 +1,26 @@
 import { configDir } from "../config";
 import type { Conversation, Message } from "../contracts/conversations";
+import type {
+  DesktopAdapterSummary,
+  DesktopCompatibilityInfo,
+  DesktopConversationDetailView,
+  DesktopConversationListRequest,
+  DesktopConversationListView,
+  DesktopHomeData,
+  DesktopModelSummary,
+  DesktopProjectSummary,
+  DesktopRelationshipSummary,
+  DesktopTokenUsageDay,
+  DesktopTraceView,
+  DesktopTreeView,
+  DesktopToolSummary,
+} from "../contracts/desktop";
+import {
+  CLI_UPDATE_COMMAND,
+  DESKTOP_API_VERSION,
+  DESKTOP_MINIMUM_API_VERSION,
+  DESKTOP_UPDATE_COMMAND,
+} from "../contracts/desktop";
 import {
   analyzeByAdapter,
   analyzeByModel,
@@ -15,6 +36,7 @@ import {
   type ConversationTreeNode,
 } from "../db/query-surface";
 import { getStore } from "../db/store";
+import { VERSION } from "../updater";
 import {
   createLocalControlBoundary,
   type LocalControlBoundary,
@@ -62,6 +84,45 @@ export function createRoutes(
     return json(result, result.ok ? 200 : 409);
   });
 
+  routes.set("GET /api/desktop/compatibility", () => {
+    return json(buildDesktopCompatibilityInfo());
+  });
+
+  routes.set("GET /api/desktop/home", () => {
+    return json(buildDesktopHomeData(queryStore));
+  });
+
+  routes.set("GET /api/desktop/conversations", (req) => {
+    return json(buildDesktopConversationListView(queryStore, req));
+  });
+
+  routes.set("GET /api/desktop/conversations/:id", (_req, params) => {
+    const conversation = resolveConversation(queryStore, params.id);
+    if (!conversation) {
+      return json({ error: "Conversation not found" }, 404);
+    }
+
+    return json(buildDesktopConversationDetailView(queryStore, conversation));
+  });
+
+  routes.set("GET /api/desktop/conversations/:id/trace", (_req, params) => {
+    const conversation = resolveConversation(queryStore, params.id);
+    if (!conversation) {
+      return json({ error: "Conversation not found" }, 404);
+    }
+
+    return json(buildDesktopTraceView(queryStore, conversation));
+  });
+
+  routes.set("GET /api/desktop/conversations/:id/tree", (_req, params) => {
+    const conversation = resolveConversation(queryStore, params.id);
+    if (!conversation) {
+      return json({ error: "Conversation not found" }, 404);
+    }
+
+    return json(buildDesktopTreeView(queryStore, conversation));
+  });
+
   // --- Overview ---
   routes.set("GET /api/overview", () => {
     const overview = getOverviewSummary(queryStore.database);
@@ -107,6 +168,36 @@ export function createRoutes(
 
   routes.set("GET /api/conversations", listConversationsHandler);
   routes.set("GET /api/sessions", listConversationsHandler);
+
+  routes.set("GET /api/search", (req) => {
+    const url = new URL(req.url);
+    const query =
+      url.searchParams.get("q") ||
+      url.searchParams.get("query") ||
+      "";
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      return json({ error: "Missing required search query" }, 400);
+    }
+
+    const adapter = url.searchParams.get("adapter") || undefined;
+    const since = url.searchParams.get("since")
+      ? parseSinceInput(url.searchParams.get("since")!)
+      : undefined;
+    const limit = url.searchParams.get("limit")
+      ? parseInt(url.searchParams.get("limit")!, 10)
+      : undefined;
+
+    return json(
+      queryStore.searchMessages({
+        query: trimmedQuery,
+        adapterId: adapter,
+        since,
+        limit,
+      }),
+    );
+  });
 
   const getConversationHandler: Handler = (req, params) => {
     const url = new URL(req.url);
@@ -325,6 +416,16 @@ function findTreeNode(
   return null;
 }
 
+function buildDesktopCompatibilityInfo(): DesktopCompatibilityInfo {
+  return {
+    jinVersion: VERSION,
+    desktopApiVersion: DESKTOP_API_VERSION,
+    minimumDesktopApiVersion: DESKTOP_MINIMUM_API_VERSION,
+    updateCommand: DESKTOP_UPDATE_COMMAND,
+    cliUpdateCommand: CLI_UPDATE_COMMAND,
+  };
+}
+
 /** Match a route pattern like "GET /api/sessions/:id" against a request */
 export function matchRoute(
   routes: Map<string, Handler>,
@@ -352,4 +453,253 @@ export function matchRoute(
     if (match) return { handler, params };
   }
   return null;
+}
+
+export function buildDesktopHomeData(queryStore: QueryStore): DesktopHomeData {
+  const overview = getOverviewSummary(queryStore.database);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    overview: {
+      conversations: overview.conversations,
+      messages: overview.messages,
+      toolCalls: overview.toolCalls,
+      traces: overview.traces,
+      tokens: overview.tokens,
+      displayTokens: overview.displayTokens,
+      cacheTokens: overview.cacheTokens,
+      cost: overview.cost,
+      projects: overview.remotes,
+    },
+    recentConversations: listConversations(queryStore.database, { limit: 6 }),
+    topAdapters: summarizeAdapters(queryStore.database),
+    topModels: summarizeModels(queryStore.database),
+    topTools: summarizeTools(queryStore.database),
+    topProjects: summarizeProjects(queryStore.database),
+    relationshipMix: summarizeRelationshipMix(
+      listConversations(queryStore.database),
+    ),
+    tokenUsageByDay: summarizeTokenUsageByDay(queryStore.database),
+  };
+}
+
+export function buildDesktopConversationListView(
+  queryStore: QueryStore,
+  request: Request | DesktopConversationListRequest,
+): DesktopConversationListView {
+  const filters = normalizeDesktopConversationListRequest(request);
+  const conversations = listConversations(queryStore.database, {
+    adapterId: filters.adapterId ?? undefined,
+    since: filters.since ? parseSinceInput(filters.since) : undefined,
+    limit: filters.limit,
+  });
+  const allConversations = listConversations(queryStore.database);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    filters,
+    availableAdapters: Array.from(
+      new Set(
+        allConversations
+          .map((conversation) => conversation.adapterId)
+          .filter((value) => value.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right)),
+    relationshipMix: summarizeRelationshipMix(conversations),
+    conversations,
+  };
+}
+
+export function buildDesktopConversationDetailView(
+  queryStore: QueryStore,
+  conversation: Conversation,
+): DesktopConversationDetailView {
+  const traceView = buildDesktopTraceView(queryStore, conversation);
+  const node = findTreeNode(traceView.tree, conversation.id);
+  const parent =
+    conversation.parentId
+      ? traceView.conversations.find(
+          (entry) => entry.conversation.id === conversation.parentId,
+        )?.conversation ?? null
+      : null;
+
+  return {
+    conversation,
+    messages: queryStore.getMessages(conversation.id),
+    toolCalls: queryStore.getToolCalls(conversation.id),
+    parent,
+    children: node?.children.map((child) => child.conversation) ?? [],
+    trace: {
+      traceId: traceView.traceId,
+      rootId: traceView.rootId,
+      conversationCount: traceView.conversations.length,
+    },
+  };
+}
+
+export function buildDesktopTraceView(
+  queryStore: QueryStore,
+  conversation: Conversation,
+): DesktopTraceView {
+  const conversations = getTraceConversations(
+    queryStore.database,
+    conversation.traceId,
+  );
+  const tree = buildConversationTree(conversations);
+
+  return {
+    traceId: conversation.traceId,
+    rootId: tree?.conversation.id ?? conversation.traceId,
+    selectedConversationId: conversation.id,
+    conversations: conversations.map((entry) => ({
+      conversation: entry,
+      messages: queryStore.getMessages(entry.id),
+      toolCalls: queryStore.getToolCalls(entry.id),
+    })),
+    tree,
+  };
+}
+
+export function buildDesktopTreeView(
+  queryStore: QueryStore,
+  conversation: Conversation,
+): DesktopTreeView {
+  const traceView = buildDesktopTraceView(queryStore, conversation);
+  return {
+    traceId: traceView.traceId,
+    selectedConversationId: conversation.id,
+    tree: traceView.tree,
+  };
+}
+
+function summarizeAdapters(database: QueryStore["database"]): DesktopAdapterSummary[] {
+  return Object.entries(analyzeByAdapter(database))
+    .map(([adapterId, summary]) => ({
+      adapterId,
+      conversations: summary.conversations,
+      messages: summary.messages,
+      tokens: summary.tokens,
+      displayTokens: summary.displayTokens,
+      cacheTokens: summary.cacheTokens,
+      cost: summary.cost,
+    }))
+    .sort((left, right) => {
+      return (
+        right.conversations - left.conversations ||
+        right.tokens - left.tokens ||
+        right.cost - left.cost
+      );
+    })
+    .slice(0, 5);
+}
+
+function summarizeTools(database: QueryStore["database"]): DesktopToolSummary[] {
+  return analyzeToolUsage(database).slice(0, 5).map((entry) => ({
+    name: entry.tool_name,
+    calls: entry.total_calls,
+    conversationCount: entry.conversation_count,
+  }));
+}
+
+function summarizeModels(database: QueryStore["database"]): DesktopModelSummary[] {
+  return Object.entries(analyzeByModel(database))
+    .map(([model, summary]) => ({
+      model,
+      messages: summary.messages,
+      inputTokens: summary.inputTokens,
+      outputTokens: summary.outputTokens,
+    }))
+    .sort((left, right) => {
+      return (
+        right.messages - left.messages ||
+        right.inputTokens + right.outputTokens -
+          (left.inputTokens + left.outputTokens) ||
+        left.model.localeCompare(right.model)
+      );
+    })
+    .slice(0, 8);
+}
+
+function summarizeProjects(database: QueryStore["database"]): DesktopProjectSummary[] {
+  return listProjectsByRemote(database).slice(0, 5).map((project) => ({
+    id: project.id,
+    name: project.name,
+    gitRemote: project.gitRemote,
+    conversationCount: project.conversationCount,
+    totalTokens: project.totalTokens,
+    totalCost: project.totalCost,
+    lastSeen: project.lastSeen,
+    adapters: splitProjectAdapters(project.tools),
+  }));
+}
+
+function summarizeTokenUsageByDay(
+  database: QueryStore["database"],
+): DesktopTokenUsageDay[] {
+  return timelineByDay(database, 30).map((entry) => ({
+    day: entry.day,
+    adapterId: entry.adapter_id,
+    sessions: entry.sessions,
+    tokens: entry.tokens,
+    cost: entry.cost,
+  }));
+}
+
+function summarizeRelationshipMix(
+  conversations: Conversation[],
+): DesktopRelationshipSummary[] {
+  const counts = new Map<Conversation["relationship"], number>();
+
+  for (const conversation of conversations) {
+    counts.set(
+      conversation.relationship,
+      (counts.get(conversation.relationship) ?? 0) + 1,
+    );
+  }
+
+  return Array.from(counts.entries())
+    .map(([relationship, conversationCount]) => ({
+      relationship,
+      conversations: conversationCount,
+    }))
+    .sort((left, right) => right.conversations - left.conversations);
+}
+
+function splitProjectAdapters(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeDesktopConversationListRequest(
+  request: Request | DesktopConversationListRequest,
+): DesktopConversationListView["filters"] {
+  if (request instanceof Request) {
+    const url = new URL(request.url);
+    const limit = url.searchParams.get("limit");
+
+    return {
+      adapterId: url.searchParams.get("adapter") || null,
+      since: url.searchParams.get("since") || null,
+      limit: limit ? parseInt(limit, 10) : 48,
+    };
+  }
+
+  return {
+    adapterId: request.adapterId ?? null,
+    since: request.since ?? null,
+    limit: request.limit ?? 48,
+  };
+}
+
+function resolveConversation(
+  queryStore: QueryStore,
+  conversationId: string,
+): Conversation | null {
+  const matches = findConversationMatches(queryStore.database, conversationId, 10);
+  return (
+    matches.find((candidate) => candidate.id === conversationId) ??
+    (matches.length === 1 ? matches[0] : null)
+  );
 }

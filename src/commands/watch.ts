@@ -9,6 +9,7 @@ import {
 import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
+import { startLocalApiServer, type LocalApiServer } from "../api/server";
 import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
@@ -124,7 +125,28 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
     activeAdapters,
     diagnosticPath,
   );
-  await runUntilShutdown(pipelineHandle, store, discoveryCache, log);
+  let apiServer: LocalApiServer | null = null;
+
+  try {
+    apiServer = startLocalApiServer({
+      queryStore: store,
+      socketPath: runtimePaths.socketPath,
+    });
+  } catch (error) {
+    await pipelineHandle.shutdown();
+    store.close();
+    discoveryCache?.close();
+    cleanup();
+    throw error;
+  }
+
+  if (apiServer) {
+    log(`Local daemon query socket ready at ${apiServer.socketPath}`);
+  } else {
+    log("Local daemon query socket is not available on this platform yet.");
+  }
+
+  await runUntilShutdown(pipelineHandle, store, discoveryCache, log, apiServer);
 }
 
 async function startPipeline(
@@ -194,6 +216,7 @@ async function runUntilShutdown(
   store: SqliteConversationStore,
   discoveryCache: SqliteDiscoveryCache | null,
   log: RuntimeLog,
+  apiServer: LocalApiServer | null,
 ): Promise<void> {
   let shuttingDown = false;
   let complete = false;
@@ -225,6 +248,7 @@ async function runUntilShutdown(
     log(`Shutting down (${signal})...`);
     try {
       const result = await pipelineHandle.shutdown();
+      apiServer?.stop();
       store.close();
       discoveryCache?.close();
       cleanup();
@@ -237,6 +261,7 @@ async function runUntilShutdown(
       finishWithExit(0);
       return;
     } catch (error) {
+      apiServer?.stop();
       store.close();
       discoveryCache?.close();
       cleanup();

@@ -4,6 +4,7 @@ import type {
   RecordedPushResult,
   SyncStateRecord,
 } from "../contracts/store";
+import { allRows, getRow } from "./statements";
 
 interface SyncRow {
   conversation_id: string;
@@ -22,13 +23,13 @@ export function getSyncState(
   db: Database,
   conversationId: string,
 ): SyncStateRecord | null {
-  const row = db
-    .prepare(
-      `SELECT conversation_id, bundle_hash, local_revision, ingested_at
-       FROM _jin_sync
-       WHERE conversation_id = ?`,
-    )
-    .get(conversationId) as SyncRow | null;
+  const row = getRow<SyncRow>(
+    db,
+    `SELECT conversation_id, bundle_hash, local_revision, ingested_at
+     FROM _jin_sync
+     WHERE conversation_id = ?`,
+    conversationId,
+  );
 
   return row
     ? {
@@ -81,13 +82,13 @@ export function getRevision(
   db: Database,
   conversationId: string,
 ): number {
-  const row = db
-    .prepare(
-      `SELECT local_revision
-       FROM _jin_sync
-       WHERE conversation_id = ?`,
-    )
-    .get(conversationId) as { local_revision?: number } | null;
+  const row = getRow<{ local_revision?: number }>(
+    db,
+    `SELECT local_revision
+     FROM _jin_sync
+     WHERE conversation_id = ?`,
+    conversationId,
+  );
 
   return row?.local_revision ?? 0;
 }
@@ -96,17 +97,17 @@ export function conversationsNeedingPush(
   db: Database,
   sinkId: string,
 ): string[] {
-  const rows = db
-    .prepare(
-      `SELECT s.conversation_id
-       FROM _jin_sync s
-       LEFT JOIN _jin_push_state p
-         ON p.conversation_id = s.conversation_id
-        AND p.sink_id = ?
-       WHERE COALESCE(p.last_successful_revision, 0) < s.local_revision
-       ORDER BY s.conversation_id ASC`,
-    )
-    .all(sinkId) as Array<{ conversation_id: string }>;
+  const rows = allRows<{ conversation_id: string }>(
+    db,
+    `SELECT s.conversation_id
+     FROM _jin_sync s
+     LEFT JOIN _jin_push_state p
+       ON p.conversation_id = s.conversation_id
+      AND p.sink_id = ?
+     WHERE COALESCE(p.last_successful_revision, 0) < s.local_revision
+     ORDER BY s.conversation_id ASC`,
+    sinkId,
+  );
 
   return rows.map((row) => row.conversation_id);
 }
@@ -196,24 +197,23 @@ export function resetPushStateForSink(
 export function findOrphanedConversations(
   db: Database,
 ): OrphanedConversation[] {
-  const rows = db
-    .prepare(
-      `SELECT c.id, c.parent_id, c.adapter_id, c.relationship
-       FROM conversations c
-       WHERE c.parent_id != ''
-         AND NOT EXISTS (
-           SELECT 1
-           FROM conversations p
-           WHERE p.id = c.parent_id
-         )
-       ORDER BY c.id ASC`,
-    )
-    .all() as Array<{
+  const rows = allRows<{
     id: string;
     parent_id: string;
     adapter_id: string;
     relationship: OrphanedConversation["relationship"];
-  }>;
+  }>(
+    db,
+    `SELECT c.id, c.parent_id, c.adapter_id, c.relationship
+     FROM conversations c
+     WHERE c.parent_id != ''
+       AND NOT EXISTS (
+         SELECT 1
+         FROM conversations p
+         WHERE p.id = c.parent_id
+       )
+     ORDER BY c.id ASC`,
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -226,18 +226,17 @@ export function findOrphanedConversations(
 export function findConversationsMissingSync(
   db: Database,
 ): string[] {
-  const rows = db
-    .prepare(
-      `SELECT c.id
-       FROM conversations c
-       WHERE NOT EXISTS (
-         SELECT 1
-         FROM _jin_sync s
-         WHERE s.conversation_id = c.id
-       )
-       ORDER BY c.id ASC`,
-    )
-    .all() as Array<{ id: string }>;
+  const rows = allRows<{ id: string }>(
+    db,
+    `SELECT c.id
+     FROM conversations c
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM _jin_sync s
+       WHERE s.conversation_id = c.id
+     )
+     ORDER BY c.id ASC`,
+  );
 
   return rows.map((row) => row.id);
 }
@@ -246,13 +245,13 @@ function countPushStateRows(
   db: Database,
   sinkId: string,
 ): number {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS count
-       FROM _jin_push_state
-       WHERE sink_id = ?`,
-    )
-    .get(sinkId) as { count?: number } | null;
+  const row = getRow<{ count?: number }>(
+    db,
+    `SELECT COUNT(*) AS count
+     FROM _jin_push_state
+     WHERE sink_id = ?`,
+    sinkId,
+  );
 
   return row?.count ?? 0;
 }

@@ -1,72 +1,31 @@
 import { getAllState } from "../daemon/process-state";
+import { existsSync } from "fs";
+import { homedir } from "os";
+import { spawnSync } from "node:child_process";
+import { posix, win32 } from "path";
 import {
   getRuntimePaths,
   getRuntimeStatus,
 } from "../daemon/runtime-state";
 import type {
+  DesktopControlAction,
+  DesktopControlActionResult,
+  DesktopControlComponent,
+  DesktopControlStatus,
+  DesktopHealthStatus,
+  DesktopSubsystemHealth,
+} from "../contracts/desktop";
+import type {
   RuntimeIssue,
-  RuntimeOwnershipRecord,
   RuntimeState,
 } from "../contracts/lifecycle";
 
-export type LocalControlAction = "start" | "stop" | "restart";
-export type LocalControlSubsystemHealth =
-  | "inactive"
-  | "healthy"
-  | "degraded"
-  | "paused";
-export type LocalControlHealthStatus =
-  | "stopped"
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "stopping";
-
-export interface LocalControlComponentDto {
-  name: "watcher";
-  status: "running" | "stopped";
-  pid?: number;
-  mode?: RuntimeOwnershipRecord["mode"];
-  uptime?: string;
-  lifecycleState?: RuntimeState;
-  issues?: RuntimeIssue[];
-}
-
-export interface LocalControlStatusDto {
-  runtime: {
-    state: RuntimeState;
-    owner: RuntimeOwnershipRecord | null;
-    issues: RuntimeIssue[];
-  };
-  health: {
-    status: LocalControlHealthStatus;
-    issueCount: number;
-    issueSubsystems: string[];
-    paused: boolean;
-    ingest: LocalControlSubsystemHealth;
-    push: LocalControlSubsystemHealth;
-    components: {
-      running: number;
-      stopped: number;
-    };
-  };
-  components: LocalControlComponentDto[];
-  paths: {
-    configDir: string;
-    config: string;
-    store: string;
-    log: string;
-  };
-}
-
-export interface LocalControlActionResultDto {
-  action: LocalControlAction;
-  ok: boolean;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  status: LocalControlStatusDto;
-}
+export type LocalControlAction = DesktopControlAction;
+export type LocalControlSubsystemHealth = DesktopSubsystemHealth;
+export type LocalControlHealthStatus = DesktopHealthStatus;
+export type LocalControlComponentDto = DesktopControlComponent;
+export type LocalControlStatusDto = DesktopControlStatus;
+export type LocalControlActionResultDto = DesktopControlActionResult;
 
 export interface LocalControlBoundary {
   getStatus(): LocalControlStatusDto;
@@ -80,7 +39,14 @@ export interface LocalControlBoundaryOptions {
   getStatus?: () => LocalControlStatusDto;
 }
 
-const DECODER = new TextDecoder();
+export interface LifecycleCommandOptions {
+  argv?: string[];
+  electron?: boolean;
+  env?: NodeJS.ProcessEnv;
+  execPath?: string;
+  exists?: (path: string) => boolean;
+  platform?: NodeJS.Platform;
+}
 
 export function createLocalControlBoundary(
   options: LocalControlBoundaryOptions = {},
@@ -136,6 +102,7 @@ export function getLocalControlStatus(): LocalControlStatusDto {
       config: paths.configPath,
       store: paths.storePath,
       log: paths.logPath,
+      socket: paths.socketPath,
     },
   };
 }
@@ -145,30 +112,49 @@ async function executeLifecycleAction(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   // Delegate through the existing CLI lifecycle entrypoints so ownership checks
   // stay centralized and this API never becomes a second runtime.
-  const result = Bun.spawnSync(buildLifecycleCommand(action), {
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
+  const commandLine = buildLifecycleCommand(action);
+  const command = commandLine[0];
+  if (!command) {
+    throw new Error("Unable to determine the jin lifecycle command.");
+  }
+  const args = commandLine.slice(1);
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
     env: { ...process.env },
     windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
   return {
-    exitCode: result.exitCode,
-    stdout: DECODER.decode(result.stdout),
-    stderr: DECODER.decode(result.stderr),
+    exitCode: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr:
+      result.stderr ??
+      (result.error instanceof Error ? result.error.message : ""),
   };
 }
 
-function buildLifecycleCommand(action: LocalControlAction): string[] {
-  const binPath = process.execPath;
-  const isCompiled = !binPath.endsWith("bun") && !binPath.endsWith("node");
+export function buildLifecycleCommand(
+  action: LocalControlAction,
+  options: LifecycleCommandOptions = {},
+): string[] {
+  if (options.electron ?? Boolean(process.versions.electron)) {
+    return [resolveInstalledJinCli(options), action];
+  }
+
+  const platform = options.platform ?? process.platform;
+  const pathApi = pathApiForPlatform(platform);
+  const binPath = options.execPath ?? process.execPath;
+  const executableName = pathApi.basename(binPath).toLowerCase();
+  const isCompiled = !["bun", "bun.exe", "node", "node.exe"].includes(
+    executableName,
+  );
 
   if (isCompiled) {
     return [binPath, action];
   }
 
-  const entrypoint = process.argv[1];
+  const entrypoint = (options.argv ?? process.argv)[1];
   if (!entrypoint) {
     throw new Error("Unable to determine the jin entrypoint for lifecycle control.");
   }
@@ -176,10 +162,108 @@ function buildLifecycleCommand(action: LocalControlAction): string[] {
   return [binPath, "run", entrypoint, action];
 }
 
+function resolveInstalledJinCli(options: LifecycleCommandOptions): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const exists = options.exists ?? existsSync;
+  const override =
+    env.JIN_DESKTOP_CLI_PATH ||
+    env.JIN_CLI_PATH ||
+    env.JIN_BIN ||
+    env.JIN_BINARY_PATH ||
+    env.JIN_BINARY;
+
+  if (override) {
+    return override;
+  }
+
+  const pathCandidate = findExecutableOnPath(
+    platform === "win32" ? "jin.exe" : "jin",
+    env.PATH ?? "",
+    platform,
+    exists,
+  );
+  if (pathCandidate) {
+    return pathCandidate;
+  }
+
+  for (const candidate of knownJinInstallPaths(platform, env)) {
+    if (candidate && exists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return platform === "win32" ? "jin.exe" : "jin";
+}
+
+function findExecutableOnPath(
+  executable: string,
+  pathValue: string,
+  platform: NodeJS.Platform,
+  exists: (path: string) => boolean,
+): string | null {
+  const pathApi = pathApiForPlatform(platform);
+  const pathDelimiter = platform === "win32" ? ";" : ":";
+  const extensions =
+    platform === "win32" && !executable.toLowerCase().endsWith(".exe")
+      ? ["", ".exe", ".cmd", ".bat"]
+      : [""];
+
+  for (const entry of pathValue.split(pathDelimiter)) {
+    if (!entry) {
+      continue;
+    }
+
+    for (const extension of extensions) {
+      const candidate = pathApi.join(entry, `${executable}${extension}`);
+      if (exists(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function knownJinInstallPaths(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): string[] {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const pathApi = pathApiForPlatform(platform);
+
+  if (platform === "win32") {
+    const localAppData =
+      env.LOCALAPPDATA || (home ? pathApi.join(home, "AppData", "Local") : "");
+    return [
+      home ? pathApi.join(home, ".local", "bin", "jin.exe") : "",
+      localAppData ? pathApi.join(localAppData, "jin", "jin.exe") : "",
+      localAppData ? pathApi.join(localAppData, "Jin", "jin.exe") : "",
+      localAppData ? pathApi.join(localAppData, "Jin", "bin", "jin.exe") : "",
+      localAppData
+        ? pathApi.join(localAppData, "Programs", "jin", "jin.exe")
+        : "",
+      env.PROGRAMFILES ? pathApi.join(env.PROGRAMFILES, "jin", "jin.exe") : "",
+    ].filter(Boolean);
+  }
+
+  return [
+    pathApi.join(home, ".local", "bin", "jin"),
+    pathApi.join(home, ".bun", "bin", "jin"),
+    "/usr/local/bin/jin",
+    "/opt/homebrew/bin/jin",
+    "/usr/bin/jin",
+  ];
+}
+
+function pathApiForPlatform(platform: NodeJS.Platform): typeof posix | typeof win32 {
+  return platform === "win32" ? win32 : posix;
+}
+
 function summarizeHealthStatus(
   runtimeState: RuntimeState,
   issues: RuntimeIssue[],
-): LocalControlHealthStatus {
+): DesktopHealthStatus {
   switch (runtimeState) {
     case "stopped":
       return "stopped";
@@ -198,7 +282,7 @@ function summarizeSubsystem(
   subsystem: "ingest" | "push",
   runtimeState: RuntimeState,
   issues: RuntimeIssue[],
-): LocalControlSubsystemHealth {
+): DesktopSubsystemHealth {
   if (runtimeState === "stopped") {
     return "inactive";
   }

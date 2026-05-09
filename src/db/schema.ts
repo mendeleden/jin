@@ -3,6 +3,7 @@ import {
   CONVERSATION_RELATIONSHIPS,
   CONVERSATION_SOURCE_FORMATS,
 } from "../contracts/conversations";
+import { getRow, runInTransaction } from "./statements";
 
 export interface Migration {
   version: number;
@@ -191,9 +192,7 @@ export const LATEST_USER_VERSION =
   migrations[migrations.length - 1]?.version ?? 0;
 
 export function getUserVersion(db: Database): number {
-  const row = db
-    .prepare("PRAGMA user_version")
-    .get() as { user_version?: number } | undefined;
+  const row = getRow<{ user_version?: number }>(db, "PRAGMA user_version");
 
   return row?.user_version ?? 0;
 }
@@ -206,11 +205,9 @@ export function runMigrations(db: Database): void {
       continue;
     }
 
-    const applyMigration = db.transaction(() => {
+    runInTransaction(db, () => {
       migration.up(db);
       db.exec(`PRAGMA user_version = ${migration.version}`);
     });
-
-    applyMigration();
   }
 }

@@ -26,6 +26,7 @@ import {
   updateSyncIngestedAt,
   upsertSyncState,
 } from "./sync";
+import { allRows, runInTransaction } from "./statements";
 
 type DerivedAccumulator = {
   messageCount: number;
@@ -121,33 +122,19 @@ class StagedConversationWriteSession implements ConversationWriteSession {
     }
 
     try {
-      const stageWrite = this.db.transaction(
-        (
-          input: ParsedMessage,
-          sessionId: string,
-          conversationId: string,
-          stagedBytes: number,
-        ) => {
-          stageMessage(this.db, sessionId, conversationId, input);
-          for (const toolCall of orderedToolCalls(input.toolUses)) {
-            stageToolCall(
-              this.db,
-              sessionId,
-              conversationId,
-              input.id,
-              toolCall,
-            );
-          }
-          updateStageSessionBytes(this.db, sessionId, stagedBytes);
-        },
-      );
-
-      stageWrite(
-        message,
-        this.sessionId,
-        this.conversation.id,
-        nextStagedBytes,
-      );
+      runInTransaction(this.db, () => {
+        stageMessage(this.db, this.sessionId, this.conversation.id, message);
+        for (const toolCall of orderedToolCalls(message.toolUses)) {
+          stageToolCall(
+            this.db,
+            this.sessionId,
+            this.conversation.id,
+            message.id,
+            toolCall,
+          );
+        }
+        updateStageSessionBytes(this.db, this.sessionId, nextStagedBytes);
+      });
     } catch (error) {
       this.state = "failed";
       throw error;
@@ -204,10 +191,9 @@ class StagedConversationWriteSession implements ConversationWriteSession {
       return;
     }
 
-    const clearSession = this.db.transaction((sessionId: string) => {
-      clearStagedSession(this.db, sessionId);
+    runInTransaction(this.db, () => {
+      clearStagedSession(this.db, this.sessionId);
     });
-    clearSession(this.sessionId);
     this.state = "aborted";
   }
 
@@ -497,13 +483,13 @@ function updateStageSessionBytes(
 }
 
 function clearExpiredStagedSessions(db: Database, expiredBefore: string): void {
-  const expired = db
-    .prepare(
-      `SELECT session_id
-       FROM _jin_stage_sessions
-       WHERE created_at < ?`,
-    )
-    .all(expiredBefore) as Array<{ session_id: string }>;
+  const expired = allRows<{ session_id: string }>(
+    db,
+    `SELECT session_id
+     FROM _jin_stage_sessions
+     WHERE created_at < ?`,
+    expiredBefore,
+  );
 
   for (const row of expired) {
     clearStagedSession(db, row.session_id);

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Conversation } from "../contracts/conversations";
+import { allRows, getRow } from "./statements";
 
 interface ConversationRow {
   id: string;
@@ -123,7 +124,7 @@ export function listConversations(
     params.push(options.limit);
   }
 
-  const rows = db.prepare(query).all(...params) as ConversationRow[];
+  const rows = allRows<ConversationRow>(db, query, ...params);
   return rows.map(rowToConversation);
 }
 
@@ -137,7 +138,8 @@ export function findConversationMatches(
     return [];
   }
 
-  const rows = db.prepare(
+  const rows = allRows<ConversationRow>(
+    db,
     `SELECT *
      FROM conversations
      WHERE id = ?
@@ -147,7 +149,11 @@ export function findConversationMatches(
        COALESCE(NULLIF(ended_at, ''), started_at) DESC,
        id ASC
      LIMIT ?`,
-  ).all(trimmed, `${trimmed}%`, trimmed, limit) as ConversationRow[];
+    trimmed,
+    `${trimmed}%`,
+    trimmed,
+    limit,
+  );
 
   return rows.map(rowToConversation);
 }
@@ -156,12 +162,14 @@ export function getTraceConversations(
   db: Database,
   traceId: string,
 ): Conversation[] {
-  const rows = db.prepare(
+  const rows = allRows<ConversationRow>(
+    db,
     `SELECT *
      FROM conversations
      WHERE trace_id = ?
      ORDER BY started_at ASC, ended_at ASC, id ASC`,
-  ).all(traceId) as ConversationRow[];
+    traceId,
+  );
 
   return rows.map(rowToConversation);
 }
@@ -197,7 +205,18 @@ export function buildConversationTree(
 }
 
 export function getOverviewSummary(db: Database): OverviewSummary {
-  const row = db.prepare(
+  const row = getRow<{
+    conversations: number;
+    messages: number;
+    tool_calls: number;
+    traces: number;
+    tokens: number;
+    display_tokens: number;
+    cache_tokens: number;
+    cost: number;
+    remotes: number;
+  }>(
+    db,
     `SELECT
        COUNT(*) AS conversations,
        COALESCE(SUM(message_count), 0) AS messages,
@@ -209,35 +228,34 @@ export function getOverviewSummary(db: Database): OverviewSummary {
        COALESCE(SUM(est_cost), 0) AS cost,
        COUNT(DISTINCT CASE WHEN git_remote != '' THEN git_remote END) AS remotes
      FROM conversations`,
-  ).get() as {
-    conversations: number;
-    messages: number;
-    tool_calls: number;
-    traces: number;
-    tokens: number;
-    display_tokens: number;
-    cache_tokens: number;
-    cost: number;
-    remotes: number;
-  };
+  );
 
   return {
-    conversations: row.conversations ?? 0,
-    messages: row.messages ?? 0,
-    toolCalls: row.tool_calls ?? 0,
-    traces: row.traces ?? 0,
-    tokens: row.tokens ?? 0,
-    displayTokens: row.display_tokens ?? 0,
-    cacheTokens: row.cache_tokens ?? 0,
-    cost: row.cost ?? 0,
-    remotes: row.remotes ?? 0,
+    conversations: row?.conversations ?? 0,
+    messages: row?.messages ?? 0,
+    toolCalls: row?.tool_calls ?? 0,
+    traces: row?.traces ?? 0,
+    tokens: row?.tokens ?? 0,
+    displayTokens: row?.display_tokens ?? 0,
+    cacheTokens: row?.cache_tokens ?? 0,
+    cost: row?.cost ?? 0,
+    remotes: row?.remotes ?? 0,
   };
 }
 
 export function analyzeByAdapter(
   db: Database,
 ): Record<string, AdapterAnalysisSummary> {
-  const rows = db.prepare(
+  const rows = allRows<{
+    adapter_id: string;
+    conversations: number;
+    messages: number;
+    tokens: number;
+    display_tokens: number;
+    cache_tokens: number;
+    cost: number;
+  }>(
+    db,
     `SELECT
        adapter_id,
        COUNT(*) AS conversations,
@@ -249,15 +267,7 @@ export function analyzeByAdapter(
      FROM conversations
      GROUP BY adapter_id
      ORDER BY conversations DESC, adapter_id ASC`,
-  ).all() as Array<{
-    adapter_id: string;
-    conversations: number;
-    messages: number;
-    tokens: number;
-    display_tokens: number;
-    cache_tokens: number;
-    cost: number;
-  }>;
+  );
 
   return Object.fromEntries(
     rows.map((row) => [
@@ -277,7 +287,13 @@ export function analyzeByAdapter(
 export function analyzeByModel(
   db: Database,
 ): Record<string, { messages: number; inputTokens: number; outputTokens: number }> {
-  const rows = db.prepare(
+  const rows = allRows<{
+    model: string;
+    messages: number;
+    input_tokens: number;
+    output_tokens: number;
+  }>(
+    db,
     `SELECT
        model,
        COUNT(*) AS messages,
@@ -287,12 +303,7 @@ export function analyzeByModel(
      WHERE model != ''
      GROUP BY model
      ORDER BY messages DESC, model ASC`,
-  ).all() as Array<{
-    model: string;
-    messages: number;
-    input_tokens: number;
-    output_tokens: number;
-  }>;
+  );
 
   return Object.fromEntries(
     rows.map((row) => [
@@ -309,7 +320,12 @@ export function analyzeByModel(
 export function analyzeToolUsage(
   db: Database,
 ): Array<{ tool_name: string; total_calls: number; conversation_count: number }> {
-  return db.prepare(
+  return allRows<{
+    tool_name: string;
+    total_calls: number;
+    conversation_count: number;
+  }>(
+    db,
     `SELECT
        name AS tool_name,
        COUNT(*) AS total_calls,
@@ -317,11 +333,7 @@ export function analyzeToolUsage(
      FROM tool_calls
      GROUP BY name
      ORDER BY total_calls DESC, tool_name ASC`,
-  ).all() as Array<{
-    tool_name: string;
-    total_calls: number;
-    conversation_count: number;
-  }>;
+  );
 }
 
 export function timelineByDay(
@@ -329,7 +341,14 @@ export function timelineByDay(
   days = 30,
 ): Array<{ day: string; adapter_id: string; sessions: number; tokens: number; cost: number }> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  return db.prepare(
+  return allRows<{
+    day: string;
+    adapter_id: string;
+    sessions: number;
+    tokens: number;
+    cost: number;
+  }>(
+    db,
     `SELECT
        substr(COALESCE(NULLIF(ended_at, ''), started_at), 1, 10) AS day,
        adapter_id,
@@ -340,13 +359,8 @@ export function timelineByDay(
      WHERE COALESCE(NULLIF(ended_at, ''), started_at) >= ?
      GROUP BY day, adapter_id
      ORDER BY day ASC, adapter_id ASC`,
-  ).all(since) as Array<{
-    day: string;
-    adapter_id: string;
-    sessions: number;
-    tokens: number;
-    cost: number;
-  }>;
+    since,
+  );
 }
 
 export function listProjectsByRemote(
@@ -361,7 +375,15 @@ export function listProjectsByRemote(
   lastSeen: string;
   tools: string;
 }> {
-  const rows = db.prepare(
+  const rows = allRows<{
+    git_remote: string;
+    conversation_count: number;
+    total_tokens: number;
+    total_cost: number;
+    last_seen: string;
+    tools: string;
+  }>(
+    db,
     `SELECT
        git_remote,
        COUNT(*) AS conversation_count,
@@ -373,14 +395,7 @@ export function listProjectsByRemote(
      WHERE git_remote != ''
      GROUP BY git_remote
      ORDER BY last_seen DESC, git_remote ASC`,
-  ).all() as Array<{
-    git_remote: string;
-    conversation_count: number;
-    total_tokens: number;
-    total_cost: number;
-    last_seen: string;
-    tools: string;
-  }>;
+  );
 
   return rows.map((row) => ({
     id: encodeURIComponent(row.git_remote),

@@ -20,6 +20,7 @@ const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");
 const RUNTIME_STATE_FILE = join(configDir(), "jin.runtime.json");
 const LOG_FILE = join(configDir(), "jin.log");
+const SOCKET_FILE = join(configDir(), "jin.sock");
 const STARTING_GRACE_MS = 10_000;
 const decoder = new TextDecoder();
 
@@ -63,6 +64,7 @@ export interface RuntimePaths {
   configPath: string;
   storePath: string;
   logPath: string;
+  socketPath: string;
 }
 
 export interface DarwinLaunchAgentStatus {
@@ -185,6 +187,7 @@ export function getRuntimePaths(): RuntimePaths {
     configPath: resolvedConfigPath,
     storePath,
     logPath: resolve(LOG_FILE),
+    socketPath: resolve(SOCKET_FILE),
   };
 }
 

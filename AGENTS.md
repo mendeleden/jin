@@ -4,6 +4,8 @@
 
 - Runtime: Bun. Use `bun`, not `npm` or `node`.
 - For v2 work, treat `docs/ontology.md` and `docs/blueprint/` as source of truth.
+- Packaged Desktop code must not shell out to repo-local Bun or TypeScript entrypoints. Resolve the installed `jin` CLI or a bundled release artifact instead.
+- Desktop release matrices, package-script target guards, and `jin desktop` asset candidates must describe the same platform/architecture set.
 - If a fix needs behavior that conflicts with a frozen blueprint or contract, stop and surface the drift explicitly before implementing it. Do not hide contract extensions behind duck-typed hooks or packet-local shortcuts.
 - Do not add standalone `.mmd` copies of Mermaid diagrams unless they are generated from a current source-of-truth doc or explicitly owned as first-class artifacts.
 - Prefer small, typed changes to existing files.
