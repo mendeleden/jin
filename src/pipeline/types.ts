@@ -6,6 +6,7 @@ import type { SqliteDiscoveryCache } from "../db/discovery-cache";
 
 export type PipelineWorkItem =
   | { kind: "reconcile-adapters" }
+  | { kind: "config-reload"; source: "config-file" | "command" }
   | { kind: "ingest-all"; hint: ChangeHint }
   | { kind: "ingest-adapter"; adapterId: string; hint: ChangeHint }
   | { kind: "push" }
@@ -60,6 +61,8 @@ export interface RunPipelineOptions {
   store: ConversationStore;
   sinks: ReadonlyArray<Sink>;
   routes: ReadonlyArray<RouteConfig>;
+  getSinks?: () => ReadonlyArray<Sink>;
+  getRoutes?: () => ReadonlyArray<RouteConfig>;
   logger?: PipelineLogger;
   ingestBatchSize?: number;
   pushBatchSize?: number;
@@ -76,13 +79,18 @@ export interface RunPipelineOptions {
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
   diagnosticLogPath?: string;
+  onConfigReload?: (
+    source: "config-file" | "command",
+  ) => void | Promise<void>;
   workerIngest?: {
     command: string[];
     adapterConfigs: Record<string, AdapterConfig>;
+    getAdapterConfigs?: () => Record<string, AdapterConfig>;
   };
   discoveryCache?: {
     store: SqliteDiscoveryCache;
     adapterConfigs: Record<string, AdapterConfig>;
+    getAdapterConfigs?: () => Record<string, AdapterConfig>;
   };
 }
 
@@ -93,6 +101,7 @@ export interface PipelineShutdownResult {
 
 export interface PipelineHandle {
   enqueue(work: QueueablePipelineWorkItem): boolean;
+  reloadConfig(source: "config-file" | "command"): boolean;
   waitForIdle(): Promise<void>;
   shutdown(): Promise<PipelineShutdownResult>;
 }

@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import {
@@ -51,6 +61,10 @@ const PROTECTED_SOURCE_ADAPTER_IDS = [
 const PROTECTED_SOURCE_ADAPTER_ID_SET = new Set<string>(
   PROTECTED_SOURCE_ADAPTER_IDS,
 );
+const CONFIG_LOCK_FILENAME = "config.lock";
+const CONFIG_WRITE_TIMEOUT_MS = 5_000;
+const CONFIG_LOCK_STALE_MS = 30_000;
+const CONFIG_LOCK_POLL_MS = 50;
 
 export interface AdapterConfig extends ContractAdapterConfig {
   allowProtectedSource?: boolean;
@@ -184,6 +198,10 @@ export function configPath(): string {
   return join(configDir(), "config.json");
 }
 
+export function configLockPath(): string {
+  return join(configDir(), CONFIG_LOCK_FILENAME);
+}
+
 export function discoveryCachePath(): string {
   return join(configDir(), "discovery-cache.db");
 }
@@ -232,27 +250,158 @@ export async function loadConfig(): Promise<JinConfig> {
 }
 
 export async function loadStartupConfig(): Promise<JinConfig> {
-  ensureConfigDir();
-  const cfgPath = configPath();
-  if (!existsSync(cfgPath)) {
-    const config = defaultConfig();
-    await saveConfig(config);
-    return config;
-  }
+  return withConfigLock(async () => {
+    ensureConfigDir();
+    const cfgPath = configPath();
+    if (!existsSync(cfgPath)) {
+      const config = defaultConfig();
+      await writeConfigFile(config);
+      return config;
+    }
 
-  const rawText = await Bun.file(cfgPath).text();
-  const raw = JSON.parse(rawText);
-  const materialized = materializeConfigShape(raw);
-  if (materialized.changed) {
-    await Bun.write(cfgPath, JSON.stringify(materialized.value, null, 2));
-  }
+    const rawText = await Bun.file(cfgPath).text();
+    const raw = JSON.parse(rawText);
+    const materialized = materializeConfigShape(raw);
+    if (materialized.changed) {
+      await writeConfigFile(materialized.value);
+    }
 
-  return normalizeConfig(materialized.value);
+    return normalizeConfig(materialized.value);
+  });
 }
 
 export async function saveConfig(config: JinConfig): Promise<void> {
   ensureConfigDir();
-  await Bun.write(configPath(), JSON.stringify(normalizeConfig(config), null, 2));
+  await writeConfigFile(config);
+}
+
+export async function updateConfig<T>(
+  mutate: (config: JinConfig) => Promise<T> | T,
+): Promise<{ config: JinConfig; result: T }> {
+  return withConfigLock(async () => {
+    const config = await loadConfig();
+    const result = await mutate(config);
+    await writeConfigFile(config);
+    return { config, result };
+  });
+}
+
+async function writeConfigFile(config: unknown): Promise<void> {
+  const cfgPath = configPath();
+  const normalized = normalizeConfig(config);
+  const serialized = JSON.stringify(normalized, null, 2);
+  const tmpPath = `${cfgPath}.${process.pid}.${Date.now()}.tmp`;
+
+  await Bun.write(tmpPath, serialized);
+  renameSync(tmpPath, cfgPath);
+}
+
+async function withConfigLock<T>(fn: () => Promise<T>): Promise<T> {
+  ensureConfigDir();
+  const release = await acquireConfigLock();
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+async function acquireConfigLock(timeoutMs = CONFIG_WRITE_TIMEOUT_MS): Promise<() => void> {
+  const lockPath = configLockPath();
+  const deadline = Date.now() + Math.max(timeoutMs, CONFIG_LOCK_POLL_MS);
+
+  while (true) {
+    try {
+      const fd = openSync(lockPath, "wx");
+      try {
+        writeFileSync(
+          fd,
+          JSON.stringify({
+            pid: process.pid,
+            acquiredAt: new Date().toISOString(),
+          }),
+        );
+      } finally {
+        closeSync(fd);
+      }
+
+      return () => {
+        try {
+          unlinkSync(lockPath);
+        } catch {}
+      };
+    } catch (error) {
+      if (!isFileExistsError(error)) {
+        throw error;
+      }
+
+      clearStaleConfigLock(lockPath);
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for config lock at ${lockPath}`,
+        );
+      }
+
+      await Bun.sleep(CONFIG_LOCK_POLL_MS);
+    }
+  }
+}
+
+function clearStaleConfigLock(lockPath: string): void {
+  let pid: number | undefined;
+  let ageMs = Number.POSITIVE_INFINITY;
+
+  try {
+    const raw = readFileSync(lockPath, "utf-8");
+    const parsed = JSON.parse(raw) as { pid?: unknown; acquiredAt?: unknown };
+    if (typeof parsed.pid === "number" && Number.isFinite(parsed.pid)) {
+      pid = parsed.pid;
+    }
+    if (typeof parsed.acquiredAt === "string") {
+      const acquiredMs = Date.parse(parsed.acquiredAt);
+      if (Number.isFinite(acquiredMs)) {
+        ageMs = Date.now() - acquiredMs;
+      }
+    }
+  } catch {}
+
+  if (!Number.isFinite(ageMs)) {
+    try {
+      ageMs = Date.now() - statSync(lockPath).mtimeMs;
+    } catch {
+      ageMs = Number.POSITIVE_INFINITY;
+    }
+  }
+
+  if (pid !== undefined && isProcessAlive(pid)) {
+    return;
+  }
+
+  if (ageMs < CONFIG_LOCK_STALE_MS) {
+    return;
+  }
+
+  try {
+    unlinkSync(lockPath);
+  } catch {}
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "EEXIST"
+  );
 }
 
 function defaultAdapters(): Record<string, AdapterConfig> {

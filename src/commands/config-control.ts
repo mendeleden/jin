@@ -14,20 +14,29 @@ export async function persistConfigChange(
   } = {},
 ): Promise<void> {
   await saveConfig(config);
+  await finalizeConfigChange(opts);
+}
+
+export async function finalizeConfigChange(
+  opts: {
+    yes?: boolean;
+    changeSummary?: string;
+  } = {},
+): Promise<void> {
+  const watcher = getWatcherState();
 
   if (opts.changeSummary) {
     console.log(`  ${opts.changeSummary}.`);
   }
 
-  const watcher = getWatcherState();
   if (watcher.status !== "running") {
     console.log("  Changes will apply the next time jin starts.");
     return;
   }
 
   if (!opts.yes) {
-    console.log("  Restart jin to apply config changes.");
-    console.log("  Re-run with `--yes` to perform a controlled restart now.");
+    console.log("  Running runtime will reload config shortly.");
+    console.log("  Re-run with `--yes` to force a full controlled restart instead.");
     return;
   }
 

@@ -88,16 +88,20 @@ Desktop talks to a stable local daemon boundary for:
 
 Desktop is a surface over the daemon, not a parallel runtime.
 
-### 6. Config is snapshotted at process start
+### 6. Config reload is coordinator-owned
 
-The long-lived runtime loads config on startup and treats it as immutable for
-that run.
+The long-lived runtime loads an initial config at startup, but later config
+changes may become live through an explicit coordinator-owned reload
+transition.
 
 Changing config while jin is running requires:
-- restart, or
-- a future explicit reload path
+- an explicit prioritized config-reload transition, or
+- restart
 
-Hot config reload is not a v2 lifecycle invariant.
+If the next durable config generation is invalid, the runtime must stop and
+report the config error. It must not continue serving the previous generation.
+
+Ad hoc config rereads from arbitrary subsystems are not a lifecycle invariant.
 
 ---
 
@@ -200,7 +204,8 @@ It does not change:
 - runtime ownership rules
 - the single-coordinator invariant
 - graceful shutdown semantics
-- config snapshot semantics for a running process
+- the rule that a running process only absorbs config through restart or an
+  explicit coordinator-owned reload path
 
 ---
 
@@ -268,7 +273,7 @@ The long-lived runtime startup sequence is:
 4. If a daemon/foreground runtime is already active, surface that and stop.
 5. Acquire runtime ownership.
 6. Open the store and run pending SQLite migrations.
-7. Load config and snapshot it for this run.
+7. Load the initial runtime config generation.
 8. Detect active adapters and create sinks.
 9. Start the local control/status boundary.
 10. Start the pipeline coordinator.
@@ -317,17 +322,19 @@ When a user types `jin stop` — especially in a panic — they mean "freeze
 the system as soon as safely possible," not "after the next 200 queued
 things, please stop."
 
-**Stop preempts scheduling, not in-flight code.** The coordinator:
+**Stop is a real-time brake.** The coordinator:
 
 1. Immediately stops accepting/enqueuing normal work
 2. Closes watchers immediately
 3. Cancels timers immediately
 4. Skips any queued ingest/push work not yet started
-5. If a work item is already in flight: lets it finish (or hit a bounded
-   cancellation point), then proceeds to shutdown
+5. If parent-owned adapter or push worker execution is already in flight:
+   cancel or kill it immediately
+6. Do not start a new ingest or push flush during stop
 
-This gives low stop latency without partial-state interruption inside
-arbitrary code. See BP-02 for how the coordinator implements this.
+This gives low stop latency without continuing delivery after the user has
+asked the runtime to freeze. See BP-02 for how the coordinator implements
+worker interruption and recovery.
 
 ### Shutdown steps
 
@@ -336,25 +343,24 @@ arbitrary code. See BP-02 for how the coordinator implements this.
    - discard all pending normal work items (ingest, push, reconcile)
    - close watchers
    - cancel periodic timers
-3. Wait for any in-flight work item to complete (bounded by work-item
-   timeout, not the full queue backlog).
-4. Run a final best-effort flush:
-   - one shutdown ingest scan (captures debounced file changes)
-   - one final push of accumulated changes
-   - close sinks
-5. Close the store.
-6. Remove runtime ownership state.
-7. Exit.
+3. Cancel or kill any parent-owned adapter/push worker still in flight.
+4. Do **not** run a final ingest scan or final push during stop.
+5. Close sinks.
+6. Close the store.
+7. Remove runtime ownership state.
+8. Exit.
 
-This ordering preserves the BP-02 invariant that push is derived from
-durable store state, while bounding stop latency to the cost of one
-in-flight work item plus the final flush — not the full queue depth.
+This ordering preserves the BP-02 invariant that push is derived from durable
+store state while treating local SQLite as the safety net. Shutdown latency is
+bounded by worker cancellation and resource cleanup, not by a best-effort final
+delivery flush.
 
 ### Shutdown Budget
 
 Graceful shutdown should have a bounded timeout of **15 seconds**.
 
-If the pipeline has not completed its final flush within that budget, jin
+If the pipeline has not completed worker cancellation and resource cleanup
+within that budget, jin
 should:
 - log what work was abandoned
 - rely on durable local state for recovery on next start
@@ -370,7 +376,7 @@ If graceful shutdown exceeds the timeout budget, jin may:
 - rely on durable local state for recovery on next start
 
 The local store is the safety net. Shutdown should be graceful, but it does
-not need to guarantee that every push completes before process death.
+not need to guarantee that every active push completes before process death.
 
 ---
 
@@ -411,11 +417,39 @@ Behavior:
 - process health
 - adapter health
 - sink health
+- active config generation when running
+- last fatal config error when stopped due to invalid config
 - store path / config path
 - paused/degraded conditions
 
 `status` must work even when jin is stopped. It should not require the daemon
 to be healthy in order to report useful information.
+
+If service mode stops repeatedly on invalid config, the lifecycle/status
+surface should still expose the last fatal config error rather than collapsing
+into an opaque restart loop.
+
+At minimum, the runtime control/status boundary must track and expose
+equivalents of:
+- `active_config_generation`
+- `observed_config_generation` when a newer durable config snapshot has been
+  seen but not committed yet
+- `reload_state`: `idle`, `observed`, `validating`, `committing`,
+  `stopped_invalid_config`
+- `last_reload_reason`: command-driven change, filesystem edit, startup, or
+  service restart
+- interrupted-worker counters, at least:
+  - total interruptions
+  - push-worker interruptions
+  - adapter-worker interruptions
+- last abandoned-delivery event, including:
+  - timestamp
+  - active generation at interruption time
+  - affected sink IDs or push target
+  - dirty backlog remains local and eligible for replay
+
+Human-readable `jin status` output does not need to use those exact field
+names, but structured status output must preserve the same information.
 
 ### Error Message Contract
 
@@ -429,8 +463,9 @@ Every lifecycle error should tell the user:
 Examples:
 - "jin is already running under launchd; use service control or stop the
   service before starting a detached daemon"
-- "config changed on disk, but the active runtime will not see it until
-  restart; run `jin restart` to apply"
+- "config changed on disk; the active runtime is reloading now"
+- "config.json is invalid; jin stopped rather than continue on the previous
+  config"
 
 ---
 
@@ -455,6 +490,9 @@ should distinguish:
 - push-side degradation
 - both
 
+Invalid config is not `degraded`. Once the runtime rejects a newer durable
+config generation, it transitions to `stopped` with fatal config detail.
+
 This keeps the top-level lifecycle state simple while still telling users
 which subsystem is unhealthy.
 
@@ -462,6 +500,25 @@ Examples:
 - one adapter timing out repeatedly → `degraded`
 - one sink paused on schema mismatch → `degraded`
 - no active process → `stopped`
+
+### Minimum Validation Matrix
+
+Any packet or implementation touching live config cutover, stop semantics, or
+interruptible delivery must produce artifacts covering at least:
+
+1. prioritized `config-reload` while a push worker is active
+2. `jin stop` while a push worker is active
+3. invalid config observed in daemon mode
+4. invalid config observed in service mode
+5. replay/backlog recovery after an interrupted push worker
+6. manual config save that exposes invalid JSON mid-edit
+
+Each artifact must show:
+- whether the runtime stopped or committed a new generation
+- whether any push worker was interrupted
+- that `_jin_push_state` advanced only for completed parent-confirmed results
+- what `jin status` or diagnostics reported afterward
+- how the dirty backlog resumed or remained blocked
 
 ---
 
@@ -520,18 +577,22 @@ Examples:
 
 Their contract is:
 - write durable config
-- do not mutate the live runtime in place in v2
-- surface clearly that the active runtime will see changes on restart or
-  future explicit reload
+- cause the daemon boundary to perform a coordinator-owned reload of the next
+  durable config generation, or request restart explicitly
+- never patch random in-flight subsystems by having each command mutate the
+  live runtime directly
 
 This keeps runtime state and config state separate:
 - config is durable intent
-- the active runtime is a snapshot of that intent at process start
+- the active runtime applies that intent only at startup or at a
+  coordinator-owned reload boundary
 
 The same rule applies to managed deployment tooling:
 - admins may place or update durable config on disk
-- the active runtime does not absorb those changes until restart or future
-  explicit reload
+- the active runtime does not absorb those changes until restart or an explicit
+  reload transition
+- if the next generation is invalid, the runtime stops rather than continuing
+  on stale config
 
 ### Lifecycle commands
 

@@ -265,6 +265,55 @@ describe("pipeline spine", () => {
     }
   });
 
+  test("prioritizes config reload ahead of queued push work and uses refreshed routes", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    const firstFindChanged = deferred<void>();
+    let routes: RouteConfig[] = [];
+    const alpha = new TestAdapter("alpha", {
+      async findChanged() {
+        await firstFindChanged.promise;
+        return [makeRef("alpha-1", "alpha")];
+      },
+      async loadConversation(ref) {
+        return makeBundle(ref.id, "alpha");
+      },
+    });
+
+    const handle = await startPipeline({
+      adapterSource: [alpha],
+      store,
+      sinks: [sink],
+      routes,
+      getRoutes: () => routes,
+      onConfigReload: async () => {
+        routes = ROUTE_ALL_TO_PRIMARY;
+      },
+    });
+
+    try {
+      handle.enqueue({
+        kind: "ingest-adapter",
+        adapterId: "alpha",
+        hint: { kind: "startup-scan" },
+      });
+
+      await waitFor(() => alpha.findChangedHints.length === 1);
+      handle.enqueue({ kind: "push" });
+      handle.reloadConfig("command");
+
+      firstFindChanged.resolve();
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(
+        sink.pushCalls[0].map((payload) => payload.conversation.id),
+      ).toEqual(["alpha-1"]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
   test("shutdown skips queued normal work and performs one bounded final flush", async () => {
     const store = new InMemoryConversationStore();
     const sink = new TestSink("primary");

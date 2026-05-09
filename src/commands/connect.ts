@@ -3,7 +3,7 @@ import { homedir } from "os";
 import {
   ensureConfigDir,
   loadConfig,
-  saveConfig,
+  updateConfig,
   type JinConfig,
   type SinkConfig,
 } from "../config";
@@ -18,7 +18,7 @@ import {
   findSinkIndexById,
   type SinkCandidateInput,
 } from "./sink";
-import { persistConfigChange } from "./config-control";
+import { finalizeConfigChange } from "./config-control";
 import { normalizeRemote, sinkIdsForConversation } from "../routing";
 import { decodeTeamConfig, type SinkConfig as TeamSinkConfig } from "../sinks/types";
 import { getRuntimePaths } from "../daemon/runtime-state";
@@ -69,10 +69,14 @@ export async function connectCommand(
   if (!project && !opts.remote) {
     if (opts.team) {
       ensureConfigDir();
-      const config = await loadConfig();
-      const sinkResult = await resolveOrCreateSink(config, opts);
+      const { result: sinkResult } = await updateConfig(async (config) =>
+        resolveOrCreateSink(config, opts),
+      );
       if (sinkResult.created) {
-        await saveConfig(config);
+        await finalizeConfigChange({
+          yes: opts.yes,
+          changeSummary: `Added sink ${sinkDisplayLabel(sinkResult.sink)}`,
+        });
         console.log(`  Added sink: ${sinkDisplayLabel(sinkResult.sink)}`);
       } else {
         console.log(`  Sink already configured (${sinkResult.sinkId})`);
@@ -101,10 +105,13 @@ export async function connectCommand(
   }
 
   ensureConfigDir();
-  const config = await loadConfig();
-  const sinkResult = await resolveOrCreateSink(config, opts);
   const routeTarget = resolveConnectTarget(project, opts);
-  const routeResult = upsertRoute(config, routeTarget.match, [sinkResult.sinkId]);
+  const { result } = await updateConfig(async (config) => {
+    const sinkResult = await resolveOrCreateSink(config, opts);
+    const routeResult = upsertRoute(config, routeTarget.match, [sinkResult.sinkId]);
+    return { sinkResult, routeResult };
+  });
+  const { sinkResult, routeResult } = result;
 
   if (!sinkResult.created && !routeResult.changed) {
     console.log(
@@ -113,7 +120,7 @@ export async function connectCommand(
     return;
   }
 
-  await persistConfigChange(config, {
+  await finalizeConfigChange({
     yes: opts.yes,
     changeSummary: `${
       routeResult.created ? "Connected" : "Updated"
@@ -333,36 +340,48 @@ export async function disconnectCommand(
     ]);
   }
 
-  const config = await loadConfig();
   const target = resolveProjectTarget(project);
   const match = normalizeRouteMatchInput(target.match);
-  const route = config.routes.find((candidate) => matchesExactRoute(candidate.match, match));
-  if (!route) {
-    fail(`no connection found for "${project}"`, [
-      "  Run 'jin connections' to see current connections.",
-    ]);
-  }
+  const { result } = await updateConfig((config) => {
+    const route = config.routes.find((candidate) => matchesExactRoute(candidate.match, match));
+    if (!route) {
+      fail(`no connection found for "${project}"`, [
+        "  Run 'jin connections' to see current connections.",
+      ]);
+    }
 
-  const removedSinkIds = [...route.sinks];
-  removeRoute(config, match);
+    const removedSinkIds = [...route.sinks];
+    removeRoute(config, match);
+    const removedSinks: string[] = [];
+    const keptSinks: string[] = [];
 
-  if (opts["remove-sink"] || opts.removeSink) {
-    for (const sinkId of removedSinkIds) {
-      const stillUsed = config.routes.some((candidate) => candidate.sinks.includes(sinkId));
-      if (stillUsed) {
-        console.log(`  Sink ${sinkId} is still used by other routes, kept.`);
-        continue;
-      }
+    if (opts["remove-sink"] || opts.removeSink) {
+      for (const sinkId of removedSinkIds) {
+        const stillUsed = config.routes.some((candidate) => candidate.sinks.includes(sinkId));
+        if (stillUsed) {
+          keptSinks.push(sinkId);
+          continue;
+        }
 
-      const sinkIndex = findSinkIndexById(config, sinkId);
-      if (sinkIndex >= 0) {
-        config.sinks.splice(sinkIndex, 1);
-        console.log(`  Removed sink: ${sinkId}`);
+        const sinkIndex = findSinkIndexById(config, sinkId);
+        if (sinkIndex >= 0) {
+          config.sinks.splice(sinkIndex, 1);
+          removedSinks.push(sinkId);
+        }
       }
     }
+
+    return { removedSinks, keptSinks };
+  });
+
+  for (const sinkId of result.keptSinks) {
+    console.log(`  Sink ${sinkId} is still used by other routes, kept.`);
+  }
+  for (const sinkId of result.removedSinks) {
+    console.log(`  Removed sink: ${sinkId}`);
   }
 
-  await persistConfigChange(config, {
+  await finalizeConfigChange({
     yes: opts.yes,
     changeSummary: `Disconnected ${project} (${formatRouteMatch(match)})`,
   });

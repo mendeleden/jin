@@ -101,6 +101,36 @@ The pipeline records `attemptedRevision` in `_jin_push_state` on success
 - No `ensureTables()` or `migrate()` — sinks do not provision remote resources.
 - No `connect()` — sinks lazily connect on first `push()` or `healthCheck()`.
 
+### Interruptibility and Worker Hosting
+
+The parent pipeline may host sink `push()` execution inside a disposable
+subprocess worker. That is an internal BP-02 execution policy, not sink API
+surface.
+
+Why this matters:
+
+- stop and config-generation cutovers may need to interrupt in-flight delivery
+  immediately
+- the parent should be able to kill a push worker without widening the generic
+  sink interface for every transport
+- durable local push state remains the source of truth for what Jin considers
+  confirmed
+
+The acknowledgement rule is:
+
+- a payload is considered pushed only when the parent receives a completed
+  `PushResult` and records success in `_jin_push_state`
+- if a push worker is interrupted or dies before returning, the parent records
+  no new success for payloads that were still in that worker
+- the parent records interruption metadata sufficient for status/diagnostics:
+  generation, sink target, and the fact that dirty replay remains pending
+- those payloads remain dirty and are retried later under at-least-once
+  delivery semantics
+
+This means the remote may already have received bytes before the local
+interrupt. Jin's contract is to stop cooperating immediately and rely on
+idempotency plus dirty-state replay for recovery.
+
 ---
 
 ## No Privileged Remote Provisioning

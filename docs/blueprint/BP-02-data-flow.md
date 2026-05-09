@@ -20,17 +20,25 @@ The pipeline module (BP-01) owns this flow. It calls adapters, writes to
 the store, and pushes to sinks. The store is the **buffer** between ingest
 and push — they never communicate directly.
 
-Execution strategy is also pipeline-owned. The pipeline MAY execute adapter
-work inline or in a subprocess worker, but that is an internal execution
-policy, not an adapter contract change.
+Execution strategy is also pipeline-owned. The pipeline MAY execute some
+bounded adapter helpers inline, but long-lived runtime push execution and any
+adapter work that participates in stop/reload cutover must run in
+parent-cancellable subprocess workers. This is an internal execution policy,
+not an adapter or sink contract change.
 
 If subprocess workers are used, parent/worker communication is an internal
-pipeline transport. It is not adapter API surface and is not part of BP-04.
+pipeline transport. It is not adapter or sink API surface and is not part of
+BP-04 or BP-06.
+
+For the long-lived runtime, any adapter or push operation that must be
+interruptible at stop or config-generation boundaries should run inside a
+parent-cancellable worker process. A brake that still waits behind arbitrary
+in-flight bytes is not a real brake.
 
 ### Worker Transport Standard
 
-When the pipeline uses subprocess workers for adapter execution, the preferred
-transport is:
+When the pipeline uses subprocess workers for adapter or push execution, the
+preferred transport is:
 
 - **JSON-RPC 2.0**
 - over **stdio**
@@ -46,12 +54,65 @@ Transport rules:
 - `stderr` is reserved for logs and diagnostics
 - the parent owns worker lifecycle, request IDs, timeout handling, and process
   cleanup
-- the worker owns only the execution of the requested adapter operation
+- the worker owns only the execution of the requested adapter or push
+  operation
+- the parent may kill worker processes at stop or config-generation
+  boundaries; interrupted work is retried from durable state
 
 Ad hoc newline-delimited frame formats may exist as transitional internal
 implementations, but they are not the architectural target. External
 contributors should treat **JSON-RPC 2.0 over stdio with `Content-Length`
 framing** as the intended standard for parent/worker IPC.
+
+### Runtime Generation Model
+
+The long-lived runtime owns one **active config generation** at a time.
+
+The active generation includes:
+
+- the normalized config snapshot
+- the active sink set
+- route inputs
+- adapter config used for discovery/load
+- watcher/timer settings derived from config
+
+Queued work belongs to a generation. The coordinator must not execute stale
+work from an older generation after a newer generation is committed.
+
+Each generation moves through four coordinator-visible states:
+
+- **observed**: a newer durable config snapshot was noticed, but the old
+  generation is still active
+- **validated**: the newer snapshot parsed, normalized, and passed validation,
+  but has not been committed yet
+- **committed**: the coordinator swapped all runtime-owned state to the newer
+  generation
+- **retired**: old-generation queued work was discarded or skipped and may no
+  longer execute
+
+Every ordinary queue item carries the active generation ID at enqueue time. On
+dequeue, if an item's generation is older than the committed active
+generation, the coordinator retires it without running the work. Only control
+items such as `config-reload` and shutdown completion bypass that stale-work
+rule.
+
+`config-reload` is therefore a first-class control transition with this state
+machine:
+
+1. **observe** the next durable config generation
+2. **validate** the whole generation
+3. if invalid, **stop** the runtime fail-closed
+4. if valid, **preempt** old-generation worker execution
+5. **rebuild** sinks/routes/adapter settings/watchers/timers
+6. **commit** the new active generation
+7. **discard** queued stale work tagged to older generations
+
+The commit point matters. Before commit, the old generation is still active.
+After commit, no old-generation delivery or discovery work may continue.
+
+Status/diagnostic surfaces must expose enough detail to tell which generation
+is active, whether a newer one is pending, and whether worker interruption
+retired any local delivery work. See BP-07.
 
 ---
 
@@ -314,6 +375,21 @@ The revision enables idempotency (webhook dedup keys) and auditing (Postgres
 can store it). See BP-06 (Sink Contract) for the full payload type and
 per-family semantics.
 
+### Push-State Commit Invariant
+
+`_jin_push_state` advances only from a completed, parent-confirmed
+`PushResult`.
+
+That means:
+
+- a started push is not a committed push
+- a killed worker is not a committed push
+- a remote side that may have received bytes before local interruption still
+  does not advance local success state until a completed result is recorded
+
+Crash/restart recovery therefore replays from durable dirty state rather than
+inventing partial local acknowledgements.
+
 ### Push Scheduling
 
 Push is **change-gated and queue-coalesced.** When a canonical store write
@@ -333,6 +409,24 @@ Push processes payloads in batches of 20. Between batches, yield to the
 event loop. This caps peak RSS — message arrays for 20 conversations are
 loaded, pushed, then freed before the next batch loads.
 
+### Interruptibility
+
+Push is part of the live control plane, not a sacred in-flight batch.
+
+When stop or a newer config generation lands, the parent may interrupt an
+active push worker immediately rather than waiting for the current payload or
+batch to finish. The durable rule is:
+
+- only a completed `PushResult` returned to the parent can advance
+  `_jin_push_state`
+- if a push worker is interrupted or dies before returning, the parent records
+  no new success for unconfirmed payloads
+- those payloads remain eligible for the next push cycle
+
+This is still at-least-once delivery. A remote side may have already received
+bytes before the local interrupt, but Jin must stop cooperating immediately and
+rely on dirty-state replay for recovery.
+
 ### Error Handling
 
 If a sink throws during `push()`:
@@ -341,6 +435,13 @@ If a sink throws during `push()`:
 - Un-pushed conversations remain in `conversationsNeedingPush` for the
   next cycle
 - No data is lost — the store is the persistent buffer
+
+If a push worker is killed during `push()`:
+- The interruption is logged as abandoned/unknown delivery work
+- No success is recorded for payloads that were still in that worker
+- Those conversations remain in `conversationsNeedingPush` for the next cycle
+- The remote may already have received partial data; local state still treats
+  the payload as dirty until a later successful push confirms it
 
 ---
 
@@ -356,31 +457,45 @@ interface PipelineHandle {
 }
 
 function runPipeline(config, store, registry, sinks, log): PipelineHandle {
-  let activeAdapters = detectAdapters(registry, config);
+  let activeGeneration = 0;
+  let activeConfig = config;
+  let activeSinks = sinks;
+  let activeAdapters = detectAdapters(registry, activeConfig);
+  const runtimeStatus = {
+    activeConfigGeneration: activeGeneration,
+    observedConfigGeneration: null,
+    reloadState: "idle",
+  };
   // ── EVENT QUEUE ──────────────────────────────────────
   // All triggers (watcher, periodic, startup) enqueue work items.
   // The coordinator drains the queue serially — one piece of work
-  // at a time. No concurrent ingest or push calls.
+  // at a time. Parent-owned child workers may perform the active adapter or
+  // push operation, but the coordinator still owns scheduling and cutover.
   const queue = new WorkQueue();
 
   // ── INITIAL WORK ─────────────────────────────────────
-  queue.enqueue({ kind: "ingest-all", hint: { kind: "startup-scan" } });
-  queue.enqueue({ kind: "push" });
+  queue.enqueue({ kind: "ingest-all", generation: activeGeneration, hint: { kind: "startup-scan" } });
+  queue.enqueue({ kind: "push", generation: activeGeneration });
 
   // ── FILE WATCHER ─────────────────────────────────────
   const watcher = new FileWatcher(log);
   setupWatchers(watcher, activeAdapters, (adapterId, changedPaths) => {
-    queue.enqueue({ kind: "ingest-adapter", adapterId, hint: { kind: "fs-change", changedPaths } });
+    queue.enqueue({
+      kind: "ingest-adapter",
+      generation: activeGeneration,
+      adapterId,
+      hint: { kind: "fs-change", changedPaths },
+    });
     // Push is not enqueued here — the coordinator schedules push
     // only if ingestOne/ingestAll reports changed bundles.
   });
 
   // ── PERIODIC TIMER ───────────────────────────────────
   const periodic = setInterval(() => {
-    queue.enqueue({ kind: "reconcile-adapters" });
-    queue.enqueue({ kind: "ingest-all", hint: { kind: "periodic-scan" } });
-    queue.enqueue({ kind: "push" });
-  }, config.scanIntervalMs ?? 60_000); // default 60s — must match Push Scheduling prose above
+    queue.enqueue({ kind: "reconcile-adapters", generation: activeGeneration });
+    queue.enqueue({ kind: "ingest-all", generation: activeGeneration, hint: { kind: "periodic-scan" } });
+    queue.enqueue({ kind: "push", generation: activeGeneration });
+  }, activeConfig.scanIntervalMs ?? 60_000); // default 60s — must match Push Scheduling prose above
 
   // ── COORDINATOR (single serial loop) ─────────────────
   // This is the only thing that calls ingest or push functions.
@@ -391,35 +506,64 @@ function runPipeline(config, store, registry, sinks, log): PipelineHandle {
     while (true) {
       const work = await queue.take();  // blocks until work available
 
-      // Stop preempts: skip all normal work once stopping is set
+      // Stop/config preempt: skip all normal work once stopping is set
       if (stopping && work.kind !== "shutdown-flush") continue;
-      if (work.kind === "shutdown-flush") {
-        // Final best-effort: one full ingest scan + one push.
-        // The frozen adapter hint contract does not define `shutdown-scan`,
-        // so runtime reuses `periodic-scan` here as the shutdown full-scan
-        // alias.
-        await ingestAll(activeAdapters, store, { kind: "periodic-scan" }, log);
-        await pushDirty(store, sinks, config.routes, log);
-        return;  // coordinator exits
+      if (work.kind === "shutdown-flush") return;
+      if (
+        work.kind !== "config-reload" &&
+        work.kind !== "shutdown-flush" &&
+        work.generation < activeGeneration
+      ) {
+        log.info("Discarding stale work from retired config generation", {
+          workKind: work.kind,
+          workGeneration: work.generation,
+          activeGeneration,
+        });
+        continue;
+      }
+      if (work.kind === "config-reload") {
+        runtimeStatus.reloadState = "validating";
+        const nextGeneration = readAndValidateConfigGeneration();
+        if (!nextGeneration.ok) {
+          runtimeStatus.reloadState = "stopped_invalid_config";
+          stopRuntimeBecauseConfigIsInvalid(nextGeneration.error);
+          return;
+        }
+
+        runtimeStatus.observedConfigGeneration = nextGeneration.id;
+        runtimeStatus.reloadState = "committing";
+        cancelActiveWorkers();
+        await Promise.all(activeSinks.map(s => s.close()));
+        activeConfig = nextGeneration.config;
+        activeSinks = buildSinks(activeConfig);
+        activeAdapters = detectAdapters(registry, activeConfig);
+        watcher.reconcile(activeAdapters);
+        restartTimersFrom(activeConfig);
+        activeGeneration = nextGeneration.id;
+        runtimeStatus.activeConfigGeneration = activeGeneration;
+        discardQueuedWorkOlderThan(activeGeneration);
+        runtimeStatus.observedConfigGeneration = null;
+        runtimeStatus.reloadState = "idle";
+        continue;
       }
 
       if (work.kind === "reconcile-adapters") {
-        activeAdapters = detectAdapters(registry, config);
+        activeAdapters = detectAdapters(registry, activeConfig);
         watcher.reconcile(activeAdapters);
       }
       else if (work.kind === "ingest-all") {
         const { anyChanged } = await ingestAll(activeAdapters, store, work.hint, log);
-        if (anyChanged) queue.enqueue({ kind: "push" });
+        if (anyChanged) queue.enqueue({ kind: "push", generation: activeGeneration });
       }
       else if (work.kind === "ingest-adapter") {
         const adapter = activeAdapters.find(a => a.id === work.adapterId);
         if (adapter) {
           const { anyChanged } = await ingestOne(adapter, store, work.hint, log);
-          if (anyChanged) queue.enqueue({ kind: "push" });
+          if (anyChanged) queue.enqueue({ kind: "push", generation: activeGeneration });
         }
       }
       else if (work.kind === "push") {
-        await pushDirty(store, sinks, config.routes, log);
+        await pushDirty(store, activeSinks, activeConfig.routes, log);
       }
     }
   }
@@ -434,21 +578,18 @@ function runPipeline(config, store, registry, sinks, log): PipelineHandle {
       watcher.close();
       clearInterval(periodic);
 
-      // 2. Wait for any in-flight work item to finish
-      //    (the coordinator loop checks `stopping` before each item)
+      // 2. Cancel any active child worker immediately
 
-      // 3. Enqueue final flush (only item the coordinator will process)
+      // 3. Enqueue shutdown completion (only item the coordinator will process)
       queue.enqueue({ kind: "shutdown-flush" });
 
-      // 4. Wait for coordinator to complete final flush — or timeout
+      // 4. Wait for coordinator to complete shutdown — or timeout
       const timedOut = await Promise.race([
         coordinatorDone.then(() => false),
         Bun.sleep(15_000).then(() => true),  // 15s drain budget (BP-07)
       ]);
 
       // 5. On timeout: log what was abandoned and exit uncleanly.
-      //    We do NOT close sinks while the coordinator may still be
-      //    pushing to them. The process exits, OS reclaims resources.
       if (timedOut) {
         log.warn("Shutdown budget exceeded — abandoning in-flight work");
         process.exit(1);
@@ -462,12 +603,11 @@ function runPipeline(config, store, registry, sinks, log): PipelineHandle {
 ```
 
 **Shutdown timeout contract:** If the 15-second drain budget expires
-before the coordinator finishes, the process exits immediately (`exit(1)`)
-without calling `sink.close()`. This avoids the race where `close()` runs
-while `pushDirty()` is still in-flight on the same sink. Data is safe —
-the store is durable, and un-pushed conversations will be retried on next
-start. The unclean exit is the correct tradeoff: a hung sink should not
-prevent the process from stopping.
+before the coordinator finishes cancelling active work and closing resources,
+the process exits immediately (`exit(1)`). Data is safe — the store is
+durable, and un-pushed conversations will be retried on next start. The
+unclean exit is the correct tradeoff: a hung worker or sink must not prevent
+the process from stopping.
 
 The coordinator is the single arbiter. Watcher callbacks, periodic timers,
 and shutdown all enqueue work — none of them call `ingestAll()` or
@@ -475,12 +615,11 @@ and shutdown all enqueue work — none of them call `ingestAll()` or
 time, guaranteeing the serialization invariant.
 
 **Stop is a control-plane priority event.** When `shutdown()` is called,
-it sets `stopping = true` which causes the coordinator to skip all pending
-normal work items (ingest, push, reconcile). Only the `shutdown-flush`
-item is processed — one final ingest scan plus one final push. This
-bounds stop latency to the cost of one in-flight work item plus the final
-flush, not the full queue depth. The 15-second drain budget (BP-07) caps
-worst-case shutdown time.
+it sets `stopping = true`, causes the coordinator to skip all pending normal
+work items, and cancels active workerized operations. No final push is started
+on the user's behalf. This bounds stop latency to worker cancellation plus
+resource cleanup, not queue depth or a best-effort delivery flush. The
+15-second drain budget (BP-07) caps worst-case shutdown time.
 
 **Push is change-gated:** Push is only enqueued when the store's canonical
 write engine reports `changed: true` for at least one conversation.
@@ -501,7 +640,7 @@ the shutdown handle. On SIGINT/SIGTERM, it calls `shutdown()`, which:
 
 1. Stops the file watcher
 2. Cancels the periodic timer
-3. Flushes any pending push (final push of accumulated data)
+3. Cancels any active adapter/push worker
 4. Closes all sinks
 5. Returns (caller closes the store and cleans up PID)
 

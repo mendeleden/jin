@@ -1,8 +1,8 @@
 # Program State
 
 - phase: `release recovery`
-- current date: `2026-04-29`
-- current focus: `prune stale live-control artifacts, finish W3-CLEANUP-02, then harden release gates in W3-VALIDATE-02`
+- current date: `2026-05-03`
+- current focus: `finish release-gate cleanup while queueing W3-BP-02 for a second live-config-cutover council pass`
 
 ## TL;DR
 
@@ -25,6 +25,7 @@ flowchart LR
 - live packets:
   - `W3-CLEANUP-02` — `approved`
   - `W3-VALIDATE-02` — `in_progress`
+  - `W3-BP-02` — `approved`
   - `W3-SINK-04` — `needs_codex`
   - `W3-E2E-01` — `review_ready`
   - `W3-SERVICE-01` — `blocked`
@@ -54,6 +55,7 @@ Archived historical heartbeats live under:
 ## Next Dispatches
 
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
+- resume `#19` implementation from the approved W3-BP-02 contract
 - reconcile `W3-SINK-04` once release-path CI noise is gone
 - retag/release only after `main` CI is green again
 

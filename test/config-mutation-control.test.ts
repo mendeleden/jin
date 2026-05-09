@@ -140,7 +140,7 @@ afterEach(() => {
 });
 
 describe("config mutation and control commands", () => {
-  test("sink add writes durable config and requires explicit restart by default", async () => {
+  test("sink add writes durable config and live-reloads by default", async () => {
     watcherState = {
       name: "watcher",
       status: "running",
@@ -169,7 +169,7 @@ describe("config mutation and control commands", () => {
       },
     ]);
     expect(restartCalls).toHaveLength(0);
-    expect(console_.logs.join("\n")).toContain("Restart jin to apply config changes.");
+    expect(console_.logs.join("\n")).toContain("Running runtime will reload config shortly.");
   });
 
   test("sink add refuses duplicate transport endpoints when export identity differs", async () => {
@@ -244,7 +244,7 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toEqual([{ service: true }]);
   });
 
-  test("manual protected-source opt-in changes the startup notice after restart", async () => {
+  test("manual protected-source opt-in changes the startup notice after config update", async () => {
     const config = defaultConfig();
     mockAdapters = [];
 
