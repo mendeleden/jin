@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { MessageFtsRow } from "./messages";
+import { allRows } from "./statements";
 
 export interface SearchMessagesOptions {
   query: string;
@@ -28,8 +29,12 @@ export function refreshConversationFts(
      VALUES('delete', ?, ?)`,
   );
 
-  for (const row of previousRows) {
-    deleteFtsRow.run(row.rowid, row.content);
+  try {
+    for (const row of previousRows) {
+      deleteFtsRow.run(row.rowid, row.content);
+    }
+  } finally {
+    deleteFtsRow.finalize();
   }
 
   db.run(
@@ -75,7 +80,7 @@ export function searchMessages(
   query += " ORDER BY rank ASC, m.sequence ASC LIMIT ?";
   params.push(limit);
 
-  const rows = db.prepare(query).all(...params) as Array<{
+  const rows = allRows<{
     message_id: string;
     conversation_id: string;
     adapter_id: string;
@@ -83,7 +88,7 @@ export function searchMessages(
     timestamp: string;
     snippet: string;
     rank: number;
-  }>;
+  }>(db, query, ...params);
 
   return rows.map((row) => ({
     messageId: row.message_id,

@@ -18,7 +18,6 @@ import { readProgress } from "../progress";
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
 export async function statusCommand(opts?: {
   json?: boolean;
@@ -52,6 +51,8 @@ async function printJson(
       store: paths.storePath,
       log: paths.logPath,
       discoveryCache: discoveryCachePath(),
+      localEndpoint: paths.localEndpoint,
+      socket: paths.socketPath,
     },
   };
 
@@ -119,6 +120,7 @@ async function printFull(
   console.log(`  ${padRight("config", 12)}${configPath()}`);
   console.log(`  ${padRight("store", 12)}${paths.storePath}`);
   console.log(`  ${padRight("cache", 12)}${discoveryCachePath()}`);
+  console.log(`  ${padRight("endpoint", 12)}${paths.localEndpoint}`);
 
   for (const state of states) {
     if (state.status === "running") {
@@ -155,7 +157,7 @@ async function printFull(
   const progress = readProgress();
   if (progress) {
     const pct = Math.round((progress.current / progress.total) * 100);
-    console.log(`\n  ${cyan("ingesting")}  ${progress.adapter}  ${progress.current}/${progress.total} sessions (${pct}%)`);
+    console.log(`\n  ${green("ingesting")}  ${progress.adapter}  ${progress.current}/${progress.total} sessions (${pct}%)`);
   }
 
   console.log("");

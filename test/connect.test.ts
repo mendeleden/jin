@@ -10,10 +10,10 @@ import {
   captureConsole,
   createFakeSink,
   mockProcessExit,
+  removeTestDir,
   readTestConfig,
   writeTestConfig,
   ExitError,
-  removeDirWithRetry,
 } from "./helpers";
 
 let fakeSink = createFakeSink();
@@ -22,6 +22,8 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 
 mock.module("../src/sinks/registry", () => ({
@@ -41,6 +43,7 @@ mock.module("../src/daemon/runtime-state", () => ({
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => ({ name: "watcher", status: "stopped", lifecycleState: "stopped" }),
+  getAllState: () => [{ name: "watcher", status: "stopped", lifecycleState: "stopped" }],
   getDashboardState: () => ({ name: "dashboard", status: "stopped" }),
   stopWatcher: async () => ({ requested: false, completed: true, forced: false }),
   stopDashboard: async () => {},
@@ -65,6 +68,8 @@ beforeEach(() => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
+    socketPath: join(tempDir, "jin.sock"),
   };
   console_ = captureConsole();
   exitMock = mockProcessExit();
@@ -76,7 +81,7 @@ afterEach(() => {
   console_.restore();
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
-  removeDirWithRetry(tempDir);
+  removeTestDir(tempDir);
 });
 
 describe("jin connect", () => {

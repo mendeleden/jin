@@ -287,6 +287,23 @@ const COMMAND_HELP: Record<string, string> = {
   EXAMPLES
     $ jin ingest
 `,
+  desktop: `
+  Install, update, and launch the optional Jin Desktop app
+
+  USAGE
+    jin desktop [flags]
+
+  FLAGS
+    --yes             Install or update without an interactive confirmation
+    --update          Check the latest Desktop release and update if needed
+    --rollback        Restore the previous Desktop install after a bad update
+
+  EXAMPLES
+    $ jin desktop
+    $ jin desktop --yes
+    $ jin desktop --update
+    $ jin desktop --rollback
+`,
 };
 
 function usage(): void {
@@ -325,6 +342,7 @@ function usage(): void {
     ingest                               One-shot local ingest
     cache clear                          Clear the local discovery cache
     benchmark [--json]                   Measure ingest budgets
+    desktop [--yes|--update|--rollback]  Install/update optional Desktop app
     service install|uninstall|status     OS service management
     update [--quiet|--rollback]          Self-update or rollback
     version                              Show version
@@ -721,6 +739,15 @@ async function main(): Promise<void> {
       const { serviceCommand } = await import("./commands/service");
       const action = args[1];
       await serviceCommand(action);
+      break;
+    }
+    case "desktop": {
+      const { desktopCommand } = await import("./commands/desktop");
+      await desktopCommand({
+        yes: !!flags.yes,
+        update: !!flags.update,
+        rollback: !!flags.rollback,
+      });
       break;
     }
     case "update": {

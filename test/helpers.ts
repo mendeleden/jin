@@ -118,29 +118,38 @@ export function createTestEnv(): TestEnv {
   process.env.JIN_CONFIG_DIR = dir;
 
   const dbPath = join(dir, "store.db");
-  const store = new Store(dbPath);
+  let store: Store | undefined;
 
   return {
     dir,
-    store,
+    get store() {
+      store ??= new Store(dbPath);
+      return store;
+    },
     cleanup: () => {
-      store.close();
+      store?.close();
       delete process.env.JIN_CONFIG_DIR;
-      removeDirWithRetry(dir);
+      removeTestDir(dir);
     },
   };
 }
 
 export function removeDirWithRetry(dir: string): void {
+  removeTestDir(dir);
+}
+
+export function removeTestDir(dir: string): void {
+  // Windows can hold SQLite mmap handles briefly after close; retry with backoff.
   const delays = [50, 100, 200, 400, 800];
-  for (let i = 0; i < delays.length; i++) {
+  for (let i = 0; i < delays.length; i += 1) {
     try {
       rmSync(dir, { recursive: true, force: true });
       return;
-    } catch {
-      if (i < delays.length - 1) {
-        Bun.sleepSync(delays[i]);
+    } catch (error) {
+      if (i === delays.length - 1) {
+        throw error;
       }
+      Bun.sleepSync(delays[i]);
     }
   }
 }

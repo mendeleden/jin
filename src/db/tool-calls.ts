@@ -3,6 +3,7 @@ import type {
   ParsedToolCall,
   ToolCall,
 } from "../contracts/conversations";
+import { allRows } from "./statements";
 
 interface ToolCallRow {
   conversation_id: string;
@@ -59,15 +60,15 @@ export function getToolCalls(
   db: Database,
   conversationId: string,
 ): ToolCall[] {
-  const rows = db
-    .prepare(
-      `SELECT tc.*
-       FROM tool_calls tc
-       LEFT JOIN messages m ON m.id = tc.message_id
-       WHERE tc.conversation_id = ?
-       ORDER BY COALESCE(m.sequence, 0) ASC, tc.id ASC`,
-    )
-    .all(conversationId) as ToolCallRow[];
+  const rows = allRows<ToolCallRow>(
+    db,
+    `SELECT tc.*
+     FROM tool_calls tc
+     LEFT JOIN messages m ON m.id = tc.message_id
+     WHERE tc.conversation_id = ?
+     ORDER BY COALESCE(m.sequence, 0) ASC, tc.id ASC`,
+    conversationId,
+  );
 
   return rows.map((row) => rowToToolCall(row));
 }
