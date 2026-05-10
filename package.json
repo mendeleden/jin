@@ -11,7 +11,7 @@
     "test:release-gates": "bun test test/lifecycle-boundary.test.ts test/local-control-boundary.test.ts test/runtime-state-local-owner.test.ts",
     "dev": "bun run src/index.ts",
     "build": "bun build ./src/index.ts --compile --outfile jin",
-    "desktop:build": "bun build desktop/main.ts --outfile desktop/dist/main.js --target=node --format=esm --external electron && bun build desktop/preload.ts --outfile desktop/dist/preload.cjs --target=node --format=cjs --external electron && bun build desktop/renderer.ts --outfile desktop/dist/renderer.js --target=browser --format=esm && mkdir -p desktop/dist && cp desktop/index.html desktop/styles.css desktop/dist/",
+    "desktop:build": "bun run scripts/build-desktop.ts",
     "desktop:package": "bun run desktop:build && bun run scripts/package-desktop.ts",
     "desktop:start": "bun run desktop:build && electron desktop/dist/main.js",
     "desktop:typecheck": "tsc -p desktop/tsconfig.json --noEmit",

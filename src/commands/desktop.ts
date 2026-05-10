@@ -69,12 +69,9 @@ export async function desktopCommand(opts: DesktopCommandOptions = {}): Promise<
   const candidates = getDesktopAssetCandidates();
   if (candidates.length === 0) {
     console.error(`  Jin Desktop is not currently available for ${formatDesktopTarget()}.`);
-    console.error("  This release publishes Desktop only for macOS arm64, macOS x64, and Linux x64.");
-    if (platform() === "win32") {
-      console.error(
-        "  Windows Desktop is blocked on daemon named-pipe transport support: https://github.com/mendeleden/jin/issues/56",
-      );
-    }
+    console.error(
+      "  This release publishes Desktop for macOS arm64, macOS x64, Linux x64, and Windows x64.",
+    );
     process.exit(1);
   }
 
@@ -150,6 +147,10 @@ export function getDesktopAssetCandidates(
 
   if (os === "linux") {
     return normalizedArch === "x64" ? ["jin-desktop-linux-x64.tar.gz"] : [];
+  }
+
+  if (os === "win32") {
+    return normalizedArch === "x64" ? ["jin-desktop-windows-x64.zip"] : [];
   }
 
   return [];

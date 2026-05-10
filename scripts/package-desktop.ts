@@ -24,13 +24,13 @@ const hostPlatform = platform();
 const hostArch = normalizeArch(arch());
 const target = parseTarget();
 const artifactBase = `jin-desktop-${artifactPlatform(target.platform)}-${target.arch}`;
-const supportedTargets = ["darwin-arm64", "darwin-x64", "linux-x64"];
+const supportedTargets = ["darwin-arm64", "darwin-x64", "linux-x64", "windows-x64"];
 
 if (!supportedTargets.includes(target.id)) {
   fail(
     `Desktop packaging is currently supported only for ${supportedTargets.join(
       ", ",
-    )}. Windows Desktop is blocked on named-pipe transport support; see issue #56.`,
+    )}.`,
   );
 }
 
@@ -58,7 +58,9 @@ try {
   const artifact =
     target.platform === "darwin"
       ? packageDarwin(staging, electronDist)
-      : packageLinux(staging, electronDist);
+      : target.platform === "win32"
+        ? packageWindows(staging, electronDist)
+        : packageLinux(staging, electronDist);
 
   console.log(`Packaged ${basename(artifact)}`);
 } finally {
@@ -101,6 +103,28 @@ function packageLinux(staging: string, electronDist: string): string {
   installRendererApp(resourcesPath);
 
   run("tar", ["-czf", artifactPath, "-C", staging, "Jin Desktop"]);
+  return artifactPath;
+}
+
+function packageWindows(staging: string, electronDist: string): string {
+  const appDir = join(staging, "Jin Desktop");
+  const resourcesPath = join(appDir, "resources");
+  const electronBinary = join(appDir, "electron.exe");
+  const jinBinary = join(appDir, "Jin Desktop.exe");
+  const artifactPath = join(ARTIFACT_DIR, `${artifactBase}.zip`);
+
+  cpSync(electronDist, appDir, { recursive: true });
+  if (existsSync(electronBinary)) {
+    renameSync(electronBinary, jinBinary);
+  }
+  installRendererApp(resourcesPath);
+  run("powershell", [
+    "-NoLogo",
+    "-NonInteractive",
+    "-Command",
+    `Compress-Archive -LiteralPath '${escapePowerShellPath(appDir)}' -DestinationPath '${escapePowerShellPath(artifactPath)}' -Force`,
+  ]);
+
   return artifactPath;
 }
 
@@ -246,6 +270,10 @@ function artifactPlatform(os: NodeJS.Platform): string {
 
 function normalizeArch(cpu: string): "arm64" | "x64" {
   return cpu === "x64" || cpu === "amd64" ? "x64" : "arm64";
+}
+
+function escapePowerShellPath(path: string): string {
+  return path.replace(/'/g, "''");
 }
 
 function fail(message: string): never {

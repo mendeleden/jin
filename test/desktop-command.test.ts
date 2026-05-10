@@ -39,6 +39,17 @@ test("desktop command does not select the core CLI artifact", () => {
   expect(selectDesktopReleaseAsset(assets, "darwin", "arm64")).toBeUndefined();
 });
 
+test("desktop command selects the Windows x64 desktop asset", () => {
+  const assets = [
+    asset("jin-desktop-linux-x64.tar.gz"),
+    asset("jin-desktop-windows-x64.zip"),
+  ];
+
+  const selected = selectDesktopReleaseAsset(assets, "win32", "x64");
+
+  expect(selected?.name).toBe("jin-desktop-windows-x64.zip");
+});
+
 test("desktop command falls back to compatible desktop asset names", () => {
   const assets = [
     asset("Jin-Desktop-macos-arm64.zip"),
@@ -60,17 +71,17 @@ test("desktop command documents expected release asset names", () => {
   expect(getDesktopAssetCandidates("linux", "x64")).toEqual([
     "jin-desktop-linux-x64.tar.gz",
   ]);
+  expect(getDesktopAssetCandidates("win32", "x64")).toEqual([
+    "jin-desktop-windows-x64.zip",
+  ]);
 });
 
 test("desktop command does not advertise unsupported first-release targets", () => {
   expect(getDesktopAssetCandidates("linux", "arm64")).toEqual([]);
-  expect(getDesktopAssetCandidates("win32", "x64")).toEqual([]);
+  expect(getDesktopAssetCandidates("win32", "arm64")).toEqual([]);
 });
 
 test("desktop command does not select unsupported platform assets", () => {
-  expect(
-    selectDesktopReleaseAsset([asset("jin-desktop-windows-x64.zip")], "win32", "x64"),
-  ).toBeUndefined();
   expect(
     selectDesktopReleaseAsset([asset("jin-desktop-darwin-arm64.zip")], "linux", "x64"),
   ).toBeUndefined();

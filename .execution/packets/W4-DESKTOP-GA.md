@@ -24,6 +24,10 @@
 - `2026-05-10`: hardened the Electron shell: sandboxed preload, strict CSP,
   denied renderer navigation/window-open escapes, and typed IPC argument
   validation at the main-process boundary.
+- `2026-05-10`: opened the Windows x64 packaging path: Desktop release asset
+  selection now accepts `jin-desktop-windows-x64.zip`, `desktop:build` cleans
+  stale dist output cross-platform, and `desktop:package --target=windows-x64`
+  produces a launchable packaged app.
 - Validation for the transport slice:
   `bun run typecheck`, `bun run desktop:typecheck`, focused Desktop/daemon tests,
   `bun run desktop:build`, Windows daemon stop/start/status smoke, Desktop API
@@ -31,6 +35,11 @@
 - Validation for the Electron security slice:
   `bun run typecheck`, `bun run desktop:typecheck`, focused Desktop IPC/renderer
   tests, `bun run desktop:build`, and bounded Windows Electron boot smoke.
+- Validation for the Windows packaging slice:
+  `bun run typecheck`, focused Desktop command/shell tests,
+  `bun run desktop:typecheck`, `bun run desktop:package --target=windows-x64`,
+  zip payload inspection, and packaged executable boot smoke from a temp
+  extraction.
 
 ## Decision
 
@@ -102,6 +111,7 @@ Jin Desktop is GA-ready only when it is safe to install, start, update, diagnose
 - Code-sign Windows artifacts.
 - Decide installer metadata, Start menu entries, uninstall behavior, and local-data preservation policy.
 - Verify clean install, upgrade, downgrade, and uninstall on Windows 10/11.
+- Windows x64 zip packaging smoke. `Done on feat/desktop-add-windows; installer/signing/start-menu/update policy still remains.`
 
 ### P1 Diagnostics
 

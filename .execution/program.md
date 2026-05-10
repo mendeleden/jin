@@ -2,7 +2,7 @@
 
 - phase: `release recovery`
 - current date: `2026-05-10`
-- current focus: `continue W4-DESKTOP-GA Windows Desktop parity on feat/desktop-add-windows after auth/transport and Electron shell hardening; preserve W3 release recovery state`
+- current focus: `continue W4-DESKTOP-GA Windows Desktop parity on feat/desktop-add-windows after auth/transport, Electron shell hardening, and Windows x64 packaging smoke; preserve W3 release recovery state`
 
 ## TL;DR
 
@@ -58,9 +58,9 @@ Archived historical heartbeats live under:
 
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
 - reconcile `W3-SINK-04` once release-path CI noise is gone
-- continue `W4-DESKTOP-GA` after the landed auth/transport and Electron security
-  slices: lifecycle reliability, diagnostics, packaging/update, and release
-  validation remain
+- continue `W4-DESKTOP-GA` after the landed auth/transport, Electron security,
+  and Windows x64 zip packaging slices: lifecycle reliability, diagnostics,
+  installer/signing/update policy, and release validation remain
 - retag/release only after `main` CI is green again
 
 ## Blockers
@@ -70,7 +70,8 @@ Archived historical heartbeats live under:
 - `.execution/blueprints.md` still reflects pre-merge `W3-SINK-06` / `W3-TEAM-03`
   state and needs a separate reviewer-owned refresh
 - `W4-DESKTOP-GA` blocks Desktop beta/GA until lifecycle reliability,
-  diagnostics, packaging/update, and release validation are complete
+  diagnostics, installer/signing/update policy, and release validation are
+  complete
 
 ## Notes
 
@@ -85,3 +86,6 @@ Archived historical heartbeats live under:
 - `feat/desktop-add-windows` also contains the Electron shell hardening slice:
   sandboxed preload, strict CSP, navigation/window-open denial, and IPC argument
   validation.
+- `feat/desktop-add-windows` now has a Windows x64 zip packaging smoke path; MSI
+  or installer metadata, code signing, update/rollback, and clean-machine
+  validation still remain.
