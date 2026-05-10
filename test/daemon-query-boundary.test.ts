@@ -6,6 +6,7 @@ import {
   createApiFetchHandler,
   startLocalApiServer,
 } from "../src/api/server";
+import { DESKTOP_AUTH_HEADER } from "../src/api/auth";
 import { getStore, type SqliteConversationStore } from "../src/db";
 import type {
   ConversationBundle,
@@ -83,6 +84,7 @@ describe("daemon query boundary", () => {
     const stopCalls: boolean[] = [];
 
     const server = startLocalApiServer({
+      authToken: "socket-test-token",
       platform: "darwin",
       queryStore: store,
       socketPath,
@@ -100,11 +102,19 @@ describe("daemon query boundary", () => {
 
     expect(server).not.toBeNull();
     expect(server!.socketPath).toBe(socketPath);
+    expect(server!.localEndpoint).toBe(socketPath);
     expect(serveCalls).toHaveLength(1);
     expect(serveCalls[0].unix).toBe(socketPath);
 
-    const searchResponse = await serveCalls[0].fetch(
+    const unauthorizedResponse = await serveCalls[0].fetch(
       new Request("http://localhost/api/search?q=daemonqueryneedle"),
+    );
+    expect(unauthorizedResponse.status).toBe(401);
+
+    const searchResponse = await serveCalls[0].fetch(
+      new Request("http://localhost/api/search?q=daemonqueryneedle", {
+        headers: { [DESKTOP_AUTH_HEADER]: "socket-test-token" },
+      }),
     );
     const searchPayload = await readJson(searchResponse);
     expect(searchPayload).toHaveLength(1);
@@ -117,23 +127,65 @@ describe("daemon query boundary", () => {
     expect(existsSync(socketPath)).toBe(false);
   });
 
-  test("local api server reports unavailable on Windows until named-pipe transport exists", () => {
-    const { dir, store } = createQueryEnv();
-    const socketPath = join(dir, "jin.sock");
-    const serveCalls: unknown[] = [];
+  test("local api server uses the deterministic loopback endpoint on Windows", async () => {
+    const { store } = createQueryEnv();
+    const socketPath = "http://127.0.0.1:45678";
+    const serveCalls: Array<{
+      unix: string;
+      fetch: (request: Request) => Promise<Response>;
+      error: (error: unknown) => Response;
+    }> = [];
+    const stopCalls: boolean[] = [];
 
     const server = startLocalApiServer({
+      authToken: "windows-test-token",
       platform: "win32",
       queryStore: store,
       socketPath,
       serve: (options) => {
         serveCalls.push(options);
-        return { stop() {} };
+        return {
+          stop(closeActiveConnections?: boolean) {
+            stopCalls.push(closeActiveConnections ?? false);
+          },
+        };
       },
     });
 
-    expect(server).toBeNull();
-    expect(serveCalls).toEqual([]);
+    expect(server).not.toBeNull();
+    expect(server!.socketPath).toBe(socketPath);
+    expect(server!.localEndpoint).toBe(socketPath);
+    expect(serveCalls).toHaveLength(1);
+    expect(serveCalls[0].unix).toBe(socketPath);
+
+    const unauthorizedResponse = await serveCalls[0].fetch(
+      new Request("http://localhost/api/overview"),
+    );
+    expect(unauthorizedResponse.status).toBe(401);
+
+    const overviewResponse = await serveCalls[0].fetch(
+      new Request("http://localhost/api/overview", {
+        headers: { [DESKTOP_AUTH_HEADER]: "windows-test-token" },
+      }),
+    );
+    expect(overviewResponse.status).toBe(200);
+
+    server!.stop();
+    expect(stopCalls).toEqual([true]);
+  });
+
+  test("local api server rejects non-loopback Windows endpoints", () => {
+    const { store } = createQueryEnv();
+
+    expect(() =>
+      startLocalApiServer({
+        authToken: "windows-test-token",
+        platform: "win32",
+        queryStore: store,
+        socketPath: "http://localhost:45678",
+        serve: () => ({ stop() {} }),
+      }),
+    ).toThrow("127.0.0.1");
   });
 });
 

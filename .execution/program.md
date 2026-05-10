@@ -1,8 +1,8 @@
 # Program State
 
 - phase: `release recovery`
-- current date: `2026-04-29`
-- current focus: `prune stale live-control artifacts, finish W3-CLEANUP-02, then harden release gates in W3-VALIDATE-02`
+- current date: `2026-05-10`
+- current focus: `prune stale live-control artifacts, finish W3-CLEANUP-02, harden release gates in W3-VALIDATE-02, and preserve W4-DESKTOP-GA as the queued Desktop GA hardening lane`
 
 ## TL;DR
 
@@ -10,6 +10,7 @@
 flowchart LR
   Cleanup02["W3-CLEANUP-02<br/>approved<br/>legacy CI cleanup landed"]
   Validate02["W3-VALIDATE-02<br/>in_progress<br/>release-gate hardening"]
+  DesktopGA["W4-DESKTOP-GA<br/>queued<br/>Desktop GA hardening"]
   MainCI["main CI<br/>currently red"]
   Release["v0.8.12 retag/release"]
 
@@ -17,6 +18,7 @@ flowchart LR
   Cleanup02 --> Validate02
   Validate02 --> MainCI
   MainCI --> Release
+  DesktopGA -. sidecar after desktop branch proof .-> Release
 ```
 
 ## Packet State
@@ -29,6 +31,7 @@ flowchart LR
   - `W3-E2E-01` — `review_ready`
   - `W3-SERVICE-01` — `blocked`
   - `W3-PR-01` — `blocked`
+  - `W4-DESKTOP-GA` - `queued`
 - historical nonterminal packet files from the old Wave 3 rollout remain in
   `.execution/packets/` for now and should be normalized or archived in a
   second pass:
@@ -55,6 +58,8 @@ Archived historical heartbeats live under:
 
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
 - reconcile `W3-SINK-04` once release-path CI noise is gone
+- split `W4-DESKTOP-GA` into auth, transport, lifecycle, packaging,
+  diagnostics, and validation lanes before Desktop beta
 - retag/release only after `main` CI is green again
 
 ## Blockers
@@ -63,6 +68,9 @@ Archived historical heartbeats live under:
 - release `v0.8.12` must not be tagged until cleanup + validation hardening land
 - `.execution/blueprints.md` still reflects pre-merge `W3-SINK-06` / `W3-TEAM-03`
   state and needs a separate reviewer-owned refresh
+- `W4-DESKTOP-GA` blocks Desktop beta/GA until local API auth, strict loopback
+  binding, collision handling, diagnostics, packaging/update, and security
+  review are complete
 
 ## Notes
 

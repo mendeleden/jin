@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DESKTOP_IPC_CHANNELS, createDesktopBridge } from "../desktop/bridge";
 import { createDesktopDaemonClient } from "../desktop/daemon-client";
 import { installDesktopBridge } from "../desktop/preload";
+import { DESKTOP_AUTH_HEADER } from "../src/api/auth";
 import {
   createDesktopShellService,
   registerDesktopIpcHandlers,
@@ -29,8 +30,13 @@ import { VERSION } from "../src/updater";
 
 describe("desktop shell service", () => {
   test("daemon client reads the typed desktop viewer route paths", async () => {
-    const requests: Array<{ method: string; path: string }> = [];
+    const requests: Array<{
+      method: string;
+      path: string;
+      headers?: Record<string, string>;
+    }> = [];
     const client = createDesktopDaemonClient({
+      authToken: "desktop-test-token",
       socketPath: "/tmp/jin.sock",
       request: async (request) => {
         requests.push(request);
@@ -59,7 +65,12 @@ describe("desktop shell service", () => {
     expect(detail.conversation.id).toBe("desktop-child");
     expect(trace.selectedConversationId).toBe("desktop-child");
     expect(tree.selectedConversationId).toBe("desktop-child");
-    expect(requests).toEqual([
+    expect(
+      requests.map((request) => ({
+        method: request.method,
+        path: request.path,
+      })),
+    ).toEqual([
       { method: "GET", path: "/api/desktop/compatibility" },
       { method: "GET", path: "/api/desktop/home" },
       {
@@ -70,6 +81,12 @@ describe("desktop shell service", () => {
       { method: "GET", path: "/api/desktop/conversations/desktop-child/trace" },
       { method: "GET", path: "/api/desktop/conversations/desktop-child/tree" },
     ]);
+    expect(
+      requests.every(
+        (request) =>
+          request.headers?.[DESKTOP_AUTH_HEADER] === "desktop-test-token",
+      ),
+    ).toBe(true);
   });
 
   test("stopped runtime returns a stopped snapshot without querying the daemon socket", async () => {

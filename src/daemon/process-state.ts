@@ -1,4 +1,5 @@
 import { readFileSync, unlinkSync } from "fs";
+import { spawnSync } from "node:child_process";
 import { join } from "path";
 import { configDir } from "../config";
 import {
@@ -174,8 +175,8 @@ export function getUptime(pid: number): string | null {
     }
 
     if (process.platform === "darwin") {
-      const result = Bun.spawnSync(["ps", "-o", "etime=", "-p", String(pid)], {
-        stdout: "pipe",
+      const result = spawnSync("ps", ["-o", "etime=", "-p", String(pid)], {
+        stdio: ["ignore", "pipe", "ignore"],
       });
       const etime = new TextDecoder().decode(result.stdout).trim();
       return etime || null;
@@ -201,29 +202,31 @@ function formatUptime(seconds: number): string {
 async function requestServiceStop(): Promise<void> {
   try {
     if (process.platform === "linux") {
-      Bun.spawnSync(["systemctl", "--user", "stop", "jin.service"], {
-        stdout: "pipe",
-        stderr: "pipe",
+      spawnSync("systemctl", ["--user", "stop", "jin.service"], {
+        stdio: ["ignore", "pipe", "pipe"],
       });
       return;
     }
 
     if (process.platform === "darwin") {
-      const uid = Bun.spawnSync(["id", "-u"], { stdout: "pipe" });
+      const uid = spawnSync("id", ["-u"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
       const uidStr = new TextDecoder().decode(uid.stdout).trim();
-      let result = Bun.spawnSync(
-        ["launchctl", "bootout", `gui/${uidStr}/com.jin.agent`],
-        { stdout: "pipe", stderr: "pipe" },
+      let result = spawnSync(
+        "launchctl",
+        ["bootout", `gui/${uidStr}/com.jin.agent`],
+        { stdio: ["ignore", "pipe", "pipe"] },
       );
-      if (result.exitCode !== 0) {
+      if (result.status !== 0) {
         const homeDir = process.env.HOME || "";
-        result = Bun.spawnSync(
+        result = spawnSync(
+          "launchctl",
           [
-            "launchctl",
             "unload",
             join(homeDir, "Library", "LaunchAgents", "com.jin.agent.plist"),
           ],
-          { stdout: "pipe", stderr: "pipe" },
+          { stdio: ["ignore", "pipe", "pipe"] },
         );
       }
       return;
@@ -234,9 +237,9 @@ async function requestServiceStop(): Promise<void> {
         ...windowsTaskIdentityPowerShellLines(),
         "Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue",
       ].join("; ");
-      Bun.spawnSync(
+      spawnSync(
+        "powershell",
         [
-          "powershell",
           "-NoLogo",
           "-NonInteractive",
           "-WindowStyle",
@@ -244,7 +247,7 @@ async function requestServiceStop(): Promise<void> {
           "-Command",
           ps,
         ],
-        { stdout: "pipe", stderr: "pipe", windowsHide: true },
+        { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
       );
     }
   } catch {}
@@ -259,7 +262,7 @@ async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> 
       return true;
     }
 
-    await Bun.sleep(100);
+    await sleep(100);
   }
 
   return false;
@@ -272,7 +275,7 @@ async function waitForServiceStop(timeoutMs: number): Promise<boolean> {
     if (runtime.state === "stopped") {
       return true;
     }
-    await Bun.sleep(200);
+    await sleep(200);
   }
 
   return false;
@@ -282,4 +285,8 @@ function cleanupPidFile(path: string): void {
   try {
     unlinkSync(path);
   } catch {}
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

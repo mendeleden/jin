@@ -42,7 +42,7 @@ status + lifecycle + read-only queries"]
   end
 
   Main -->|"Linux/macOS: Unix socket
-Windows: named pipe (future)"| Api
+Windows: 127.0.0.1 loopback + token"| Api
 
   Watch --> Pipeline
   Watch --> Api
@@ -92,8 +92,15 @@ sequenceDiagram
 - The API server is in-process with the daemon runtime, not a separate backend.
 - Phase 1 Desktop work targets the approved daemon query boundary from `W4-DESKTOP-01`.
 - Linux and macOS use the current Unix-socket boundary.
-- The first release publishes Desktop only for macOS arm64, macOS x64, and Linux x64.
-- Windows keeps the same architecture but still needs named-pipe transport parity before Desktop is distributed there. Track this in issue #56.
+- Windows uses an authenticated `127.0.0.1` loopback endpoint because Bun's
+  public server surface supports HTTP and Unix sockets, while Windows named-pipe
+  HTTP serving is not currently verified for the daemon runtime.
+- Desktop distribution should treat Windows as a parity target, but Windows GA
+  remains blocked on the hardening checklist in `W4-DESKTOP-GA`: auth, strict
+  loopback binding, collision handling, diagnostics, packaging/update, and
+  security review.
+- Revisit Windows named pipes only when Bun documents support or a minimal
+  Windows named-pipe server repro passes on supported Windows versions.
 
 ## 4. Type Contract Rule
 
