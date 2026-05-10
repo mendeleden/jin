@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
 import { DESKTOP_IPC_CHANNELS, createDesktopBridge } from "../desktop/bridge";
 import { createDesktopDaemonClient } from "../desktop/daemon-client";
 import { installDesktopBridge } from "../desktop/preload";
+import {
+  DESKTOP_CONTENT_SECURITY_POLICY,
+  DESKTOP_PRELOAD_FILE,
+  DESKTOP_WEB_PREFERENCES,
+} from "../desktop/security";
 import { DESKTOP_AUTH_HEADER } from "../src/api/auth";
 import {
   createDesktopShellService,
@@ -29,6 +35,25 @@ import {
 import { VERSION } from "../src/updater";
 
 describe("desktop shell service", () => {
+  test("desktop shell keeps hardened renderer defaults", () => {
+    expect(DESKTOP_PRELOAD_FILE).toBe("preload.cjs");
+    expect(DESKTOP_WEB_PREFERENCES).toEqual({
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    });
+
+    const html = readFileSync(
+      new URL("../desktop/index.html", import.meta.url),
+      "utf8",
+    );
+    expect(html).toContain(`content="${DESKTOP_CONTENT_SECURITY_POLICY}"`);
+    expect(DESKTOP_CONTENT_SECURITY_POLICY).toContain("connect-src 'none'");
+    expect(DESKTOP_CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
+  });
+
   test("daemon client reads the typed desktop viewer route paths", async () => {
     const requests: Array<{
       method: string;
@@ -202,8 +227,45 @@ describe("desktop shell service", () => {
       DESKTOP_IPC_CHANNELS.traceView,
       DESKTOP_IPC_CHANNELS.treeView,
     ]);
+
+    await expect(
+      invokeRegisteredHandler(
+        handlers,
+        DESKTOP_IPC_CHANNELS.controlAction,
+        "delete",
+      ),
+    ).rejects.toThrow("Invalid Desktop control action");
+    await expect(
+      invokeRegisteredHandler(
+        handlers,
+        DESKTOP_IPC_CHANNELS.conversationList,
+        { limit: 0 },
+      ),
+    ).rejects.toThrow("Invalid Desktop conversation list limit");
+    await expect(
+      invokeRegisteredHandler(
+        handlers,
+        DESKTOP_IPC_CHANNELS.conversationDetail,
+        "",
+      ),
+    ).rejects.toThrow("Invalid Desktop conversation id");
   });
 });
+
+function invokeRegisteredHandler(
+  handlers: Map<string, (event: unknown, ...args: unknown[]) => unknown>,
+  channel: string,
+  ...args: unknown[]
+): Promise<unknown> {
+  return Promise.resolve().then(() => {
+    const handler = handlers.get(channel);
+    if (!handler) {
+      throw new Error(`Missing IPC handler for ${channel}`);
+    }
+
+    return handler({}, ...args);
+  });
+}
 
 function resolveRoutePayload(path: string): unknown {
   if (path === "/api/desktop/compatibility") {

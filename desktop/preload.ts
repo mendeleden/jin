@@ -4,6 +4,15 @@ import {
   type JinDesktopBridge,
 } from "./bridge";
 
+type ElectronPreloadApi = {
+  contextBridge?: DesktopContextBridge;
+  ipcRenderer?: DesktopIpcInvoker;
+};
+
+declare const require:
+  | undefined
+  | ((specifier: "electron") => ElectronPreloadApi);
+
 export interface DesktopContextBridge {
   exposeInMainWorld(key: string, api: JinDesktopBridge): void;
 }
@@ -17,13 +26,21 @@ export function installDesktopBridge(
   return api;
 }
 
-async function autoInstallDesktopBridge(): Promise<void> {
+function autoInstallDesktopBridge(): void {
   try {
-    const electron = await import("electron");
+    if (typeof require !== "function") {
+      return;
+    }
+
+    const electron = require("electron");
+    if (!electron.contextBridge || !electron.ipcRenderer) {
+      return;
+    }
+
     installDesktopBridge(electron.contextBridge, electron.ipcRenderer);
   } catch {
     // Tests can import this module without a real Electron runtime.
   }
 }
 
-void autoInstallDesktopBridge();
+autoInstallDesktopBridge();

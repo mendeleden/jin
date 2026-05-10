@@ -2,7 +2,7 @@
 
 - phase: `release recovery`
 - current date: `2026-05-10`
-- current focus: `continue W4-DESKTOP-GA Windows Desktop parity on feat/desktop-add-windows after the auth/transport hardening slice; preserve W3 release recovery state`
+- current focus: `continue W4-DESKTOP-GA Windows Desktop parity on feat/desktop-add-windows after auth/transport and Electron shell hardening; preserve W3 release recovery state`
 
 ## TL;DR
 
@@ -58,8 +58,8 @@ Archived historical heartbeats live under:
 
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
 - reconcile `W3-SINK-04` once release-path CI noise is gone
-- continue `W4-DESKTOP-GA` after the landed auth/transport slice: Electron
-  security, lifecycle reliability, diagnostics, packaging/update, and release
+- continue `W4-DESKTOP-GA` after the landed auth/transport and Electron security
+  slices: lifecycle reliability, diagnostics, packaging/update, and release
   validation remain
 - retag/release only after `main` CI is green again
 
@@ -69,9 +69,8 @@ Archived historical heartbeats live under:
 - release `v0.8.12` must not be tagged until cleanup + validation hardening land
 - `.execution/blueprints.md` still reflects pre-merge `W3-SINK-06` / `W3-TEAM-03`
   state and needs a separate reviewer-owned refresh
-- `W4-DESKTOP-GA` blocks Desktop beta/GA until remaining Electron security,
-  lifecycle reliability, diagnostics, packaging/update, and release validation
-  are complete
+- `W4-DESKTOP-GA` blocks Desktop beta/GA until lifecycle reliability,
+  diagnostics, packaging/update, and release validation are complete
 
 ## Notes
 
@@ -83,3 +82,6 @@ Archived historical heartbeats live under:
 - `feat/desktop-add-windows` contains the first W4 Windows parity slice:
   Desktop API auth, Windows strict loopback transport, endpoint persistence, and
   occupied-port diagnostics.
+- `feat/desktop-add-windows` also contains the Electron shell hardening slice:
+  sandboxed preload, strict CSP, navigation/window-open denial, and IPC argument
+  validation.

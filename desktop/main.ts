@@ -5,6 +5,10 @@ import {
   createDesktopShellService,
   registerDesktopIpcHandlers,
 } from "./shell-service";
+import {
+  DESKTOP_PRELOAD_FILE,
+  DESKTOP_WEB_PREFERENCES,
+} from "./security";
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -18,11 +22,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
     titleBarStyle: "hiddenInset",
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(CURRENT_DIR, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
+      ...DESKTOP_WEB_PREFERENCES,
+      preload: join(CURRENT_DIR, DESKTOP_PRELOAD_FILE),
     },
+  });
+
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (targetUrl !== window.webContents.getURL()) {
+      event.preventDefault();
+    }
   });
 
   await window.loadFile(join(CURRENT_DIR, "index.html"));

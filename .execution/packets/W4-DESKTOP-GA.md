@@ -21,10 +21,16 @@
   `localEndpoint` is persisted in runtime ownership state, surfaced in status and
   Desktop control status, and Windows bind failures now report an actionable
   port-in-use diagnostic.
+- `2026-05-10`: hardened the Electron shell: sandboxed preload, strict CSP,
+  denied renderer navigation/window-open escapes, and typed IPC argument
+  validation at the main-process boundary.
 - Validation for the transport slice:
   `bun run typecheck`, `bun run desktop:typecheck`, focused Desktop/daemon tests,
   `bun run desktop:build`, Windows daemon stop/start/status smoke, Desktop API
   auth smoke (`200` with token, `401` without), and live occupied-port smoke.
+- Validation for the Electron security slice:
+  `bun run typecheck`, `bun run desktop:typecheck`, focused Desktop IPC/renderer
+  tests, `bun run desktop:build`, and bounded Windows Electron boot smoke.
 
 ## Decision
 
@@ -72,13 +78,13 @@ Jin Desktop is GA-ready only when it is safe to install, start, update, diagnose
 
 ### P0 Electron Security
 
-- Keep `contextIsolation: true`.
-- Keep `nodeIntegration: false`.
-- Re-audit `sandbox: false`; either remove it or document why it is required.
-- Add a strict Content Security Policy.
-- Validate every IPC argument at the main-process boundary.
+- Keep `contextIsolation: true`. `Done on feat/desktop-add-windows`.
+- Keep `nodeIntegration: false`. `Done on feat/desktop-add-windows`.
+- Re-audit `sandbox: false`; either remove it or document why it is required. `Done: preload now builds to sandbox-compatible CJS and sandbox true is enabled.`
+- Add a strict Content Security Policy. `Done on feat/desktop-add-windows`.
+- Validate every IPC argument at the main-process boundary. `Done on feat/desktop-add-windows`.
 - Ensure renderer code never receives raw filesystem secrets.
-- Confirm browser-origin requests cannot control the daemon even with local network access.
+- Confirm browser-origin requests cannot control the daemon even with local network access. `Partially done: daemon API requires the Desktop token; remaining browser-origin verification belongs in the release validation lane.`
 
 ### P0 Lifecycle Reliability
 

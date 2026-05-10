@@ -125,35 +125,35 @@ export function registerDesktopIpcHandlers(
     ipcMain,
     DESKTOP_IPC_CHANNELS.controlAction,
     (_event, action) => {
-      return service.runControlAction(action as LocalControlAction);
+      return service.runControlAction(parseControlAction(action));
     },
   );
   replaceHandler(
     ipcMain,
     DESKTOP_IPC_CHANNELS.conversationList,
     (_event, request) => {
-      return service.listConversations(request as DesktopConversationListRequest);
+      return service.listConversations(parseConversationListRequest(request));
     },
   );
   replaceHandler(
     ipcMain,
     DESKTOP_IPC_CHANNELS.conversationDetail,
     (_event, conversationId) => {
-      return service.getConversationDetail(String(conversationId));
+      return service.getConversationDetail(parseConversationId(conversationId));
     },
   );
   replaceHandler(
     ipcMain,
     DESKTOP_IPC_CHANNELS.traceView,
     (_event, conversationId) => {
-      return service.getTraceView(String(conversationId));
+      return service.getTraceView(parseConversationId(conversationId));
     },
   );
   replaceHandler(
     ipcMain,
     DESKTOP_IPC_CHANNELS.treeView,
     (_event, conversationId) => {
-      return service.getTreeView(String(conversationId));
+      return service.getTreeView(parseConversationId(conversationId));
     },
   );
 }
@@ -169,6 +169,63 @@ function replaceHandler(
 
 function shouldReadHomeData(state: RuntimeState): boolean {
   return state === "running" || state === "degraded";
+}
+
+function parseControlAction(value: unknown): LocalControlAction {
+  if (value === "start" || value === "stop" || value === "restart") {
+    return value;
+  }
+
+  throw new Error("Invalid Desktop control action.");
+}
+
+function parseConversationListRequest(
+  value: unknown,
+): DesktopConversationListRequest | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!isPlainRecord(value)) {
+    throw new Error("Invalid Desktop conversation list request.");
+  }
+
+  const request: DesktopConversationListRequest = {};
+  if (value.adapterId !== undefined) {
+    request.adapterId = parseOptionalString(value.adapterId, "adapterId");
+  }
+  if (value.since !== undefined) {
+    request.since = parseOptionalString(value.since, "since");
+  }
+  const limit = value.limit;
+  if (limit !== undefined) {
+    if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
+      throw new Error("Invalid Desktop conversation list limit.");
+    }
+    request.limit = limit;
+  }
+
+  return request;
+}
+
+function parseOptionalString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid Desktop conversation list ${field}.`);
+  }
+
+  return value;
+}
+
+function parseConversationId(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("Invalid Desktop conversation id.");
+  }
+
+  return value;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function readCompatibilityStatus(
