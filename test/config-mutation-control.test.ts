@@ -32,6 +32,8 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 
 mock.module("../src/sinks/registry", () => ({
@@ -121,6 +123,8 @@ beforeEach(() => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
+    socketPath: join(tempDir, "jin.sock"),
   };
   watcherState = { name: "watcher", status: "stopped", lifecycleState: "stopped" };
   runtimeStatus = { state: "stopped", issues: [] };
@@ -571,6 +575,7 @@ function makeOwner(
     configDir: runtimePaths.configDir,
     storePath: runtimePaths.storePath,
     logPath: runtimePaths.logPath,
+    localEndpoint: runtimePaths.localEndpoint,
   };
 }
 

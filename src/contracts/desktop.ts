@@ -66,6 +66,7 @@ export interface DesktopControlStatus {
     config: string;
     store: string;
     log: string;
+    localEndpoint: string;
     socket: string;
   };
 }

@@ -99,13 +99,18 @@ function startWindowsHttpApiServer(
 ): LocalApiServer {
   assertWindowsLoopbackEndpoint(endpoint);
   if (options.serve) {
-    const server = options.serve({
-      unix: endpoint,
-      fetch,
-      error(error) {
-        return json({ error: formatError(error) }, 500);
-      },
-    });
+    let server: LocalApiServerHandle;
+    try {
+      server = options.serve({
+        unix: endpoint,
+        fetch,
+        error(error) {
+          return json({ error: formatError(error) }, 500);
+        },
+      });
+    } catch (error) {
+      throwWindowsEndpointUnavailable(endpoint, error);
+    }
 
     return {
       socketPath: endpoint,
@@ -117,14 +122,19 @@ function startWindowsHttpApiServer(
   }
 
   const url = new URL(endpoint);
-  const server = Bun.serve({
-    hostname: url.hostname,
-    port: Number(url.port),
-    fetch,
-    error(error) {
-      return json({ error: formatError(error) }, 500);
-    },
-  });
+  let server: LocalApiServerHandle;
+  try {
+    server = Bun.serve({
+      hostname: url.hostname,
+      port: Number(url.port),
+      fetch,
+      error(error) {
+        return json({ error: formatError(error) }, 500);
+      },
+    });
+  } catch (error) {
+    throwWindowsEndpointUnavailable(endpoint, error);
+  }
 
   return {
     socketPath: endpoint,
@@ -133,6 +143,12 @@ function startWindowsHttpApiServer(
       server.stop(true);
     },
   };
+}
+
+function throwWindowsEndpointUnavailable(endpoint: string, error: unknown): never {
+  throw new Error(
+    `Windows local API endpoint is unavailable at ${endpoint}. Another process may already be listening on this port; stop it and retry \`jin start\`. ${formatError(error)}`,
+  );
 }
 
 function createAuthenticatedApiFetchHandler(
@@ -158,6 +174,9 @@ function assertWindowsLoopbackEndpoint(endpoint: string): void {
   }
   if (!url.port || !Number.isInteger(Number(url.port))) {
     throw new Error("Windows local API endpoint must include a numeric port.");
+  }
+  if (url.pathname !== "/" || url.search.length > 0 || url.hash.length > 0) {
+    throw new Error("Windows local API endpoint must not include a path, query, or fragment.");
   }
 }
 

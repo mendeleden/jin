@@ -11,6 +11,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const PROBE_SCRIPT = `
+import { mock } from "bun:test";
+
 const encoder = new TextEncoder();
 const opts = JSON.parse(process.env.JIN_TEST_RUNTIME_STATE_OPTS || "{}");
 const livePids = new Set((opts.livePids || []).map((pid) => Number(pid)));
@@ -18,14 +20,15 @@ const livePids = new Set((opts.livePids || []).map((pid) => Number(pid)));
 const response = (stdout = "", exitCode = 0, stderr = "") => ({
   stdout: encoder.encode(stdout),
   stderr: encoder.encode(stderr),
+  status: exitCode,
   exitCode,
   success: exitCode === 0,
 });
 
-Bun.spawnSync = ((cmd) => {
-  const binary = Array.isArray(cmd) ? String(cmd[0]) : "";
-  const args = Array.isArray(cmd) ? cmd.slice(1).map((part) => String(part)) : [];
-  const joined = args.join(" ");
+function fakeSpawnSync(command, args = []) {
+  const binary = String(command);
+  const argv = Array.isArray(args) ? args.map((part) => String(part)) : [];
+  const joined = argv.join(" ");
 
   if (process.platform === "linux") {
     if (binary === "systemctl" && joined === "--user is-active jin.service") {
@@ -34,10 +37,10 @@ Bun.spawnSync = ((cmd) => {
     if (binary === "systemctl" && joined === "--user show jin.service --property MainPID --value") {
       return response(String(opts.servicePid ?? 0) + "\\n");
     }
-    if (binary === "ps" && args[0] === "-o" && args[1] === "tty=") {
+    if (binary === "ps" && argv[0] === "-o" && argv[1] === "tty=") {
       return response("?\\n");
     }
-    if (binary === "ps" && args[0] === "-o" && args[1] === "lstart=") {
+    if (binary === "ps" && argv[0] === "-o" && argv[1] === "lstart=") {
       return response("Mon Apr 29 12:00:00 2026\\n");
     }
   }
@@ -46,17 +49,17 @@ Bun.spawnSync = ((cmd) => {
     if (binary === "id" && joined === "-u") {
       return response("501\\n");
     }
-    if (binary === "launchctl" && args[0] === "print") {
+    if (binary === "launchctl" && argv[0] === "print") {
       if (!opts.serviceActive) {
         return response("", 1, "not found");
       }
       const pidLine = opts.servicePid ? "    pid = " + opts.servicePid + "\\n" : "";
       return response("state = running\\n" + pidLine + "last exit code = 0\\n");
     }
-    if (binary === "ps" && args[0] === "-o" && args[1] === "tty=") {
+    if (binary === "ps" && argv[0] === "-o" && argv[1] === "tty=") {
       return response("??\\n");
     }
-    if (binary === "ps" && args[0] === "-o" && args[1] === "lstart=") {
+    if (binary === "ps" && argv[0] === "-o" && argv[1] === "lstart=") {
       return response("Mon Apr 29 12:00:00 2026\\n");
     }
   }
@@ -74,8 +77,12 @@ Bun.spawnSync = ((cmd) => {
     }
   }
 
-  return response("", 1, "unexpected spawnSync command: " + [binary, ...args].join(" "));
-});
+  return response("", 1, "unexpected spawnSync command: " + [binary, ...argv].join(" "));
+}
+
+mock.module("./src/daemon/child-process.ts", () => ({
+  spawnSync: fakeSpawnSync,
+}));
 
 process.kill = ((pid, signal = 0) => {
   if (signal === 0 && livePids.has(Number(pid))) {

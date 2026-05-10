@@ -560,6 +560,7 @@ function makeStatus(
               configDir: "/tmp/jin",
               storePath: "/tmp/jin/store.db",
               logPath: "/tmp/jin/jin.log",
+              localEndpoint: "/tmp/jin/jin.sock",
             },
       issues: [],
     },
@@ -598,6 +599,7 @@ function makeStatus(
       config: "/tmp/jin/config.json",
       store: "/tmp/jin/store.db",
       log: "/tmp/jin/jin.log",
+      localEndpoint: "/tmp/jin/jin.sock",
       socket: "/tmp/jin/jin.sock",
     },
   };

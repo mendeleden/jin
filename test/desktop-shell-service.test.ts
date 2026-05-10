@@ -559,6 +559,7 @@ function makeStatus(state: "stopped" | "running") {
               configDir: "/tmp/jin",
               storePath: "/tmp/jin/store.db",
               logPath: "/tmp/jin/jin.log",
+              localEndpoint: "/tmp/jin/jin.sock",
             }
           : null,
       issues: [],
@@ -589,6 +590,7 @@ function makeStatus(state: "stopped" | "running") {
       config: "/tmp/jin/config.json",
       store: "/tmp/jin/store.db",
       log: "/tmp/jin/jin.log",
+      localEndpoint: "/tmp/jin/jin.sock",
       socket: "/tmp/jin/jin.sock",
     },
   };

@@ -22,6 +22,7 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
   socketPath: "",
 };
 let mockAdapters: any[] = [];
@@ -114,6 +115,7 @@ beforeEach(async () => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
     socketPath: join(tempDir, "jin.sock"),
   };
   runtimeStatus = { state: "stopped", issues: [] };
@@ -281,6 +283,7 @@ describe("W3-RUNTIME-01 live cutover", () => {
     expect(parsed.messages).toBe(1);
     expect(parsed.adapters).toEqual(["mock-adapter"]);
     expect(parsed.paths.store).toBe(runtimePaths.storePath);
+    expect(parsed.paths.localEndpoint).toBe(runtimePaths.localEndpoint);
   });
 
   test("statusCommand full output keeps the socket path and never emits the removed localhost dashboard hint when progress is present", async () => {
@@ -294,6 +297,7 @@ describe("W3-RUNTIME-01 live cutover", () => {
         configDir: runtimePaths.configDir,
         storePath: runtimePaths.storePath,
         logPath: runtimePaths.logPath,
+        localEndpoint: runtimePaths.localEndpoint,
       },
       issues: [],
     };

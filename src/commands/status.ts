@@ -51,6 +51,7 @@ async function printJson(
       store: paths.storePath,
       log: paths.logPath,
       discoveryCache: discoveryCachePath(),
+      localEndpoint: paths.localEndpoint,
       socket: paths.socketPath,
     },
   };
@@ -119,7 +120,7 @@ async function printFull(
   console.log(`  ${padRight("config", 12)}${configPath()}`);
   console.log(`  ${padRight("store", 12)}${paths.storePath}`);
   console.log(`  ${padRight("cache", 12)}${discoveryCachePath()}`);
-  console.log(`  ${padRight("socket", 12)}${paths.socketPath}`);
+  console.log(`  ${padRight("endpoint", 12)}${paths.localEndpoint}`);
 
   for (const state of states) {
     if (state.status === "running") {

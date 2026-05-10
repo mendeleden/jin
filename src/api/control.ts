@@ -102,6 +102,7 @@ export function getLocalControlStatus(): LocalControlStatusDto {
       config: paths.configPath,
       store: paths.storePath,
       log: paths.logPath,
+      localEndpoint: paths.localEndpoint,
       socket: paths.socketPath,
     },
   };

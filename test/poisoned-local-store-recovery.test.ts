@@ -17,6 +17,8 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 let clearRuntimeStateCalls = 0;
 let watchFailure: unknown = null;
@@ -94,6 +96,8 @@ beforeEach(() => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
+    socketPath: join(tempDir, "jin.sock"),
   };
   runtimeStatus = { state: "stopped", issues: [] };
   clearRuntimeStateCalls = 0;

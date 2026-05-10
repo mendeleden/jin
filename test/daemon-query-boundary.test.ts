@@ -187,6 +187,36 @@ describe("daemon query boundary", () => {
       }),
     ).toThrow("127.0.0.1");
   });
+
+  test("local api server reports an actionable Windows endpoint collision", () => {
+    const { store } = createQueryEnv();
+
+    expect(() =>
+      startLocalApiServer({
+        authToken: "windows-test-token",
+        platform: "win32",
+        queryStore: store,
+        socketPath: "http://127.0.0.1:45678",
+        serve: () => {
+          throw new Error("EADDRINUSE");
+        },
+      }),
+    ).toThrow("Another process may already be listening");
+  });
+
+  test("local api server rejects path-bearing Windows endpoints", () => {
+    const { store } = createQueryEnv();
+
+    expect(() =>
+      startLocalApiServer({
+        authToken: "windows-test-token",
+        platform: "win32",
+        queryStore: store,
+        socketPath: "http://127.0.0.1:45678/api",
+        serve: () => ({ stop() {} }),
+      }),
+    ).toThrow("must not include a path");
+  });
 });
 
 function createQueryEnv(): { dir: string; store: SqliteConversationStore } {

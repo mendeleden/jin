@@ -2,15 +2,29 @@
 
 - packet: `W4-DESKTOP-GA`
 - title: `Jin Desktop GA Transport and Release Hardening`
-- status: `queued`
-- assigned agent: `unassigned`
-- branch: `feat/jin-desktop`
+- status: `in_progress`
+- assigned agent: `codex-BRAIN`
+- branch: `feat/desktop-add-windows`
 - worktree/container: `canonical repo workspace` / `local`
 - depends on: `feat/jin-desktop Windows bring-up proof`, `desktop daemon loopback query proof`
 - unblocks: `Jin Desktop beta`, `Jin Desktop GA release readiness`
 - last transition: `2026-05-10`
-- next Codex action: `split this packet into implementation lanes for auth, transport hardening, lifecycle reliability, packaging, diagnostics, and release validation`
+- next Codex action: `continue P0 Electron security, lifecycle reliability, diagnostics, packaging, and release validation after the auth/transport slice`
 - latest review: `.execution/reviews/2026-05-10-W4-DESKTOP-GA-council.md`
+
+## Progress
+
+- `2026-05-10`: landed first Windows parity slice on `feat/desktop-add-windows`:
+  per-install Desktop API token, authenticated Desktop routes, strict Windows
+  `127.0.0.1` loopback endpoint, and Unix socket preservation.
+- `2026-05-10`: added endpoint observability and collision diagnostics:
+  `localEndpoint` is persisted in runtime ownership state, surfaced in status and
+  Desktop control status, and Windows bind failures now report an actionable
+  port-in-use diagnostic.
+- Validation for the transport slice:
+  `bun run typecheck`, `bun run desktop:typecheck`, focused Desktop/daemon tests,
+  `bun run desktop:build`, Windows daemon stop/start/status smoke, Desktop API
+  auth smoke (`200` with token, `401` without), and live occupied-port smoke.
 
 ## Decision
 

@@ -40,6 +40,7 @@ function makeOwner(mode: "daemon" | "service" | "foreground", pid = 515) {
     configDir: runtimePaths.configDir,
     storePath: runtimePaths.storePath,
     logPath: runtimePaths.logPath,
+    localEndpoint: runtimePaths.localEndpoint,
   };
 }
 
@@ -49,6 +50,7 @@ beforeEach(() => {
     configPath: "/tmp/jin/config.json",
     storePath: "/tmp/jin/store.db",
     logPath: "/tmp/jin/jin.log",
+    localEndpoint: "/tmp/jin/jin.sock",
     socketPath: "/tmp/jin/jin.sock",
   };
   runtimeStatus = { state: "stopped", issues: [] };
@@ -66,6 +68,7 @@ describe("local control boundary", () => {
     expect(status.health.ingest).toBe("inactive");
     expect(status.health.push).toBe("inactive");
     expect(status.paths.store).toBe(runtimePaths.storePath);
+    expect(status.paths.localEndpoint).toBe(runtimePaths.localEndpoint);
     expect(status.paths.socket).toBe(runtimePaths.socketPath);
     expect(status.components[0].status).toBe("stopped");
   });
@@ -163,6 +166,7 @@ describe("local control boundary", () => {
             config: runtimePaths.configPath,
             store: runtimePaths.storePath,
             log: runtimePaths.logPath,
+            localEndpoint: runtimePaths.localEndpoint,
             socket: runtimePaths.socketPath,
           },
         }),

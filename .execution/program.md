@@ -2,7 +2,7 @@
 
 - phase: `release recovery`
 - current date: `2026-05-10`
-- current focus: `prune stale live-control artifacts, finish W3-CLEANUP-02, harden release gates in W3-VALIDATE-02, and preserve W4-DESKTOP-GA as the queued Desktop GA hardening lane`
+- current focus: `continue W4-DESKTOP-GA Windows Desktop parity on feat/desktop-add-windows after the auth/transport hardening slice; preserve W3 release recovery state`
 
 ## TL;DR
 
@@ -10,7 +10,7 @@
 flowchart LR
   Cleanup02["W3-CLEANUP-02<br/>approved<br/>legacy CI cleanup landed"]
   Validate02["W3-VALIDATE-02<br/>in_progress<br/>release-gate hardening"]
-  DesktopGA["W4-DESKTOP-GA<br/>queued<br/>Desktop GA hardening"]
+  DesktopGA["W4-DESKTOP-GA<br/>in_progress<br/>Windows Desktop parity"]
   MainCI["main CI<br/>currently red"]
   Release["v0.8.12 retag/release"]
 
@@ -18,7 +18,7 @@ flowchart LR
   Cleanup02 --> Validate02
   Validate02 --> MainCI
   MainCI --> Release
-  DesktopGA -. sidecar after desktop branch proof .-> Release
+  DesktopGA -. sidecar GA hardening .-> Release
 ```
 
 ## Packet State
@@ -31,7 +31,7 @@ flowchart LR
   - `W3-E2E-01` — `review_ready`
   - `W3-SERVICE-01` — `blocked`
   - `W3-PR-01` — `blocked`
-  - `W4-DESKTOP-GA` - `queued`
+  - `W4-DESKTOP-GA` - `in_progress`
 - historical nonterminal packet files from the old Wave 3 rollout remain in
   `.execution/packets/` for now and should be normalized or archived in a
   second pass:
@@ -58,8 +58,9 @@ Archived historical heartbeats live under:
 
 - drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
 - reconcile `W3-SINK-04` once release-path CI noise is gone
-- split `W4-DESKTOP-GA` into auth, transport, lifecycle, packaging,
-  diagnostics, and validation lanes before Desktop beta
+- continue `W4-DESKTOP-GA` after the landed auth/transport slice: Electron
+  security, lifecycle reliability, diagnostics, packaging/update, and release
+  validation remain
 - retag/release only after `main` CI is green again
 
 ## Blockers
@@ -68,9 +69,9 @@ Archived historical heartbeats live under:
 - release `v0.8.12` must not be tagged until cleanup + validation hardening land
 - `.execution/blueprints.md` still reflects pre-merge `W3-SINK-06` / `W3-TEAM-03`
   state and needs a separate reviewer-owned refresh
-- `W4-DESKTOP-GA` blocks Desktop beta/GA until local API auth, strict loopback
-  binding, collision handling, diagnostics, packaging/update, and security
-  review are complete
+- `W4-DESKTOP-GA` blocks Desktop beta/GA until remaining Electron security,
+  lifecycle reliability, diagnostics, packaging/update, and release validation
+  are complete
 
 ## Notes
 
@@ -79,3 +80,6 @@ Archived historical heartbeats live under:
 - `docs/execution/tasks/` and `docs/execution/prompts/` were intentionally left
   in place for now because they are still referenced by historical audits and
   reviews; archive/migration of those docs should be a separate pass
+- `feat/desktop-add-windows` contains the first W4 Windows parity slice:
+  Desktop API auth, Windows strict loopback transport, endpoint persistence, and
+  occupied-port diagnostics.

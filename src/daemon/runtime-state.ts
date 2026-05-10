@@ -5,7 +5,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, resolve } from "path";
 import { configDir, configPath } from "../config";
@@ -17,6 +16,7 @@ import type {
   RuntimeStatus,
 } from "../contracts/lifecycle";
 import { windowsTaskIdentityPowerShellLines } from "../windows-task";
+import { spawnSync } from "./child-process";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");
@@ -70,6 +70,7 @@ export interface RuntimePaths {
   configPath: string;
   storePath: string;
   logPath: string;
+  localEndpoint: string;
   socketPath: string;
 }
 
@@ -192,12 +193,15 @@ export function getRuntimePaths(): RuntimePaths {
       ? resolve(raw.store.dbPath)
       : resolve(join(resolvedConfigDir, "store.db"));
 
+  const localEndpoint = resolveRuntimeLocalEndpoint(resolvedConfigDir);
+
   return {
     configDir: resolvedConfigDir,
     configPath: resolvedConfigPath,
     storePath,
     logPath: resolve(LOG_FILE),
-    socketPath: resolveRuntimeSocketPath(resolvedConfigDir),
+    localEndpoint,
+    socketPath: localEndpoint,
   };
 }
 
@@ -390,6 +394,7 @@ function buildOwnershipRecord(
     configDir: paths.configDir,
     storePath: paths.storePath,
     logPath: paths.logPath,
+    localEndpoint: paths.localEndpoint,
   };
 }
 
@@ -538,7 +543,8 @@ function hasOwnerDrifted(
     previous.mode !== owner.mode ||
     previous.configDir !== owner.configDir ||
     previous.storePath !== owner.storePath ||
-    previous.logPath !== owner.logPath
+    previous.logPath !== owner.logPath ||
+    previous.localEndpoint !== owner.localEndpoint
   );
 }
 
@@ -549,7 +555,8 @@ function ownershipMatchesRuntime(
   return (
     owner.configDir === paths.configDir &&
     owner.storePath === paths.storePath &&
-    (owner.logPath ?? paths.logPath) === paths.logPath
+    (owner.logPath ?? paths.logPath) === paths.logPath &&
+    (owner.localEndpoint ?? paths.localEndpoint) === paths.localEndpoint
   );
 }
 
@@ -564,6 +571,7 @@ function parseOwnershipRecord(raw: unknown): RuntimeOwnershipRecord | null {
   const ownershipConfigDir = raw.configDir;
   const storePath = raw.storePath;
   const logPath = raw.logPath;
+  const localEndpoint = raw.localEndpoint;
 
   if (
     !pid ||
@@ -582,6 +590,7 @@ function parseOwnershipRecord(raw: unknown): RuntimeOwnershipRecord | null {
     configDir: ownershipConfigDir,
     storePath,
     ...(typeof logPath === "string" ? { logPath } : {}),
+    ...(typeof localEndpoint === "string" ? { localEndpoint } : {}),
   };
 }
 
@@ -622,7 +631,7 @@ function cleanupPidFile(): void {
   } catch {}
 }
 
-function resolveRuntimeSocketPath(resolvedConfigDir: string): string {
+function resolveRuntimeLocalEndpoint(resolvedConfigDir: string): string {
   if (process.platform !== "win32") {
     return resolve(SOCKET_FILE);
   }
