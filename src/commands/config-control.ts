@@ -14,7 +14,15 @@ export async function persistConfigChange(
   } = {},
 ): Promise<void> {
   await saveConfig(config);
+  await finalizeConfigChange(opts);
+}
 
+export async function finalizeConfigChange(
+  opts: {
+    yes?: boolean;
+    changeSummary?: string;
+  } = {},
+): Promise<void> {
   if (opts.changeSummary) {
     console.log(`  ${opts.changeSummary}.`);
   }

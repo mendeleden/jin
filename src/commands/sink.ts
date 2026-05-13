@@ -2,7 +2,7 @@ import {
   DEFAULT_S3_PREFIX,
   DEFAULT_S3_REGION,
   loadConfig,
-  saveConfig,
+  updateConfig,
   type JinConfig,
   type SinkConfig,
 } from "../config";
@@ -23,7 +23,10 @@ import { DiagnosticLogger } from "../pipeline/diagnostic";
 import { pushDirty } from "../pipeline/push";
 import type { PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
-import { applySinkPauseControl, persistConfigChange } from "./config-control";
+import {
+  applySinkPauseControl,
+  finalizeConfigChange,
+} from "./config-control";
 import { join } from "path";
 
 export interface SinkCommandOptions {
@@ -52,15 +55,19 @@ export async function sinkAddCommand(
   type: SinkType,
   opts: SinkCommandOptions,
 ): Promise<void> {
-  const config = await loadConfig();
-  const result = await ensureSinkConfigured(config, { ...opts, type });
+  const { result } = await updateConfig(
+    (config) => ensureSinkConfigured(config, { ...opts, type }),
+    {
+      shouldSave: (result) => result.created,
+    },
+  );
 
   if (!result.created) {
     console.log(`  Sink already configured: ${result.sinkId}`);
     return;
   }
 
-  await persistConfigChange(config, {
+  await finalizeConfigChange({
     yes: opts.yes,
     changeSummary: `Added sink ${result.sinkId}`,
   });
@@ -77,34 +84,37 @@ export async function sinkRemoveCommand(
     fail("specify a sink id");
   }
 
-  const config = await loadConfig();
-  const sinkIndex = findSinkIndexById(config, sinkId);
-  if (sinkIndex === -1) {
-    fail(`sink "${sinkId}" not found`);
-  }
-
-  config.sinks.splice(sinkIndex, 1);
-
-  let affectedRoutes = 0;
-  config.routes = config.routes.flatMap((route) => {
-    if (!route.sinks.includes(sinkId)) {
-      return [route];
+  const { result } = await updateConfig((config) => {
+    const sinkIndex = findSinkIndexById(config, sinkId);
+    if (sinkIndex === -1) {
+      fail(`sink "${sinkId}" not found`);
     }
 
-    affectedRoutes += 1;
-    const remainingSinks = route.sinks.filter((id) => id !== sinkId);
-    if (remainingSinks.length === 0) {
-      return [];
-    }
+    config.sinks.splice(sinkIndex, 1);
 
-    return [{ ...route, sinks: remainingSinks }];
+    let affectedRoutes = 0;
+    config.routes = config.routes.flatMap((route) => {
+      if (!route.sinks.includes(sinkId)) {
+        return [route];
+      }
+
+      affectedRoutes += 1;
+      const remainingSinks = route.sinks.filter((id) => id !== sinkId);
+      if (remainingSinks.length === 0) {
+        return [];
+      }
+
+      return [{ ...route, sinks: remainingSinks }];
+    });
+
+    return { affectedRoutes };
   });
 
-  await persistConfigChange(config, {
+  await finalizeConfigChange({
     yes: opts.yes,
     changeSummary:
-      affectedRoutes > 0
-        ? `Removed sink ${sinkId} and updated ${affectedRoutes} route${affectedRoutes === 1 ? "" : "s"}`
+      result.affectedRoutes > 0
+        ? `Removed sink ${sinkId} and updated ${result.affectedRoutes} route${result.affectedRoutes === 1 ? "" : "s"}`
         : `Removed sink ${sinkId}`,
   });
 }
@@ -376,15 +386,32 @@ async function setSinkEnabled(sinkId: string, enabled: boolean): Promise<void> {
     fail("specify a sink id");
   }
 
-  const config = await loadConfig();
-  const sinkIndex = findSinkIndexById(config, sinkId);
-  if (sinkIndex === -1) {
-    fail(`sink "${sinkId}" not found`);
-  }
+  const { result } = await updateConfig(
+    (config) => {
+      const sinkIndex = findSinkIndexById(config, sinkId);
+      if (sinkIndex === -1) {
+        fail(`sink "${sinkId}" not found`);
+      }
 
-  const current = config.sinks[sinkIndex];
-  const alreadyEnabled = current.enabled !== false;
-  if (alreadyEnabled === enabled) {
+      const current = config.sinks[sinkIndex];
+      const alreadyEnabled = current.enabled !== false;
+      if (alreadyEnabled === enabled) {
+        return { changed: false };
+      }
+
+      config.sinks[sinkIndex] = {
+        ...current,
+        enabled,
+      };
+
+      return { changed: true };
+    },
+    {
+      shouldSave: (result) => result.changed,
+    },
+  );
+
+  if (!result.changed) {
     console.log(
       enabled
         ? `  Sink ${sinkId} is already enabled.`
@@ -393,21 +420,13 @@ async function setSinkEnabled(sinkId: string, enabled: boolean): Promise<void> {
     return;
   }
 
-  config.sinks[sinkIndex] = {
-    ...current,
-    enabled,
-  };
-
-  await persistSinkControlChange(config, sinkId, enabled);
+  await persistSinkControlChange(sinkId, enabled);
 }
 
 async function persistSinkControlChange(
-  config: JinConfig,
   sinkId: string,
   enabled: boolean,
 ): Promise<void> {
-  await persistConfigOnly(config);
-
   const runtimeUpdated = applySinkPauseControl(sinkId, !enabled);
   if (enabled) {
     console.log(`  Sink ${sinkId} enabled.`);
@@ -420,10 +439,6 @@ async function persistSinkControlChange(
   } else {
     console.log("  Change saved; it will apply on the next start.");
   }
-}
-
-async function persistConfigOnly(config: JinConfig): Promise<void> {
-  await saveConfig(config);
 }
 
 function createSinkCommandLogger(): PipelineLogger {

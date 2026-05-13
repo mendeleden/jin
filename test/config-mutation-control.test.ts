@@ -6,7 +6,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtempSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ConversationBundle } from "../src/contracts/conversations";
@@ -99,7 +99,12 @@ mock.module("../src/commands/ingest", () => ({
   ingestCommand: async () => {},
 }));
 
-const { defaultConfig } = await import("../src/config");
+const {
+  configLockPath,
+  defaultConfig,
+  saveConfig,
+  updateConfig,
+} = await import("../src/config");
 const { encodeTeamConfig } = await import("../src/sinks/types");
 const { connectCommand } = await import("../src/commands/connect");
 const { watchCommand } = await import("../src/commands/watch");
@@ -145,6 +150,81 @@ afterEach(() => {
 });
 
 describe("config mutation and control commands", () => {
+  test("saveConfig writes atomically and releases the config lock", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+
+    await saveConfig(config);
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual(config.sinks);
+    expect(existsSync(configLockPath())).toBe(false);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("updateConfig does not persist partial mutations when the mutator fails", async () => {
+    const config = defaultConfig();
+    await writeTestConfig(tempDir, config);
+
+    await expect(
+      updateConfig((nextConfig) => {
+        nextConfig.sinks.push({
+          id: "postgres-team",
+          type: "postgres",
+          enabled: true,
+          connectionString: "postgresql://localhost:5432/jin",
+        });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual([]);
+  });
+
+  test("updateConfig serializes concurrent mutations so later saves do not clobber earlier changes", async () => {
+    const config = defaultConfig();
+    await writeTestConfig(tempDir, config);
+
+    await Promise.all([
+      updateConfig(async (nextConfig) => {
+        await Bun.sleep(20);
+        nextConfig.sinks.push({
+          id: "postgres-team",
+          type: "postgres",
+          enabled: true,
+          connectionString: "postgresql://localhost:5432/jin",
+        });
+        return "sink";
+      }),
+      updateConfig((nextConfig) => {
+        nextConfig.routes.push({
+          match: { remote: "github.com/org/alpha" },
+          sinks: ["postgres-team"],
+        });
+        return "route";
+      }),
+    ]);
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks.map((sink: { id: string }) => sink.id)).toEqual([
+      "postgres-team",
+    ]);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["postgres-team"],
+      },
+    ]);
+  });
+
   test("sink add writes durable config and requires explicit restart by default", async () => {
     watcherState = {
       name: "watcher",
