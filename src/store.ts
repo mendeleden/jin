@@ -758,6 +758,9 @@ export class Store {
     try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch (e) {
       if (process.env.DEBUG) console.warn("WAL checkpoint failed:", e);
     }
+    try { this.db.exec("PRAGMA journal_mode = DELETE"); } catch (e) {
+      if (process.env.DEBUG) console.warn("WAL teardown failed:", e);
+    }
     this.db.close();
   }
 }

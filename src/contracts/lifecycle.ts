@@ -21,6 +21,7 @@ export interface RuntimeOwnershipRecord {
   configDir: string;
   storePath: string;
   logPath?: string;
+  localEndpoint?: string;
 }
 
 export interface RuntimeIssue {

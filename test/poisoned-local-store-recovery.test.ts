@@ -17,6 +17,8 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 let clearRuntimeStateCalls = 0;
 let watchFailure: unknown = null;
@@ -24,6 +26,7 @@ let ingestFailure: unknown = null;
 
 mock.module("../src/daemon/process-state", () => ({
   getWatcherState: () => ({ status: "stopped" }),
+  getAllState: () => [{ status: "stopped" }],
   getDashboardState: () => ({ status: "stopped" }),
   stopDashboard: async () => {},
   stopWatcher: async () => ({ completed: true }),
@@ -93,6 +96,8 @@ beforeEach(() => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
+    socketPath: join(tempDir, "jin.sock"),
   };
   runtimeStatus = { state: "stopped", issues: [] };
   clearRuntimeStateCalls = 0;

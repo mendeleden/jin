@@ -1,29 +1,13 @@
 import { closeSync, openSync, writeFileSync } from "fs";
 import { join } from "path";
 import { configDir } from "../config";
+import { resolveSelfCommand } from "../runtime/self-command";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
 export async function daemonize(): Promise<void> {
-  let exe: string;
-  try {
-    const { realpathSync } = await import("fs");
-    exe = realpathSync("/proc/self/exe");
-  } catch {
-    exe = process.execPath;
-  }
-
-  const isCompiled = !exe.endsWith("bun") && !exe.endsWith("node");
-  const cmd = isCompiled
-    ? [exe, "start", "--foreground"]
-    : [
-        exe,
-        "run",
-        process.argv[1],
-        "start",
-        "--foreground",
-      ];
+  const cmd = [...resolveSelfCommand(), "start", "--foreground"];
 
   const logFd = openSync(LOG_FILE, "a");
   const proc = Bun.spawn(cmd, {

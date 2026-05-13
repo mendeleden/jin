@@ -3,6 +3,7 @@ import type {
   Message,
   ParsedMessage,
 } from "../contracts/conversations";
+import { allRows } from "./statements";
 import { getToolCallsByMessage } from "./tool-calls";
 
 export interface MessageFtsRow {
@@ -89,14 +90,14 @@ export function getMessages(
   conversationId: string,
 ): Message[] {
   const toolCallsByMessage = getToolCallsByMessage(db, conversationId);
-  const rows = db
-    .prepare(
-      `SELECT *
-       FROM messages
-       WHERE conversation_id = ?
-       ORDER BY sequence ASC, id ASC`,
-    )
-    .all(conversationId) as MessageRow[];
+  const rows = allRows<MessageRow>(
+    db,
+    `SELECT *
+     FROM messages
+     WHERE conversation_id = ?
+     ORDER BY sequence ASC, id ASC`,
+    conversationId,
+  );
 
   return rows.map((row) =>
     rowToMessage(row, toolCallsByMessage.get(row.id) ?? []),
@@ -107,13 +108,13 @@ export function getMessageFtsRows(
   db: Database,
   conversationId: string,
 ): MessageFtsRow[] {
-  return db
-    .prepare(
-      `SELECT rowid, content
-       FROM messages
-       WHERE conversation_id = ?`,
-    )
-    .all(conversationId) as MessageFtsRow[];
+  return allRows<MessageFtsRow>(
+    db,
+    `SELECT rowid, content
+     FROM messages
+     WHERE conversation_id = ?`,
+    conversationId,
+  );
 }
 
 function rowToMessage(

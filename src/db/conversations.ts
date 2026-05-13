@@ -5,6 +5,7 @@ import type {
   ParsedConversation,
 } from "../contracts/conversations";
 import { estimateCost } from "../pricing";
+import { allRows, getRow } from "./statements";
 
 interface ConversationRow {
   id: string;
@@ -114,53 +115,62 @@ export function recomputeConversationDerivedFields(
   db: Database,
   conversationId: string,
 ): void {
-  const conversationRow = db
-    .prepare(
-      `SELECT model, started_at, ended_at
-       FROM conversations
-       WHERE id = ?`,
-    )
-    .get(conversationId) as {
+  const conversationRow = getRow<{
     model: string;
     started_at: string;
     ended_at: string;
-  } | null;
+  }>(
+    db,
+    `SELECT model, started_at, ended_at
+     FROM conversations
+     WHERE id = ?`,
+    conversationId,
+  );
 
   if (!conversationRow) {
     return;
   }
 
-  const messageCostRows = db
-    .prepare(
-      `SELECT
-        model,
-        input_tokens,
-        output_tokens,
-        cache_read,
-        cache_write
-       FROM messages
-       WHERE conversation_id = ?`,
-    )
-    .all(conversationId) as MessageCostRow[];
+  const messageCostRows = allRows<MessageCostRow>(
+    db,
+    `SELECT
+      model,
+      input_tokens,
+      output_tokens,
+      cache_read,
+      cache_write
+     FROM messages
+     WHERE conversation_id = ?`,
+    conversationId,
+  );
 
-  const rows = db
-    .prepare(
-      `SELECT
-        turn,
-        input_tokens,
-        output_tokens,
-        cache_read,
-        cache_write
-       FROM messages
-       WHERE conversation_id = ?`,
-    )
-    .all(conversationId) as Array<{
+  const rows = allRows<{
     turn: number;
     input_tokens: number;
     output_tokens: number;
     cache_read: number;
     cache_write: number;
-  }>;
+  }>(
+    db,
+    `SELECT
+      turn,
+      input_tokens,
+      output_tokens,
+      cache_read,
+      cache_write
+     FROM messages
+     WHERE conversation_id = ?`,
+    conversationId,
+  );
+
+  const toolCount =
+    getRow<{ tool_count: number }>(
+      db,
+      `SELECT COUNT(*) AS tool_count
+       FROM tool_calls
+       WHERE conversation_id = ?`,
+      conversationId,
+    )?.tool_count ?? 0;
 
   const derived = {
     durationMs: computeDurationMs(
@@ -168,13 +178,7 @@ export function recomputeConversationDerivedFields(
       conversationRow.ended_at,
     ),
     messageCount: rows.length,
-    toolCount: db
-      .prepare(
-        `SELECT COUNT(*) AS tool_count
-         FROM tool_calls
-         WHERE conversation_id = ?`,
-      )
-      .get(conversationId) as { tool_count: number },
+    toolCount,
     turnCount: rows.reduce((max, row) => Math.max(max, row.turn), 0),
     inputTokens: rows.reduce((sum, row) => sum + row.input_tokens, 0),
     outputTokens: rows.reduce((sum, row) => sum + row.output_tokens, 0),
@@ -189,10 +193,7 @@ export function recomputeConversationDerivedFields(
   persistConversationDerivedFields(
     db,
     conversationId,
-    {
-      ...derived,
-      toolCount: derived.toolCount.tool_count,
-    },
+    derived,
   );
 }
 
@@ -200,9 +201,11 @@ export function getConversation(
   db: Database,
   conversationId: string,
 ): Conversation | null {
-  const row = db
-    .prepare("SELECT * FROM conversations WHERE id = ?")
-    .get(conversationId) as ConversationRow | null;
+  const row = getRow<ConversationRow>(
+    db,
+    "SELECT * FROM conversations WHERE id = ?",
+    conversationId,
+  );
 
   return row ? rowToConversation(row) : null;
 }

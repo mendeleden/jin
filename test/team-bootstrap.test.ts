@@ -10,6 +10,8 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 let runtimeStatus: any;
 let restartCalls: any[] = [];
@@ -78,6 +80,8 @@ beforeEach(() => {
     configPath: join(env.dir, "config.json"),
     storePath: join(env.dir, "store.db"),
     logPath: join(env.dir, "jin.log"),
+    localEndpoint: join(env.dir, "jin.sock"),
+    socketPath: join(env.dir, "jin.sock"),
   };
   runtimeStatus = { state: "stopped", issues: [] };
   restartCalls = [];

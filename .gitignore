@@ -3,6 +3,9 @@ node_modules/
 src/api/_spa.ts
 dashboard/dist/
 dashboard/tsconfig.tsbuildinfo
+desktop/dist/
+desktop/*.hm
+release-artifacts/
 *.db
 *.db-journal
 *.db-wal

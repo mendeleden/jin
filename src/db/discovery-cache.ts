@@ -8,6 +8,7 @@ import type {
   DiscoveryCacheSourceState,
   DiscoveryCacheState,
 } from "../adapters/discovery-cache";
+import { getRow, runInTransaction } from "./statements";
 
 const CACHE_SCHEMA_VERSION = 1;
 const DEFAULT_SQLITE_CACHE_SIZE_KIB = 2048;
@@ -218,22 +219,19 @@ export class SqliteDiscoveryCache {
     const updatedAt = new Date().toISOString();
 
     try {
-      const save = this.database.transaction(() => {
-        this.database
-          .prepare(
-            "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint != ?2",
-          )
-          .run(adapter.id, fingerprint);
-        this.database
-          .prepare(
-            "DELETE FROM adapter_cache_meta WHERE adapter_id = ?1 AND config_fingerprint != ?2",
-          )
-          .run(adapter.id, fingerprint);
-        this.database
-          .prepare(
-            "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint = ?2",
-          )
-          .run(adapter.id, fingerprint);
+      runInTransaction(this.database, () => {
+        this.database.run(
+          "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint != ?2",
+          [adapter.id, fingerprint],
+        );
+        this.database.run(
+          "DELETE FROM adapter_cache_meta WHERE adapter_id = ?1 AND config_fingerprint != ?2",
+          [adapter.id, fingerprint],
+        );
+        this.database.run(
+          "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint = ?2",
+          [adapter.id, fingerprint],
+        );
 
         const insertRow = this.database.prepare(`
           INSERT INTO adapter_source_state (
@@ -250,46 +248,48 @@ export class SqliteDiscoveryCache {
           ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         `);
 
-        for (const source of state.sources) {
-          insertRow.run(
-            adapter.id,
-            fingerprint,
-            source.sourcePath,
-            source.sourceKind,
-            source.sizeBytes,
-            source.mtimeMs,
-            source.signature,
-            adapter.discoveryCachePayloadVersion,
-            JSON.stringify(source.payload),
-            updatedAt,
-          );
+        try {
+          for (const source of state.sources) {
+            insertRow.run(
+              adapter.id,
+              fingerprint,
+              source.sourcePath,
+              source.sourceKind,
+              source.sizeBytes,
+              source.mtimeMs,
+              source.signature,
+              adapter.discoveryCachePayloadVersion,
+              JSON.stringify(source.payload),
+              updatedAt,
+            );
+          }
+        } finally {
+          insertRow.finalize();
         }
 
-        this.database
-          .prepare(`
-            INSERT INTO adapter_cache_meta (
-              adapter_id,
-              config_fingerprint,
-              adapter_contract_version,
-              payload_version,
-              last_used_at,
-              cached_sources,
-              invalidated_sources,
-              fresh_sources,
-              last_invalidation_reason,
-              last_disabled_reason
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(adapter_id, config_fingerprint) DO UPDATE SET
-              adapter_contract_version = excluded.adapter_contract_version,
-              payload_version = excluded.payload_version,
-              last_used_at = excluded.last_used_at,
-              cached_sources = excluded.cached_sources,
-              invalidated_sources = excluded.invalidated_sources,
-              fresh_sources = excluded.fresh_sources,
-              last_invalidation_reason = excluded.last_invalidation_reason,
-              last_disabled_reason = excluded.last_disabled_reason
-          `)
-          .run(
+        this.database.run(
+          `INSERT INTO adapter_cache_meta (
+            adapter_id,
+            config_fingerprint,
+            adapter_contract_version,
+            payload_version,
+            last_used_at,
+            cached_sources,
+            invalidated_sources,
+            fresh_sources,
+            last_invalidation_reason,
+            last_disabled_reason
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+          ON CONFLICT(adapter_id, config_fingerprint) DO UPDATE SET
+            adapter_contract_version = excluded.adapter_contract_version,
+            payload_version = excluded.payload_version,
+            last_used_at = excluded.last_used_at,
+            cached_sources = excluded.cached_sources,
+            invalidated_sources = excluded.invalidated_sources,
+            fresh_sources = excluded.fresh_sources,
+            last_invalidation_reason = excluded.last_invalidation_reason,
+            last_disabled_reason = excluded.last_disabled_reason`,
+          [
             adapter.id,
             fingerprint,
             adapter.discoveryCacheContractVersion,
@@ -300,10 +300,9 @@ export class SqliteDiscoveryCache {
             summary.freshSources,
             summary.invalidationReason ?? "",
             summary.disabledReason ?? "",
-          );
+          ],
+        );
       });
-
-      save();
     } catch (error) {
       this.disableForLifetime(`cache-write-failed:${formatCacheError(error)}`);
     }
@@ -334,12 +333,30 @@ export class SqliteDiscoveryCache {
   }
 
   close(): void {
+    for (const statement of [
+      this.loadMetaStatement,
+      this.loadRowsStatement,
+      this.statusStatement,
+    ]) {
+      try {
+        statement.finalize();
+      } catch {
+        // Best effort.
+      }
+    }
+
     try {
       this.database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     } catch {
       // Best effort.
     }
-    this.database.close();
+    try {
+      this.database.exec("PRAGMA journal_mode = DELETE");
+    } catch {
+      // Best effort.
+    }
+
+    this.database.close(true);
   }
 
   removeFiles(): void {
@@ -354,37 +371,33 @@ export class SqliteDiscoveryCache {
     fingerprint: string,
     reason: string,
   ): void {
-    const invalidate = this.database.transaction(() => {
-      this.database
-        .prepare(
-          "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint = ?2",
-        )
-        .run(adapterId, fingerprint);
-      this.database
-        .prepare(`
-          INSERT INTO adapter_cache_meta (
-            adapter_id,
-            config_fingerprint,
-            adapter_contract_version,
-            payload_version,
-            last_used_at,
-            cached_sources,
-            invalidated_sources,
-            fresh_sources,
-            last_invalidation_reason,
-            last_disabled_reason
-          ) VALUES (?1, ?2, 0, 0, ?3, 0, 0, 0, ?4, '')
-          ON CONFLICT(adapter_id, config_fingerprint) DO UPDATE SET
-            last_used_at = excluded.last_used_at,
-            cached_sources = 0,
-            invalidated_sources = 0,
-            fresh_sources = 0,
-            last_invalidation_reason = excluded.last_invalidation_reason
-        `)
-        .run(adapterId, fingerprint, new Date().toISOString(), reason);
+    runInTransaction(this.database, () => {
+      this.database.run(
+        "DELETE FROM adapter_source_state WHERE adapter_id = ?1 AND config_fingerprint = ?2",
+        [adapterId, fingerprint],
+      );
+      this.database.run(
+        `INSERT INTO adapter_cache_meta (
+          adapter_id,
+          config_fingerprint,
+          adapter_contract_version,
+          payload_version,
+          last_used_at,
+          cached_sources,
+          invalidated_sources,
+          fresh_sources,
+          last_invalidation_reason,
+          last_disabled_reason
+        ) VALUES (?1, ?2, 0, 0, ?3, 0, 0, 0, ?4, '')
+        ON CONFLICT(adapter_id, config_fingerprint) DO UPDATE SET
+          last_used_at = excluded.last_used_at,
+          cached_sources = 0,
+          invalidated_sources = 0,
+          fresh_sources = 0,
+          last_invalidation_reason = excluded.last_invalidation_reason`,
+        [adapterId, fingerprint, new Date().toISOString(), reason],
+      );
     });
-
-    invalidate();
   }
 
   private disableForLifetime(reason: string): void {
@@ -437,7 +450,7 @@ function runDiscoveryCacheMigrations(db: Database): void {
     return;
   }
 
-  const migrate = db.transaction(() => {
+  runInTransaction(db, () => {
     db.exec(`
       CREATE TABLE IF NOT EXISTS adapter_cache_meta (
         adapter_id TEXT NOT NULL,
@@ -472,14 +485,10 @@ function runDiscoveryCacheMigrations(db: Database): void {
     `);
     db.exec(`PRAGMA user_version = ${CACHE_SCHEMA_VERSION}`);
   });
-
-  migrate();
 }
 
 function getUserVersion(db: Database): number {
-  const row = db
-    .prepare("PRAGMA user_version")
-    .get() as { user_version?: number } | undefined;
+  const row = getRow<{ user_version?: number }>(db, "PRAGMA user_version");
 
   return row?.user_version ?? 0;
 }

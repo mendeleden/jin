@@ -22,11 +22,16 @@ let runtimePaths = {
   configPath: "",
   storePath: "",
   logPath: "",
+  localEndpoint: "",
+  socketPath: "",
 };
 let mockAdapters: any[] = [];
 let fakeSink: any = createFakeSink();
 let runPipelineCalls: any[] = [];
 let pushedPayloads: any[] = [];
+let progressState: any = null;
+let startLocalApiServerCalls: any[] = [];
+let localApiServerStopCalls = 0;
 
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimeStatus: () => runtimeStatus,
@@ -73,6 +78,22 @@ mock.module("../src/updater", () => ({
   checkForUpdate: async () => null,
 }));
 
+mock.module("../src/api/server", () => ({
+  startLocalApiServer: (options: unknown) => {
+    startLocalApiServerCalls.push(options);
+    return {
+      socketPath: runtimePaths.socketPath,
+      stop: () => {
+        localApiServerStopCalls += 1;
+      },
+    };
+  },
+}));
+
+mock.module("../src/progress", () => ({
+  readProgress: () => progressState,
+}));
+
 const { analyzeCommand } = await import("../src/commands/analyze");
 const { defaultConfig } = await import("../src/config");
 const { openStoreAtPath } = await import("../src/db/store");
@@ -94,12 +115,17 @@ beforeEach(async () => {
     configPath: join(tempDir, "config.json"),
     storePath: join(tempDir, "store.db"),
     logPath: join(tempDir, "jin.log"),
+    localEndpoint: join(tempDir, "jin.sock"),
+    socketPath: join(tempDir, "jin.sock"),
   };
   runtimeStatus = { state: "stopped", issues: [] };
   mockAdapters = [];
   fakeSink = createFakeSink();
   runPipelineCalls = [];
   pushedPayloads = [];
+  progressState = null;
+  startLocalApiServerCalls = [];
+  localApiServerStopCalls = 0;
   console_ = captureConsole();
 
   await writeConfig(defaultConfig());
@@ -128,6 +154,11 @@ describe("W3-RUNTIME-01 live cutover", () => {
 
     await expect(watchPromise).rejects.toBeInstanceOf(ExitError);
     expect(runPipelineCalls).toHaveLength(1);
+    expect(startLocalApiServerCalls).toHaveLength(1);
+    expect((startLocalApiServerCalls[0] as { socketPath: string }).socketPath).toBe(
+      runtimePaths.socketPath,
+    );
+    expect(localApiServerStopCalls).toBe(1);
 
     const options = runPipelineCalls[0] as {
       store: Record<string, unknown>;
@@ -252,6 +283,36 @@ describe("W3-RUNTIME-01 live cutover", () => {
     expect(parsed.messages).toBe(1);
     expect(parsed.adapters).toEqual(["mock-adapter"]);
     expect(parsed.paths.store).toBe(runtimePaths.storePath);
+    expect(parsed.paths.localEndpoint).toBe(runtimePaths.localEndpoint);
+  });
+
+  test("statusCommand full output keeps the socket path and never emits the removed localhost dashboard hint when progress is present", async () => {
+    seedV2Conversation("status-progress-conversation");
+    runtimeStatus = {
+      state: "running",
+      owner: {
+        pid: process.pid,
+        mode: "foreground",
+        startedAt: "2026-04-17T20:00:00.000Z",
+        configDir: runtimePaths.configDir,
+        storePath: runtimePaths.storePath,
+        logPath: runtimePaths.logPath,
+        localEndpoint: runtimePaths.localEndpoint,
+      },
+      issues: [],
+    };
+    progressState = {
+      adapter: "mock-adapter",
+      current: 2,
+      total: 4,
+    };
+
+    await statusCommand();
+
+    const output = console_.logs.join("\n");
+    expect(output).toContain(runtimePaths.socketPath);
+    expect(output).toContain("ingesting");
+    expect(output).not.toContain("http://localhost");
   });
 });
 

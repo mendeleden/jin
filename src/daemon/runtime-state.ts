@@ -5,6 +5,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "path";
 import { configDir, configPath } from "../config";
 import type {
@@ -15,11 +16,13 @@ import type {
   RuntimeStatus,
 } from "../contracts/lifecycle";
 import { windowsTaskIdentityPowerShellLines } from "../windows-task";
+import { spawnSync } from "./child-process";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const PID_FILE = join(configDir(), "jin.pid");
 const RUNTIME_STATE_FILE = join(configDir(), "jin.runtime.json");
 const LOG_FILE = join(configDir(), "jin.log");
+const SOCKET_FILE = join(configDir(), "jin.sock");
 const STARTING_GRACE_MS = 10_000;
 const decoder = new TextDecoder();
 
@@ -31,9 +34,9 @@ function runHiddenPowerShell(script: string): {
   stdout: Uint8Array;
   stderr: Uint8Array;
 } {
-  return Bun.spawnSync(
+  const result = spawnSync(
+    "powershell",
     [
-      "powershell",
       "-NoLogo",
       "-NonInteractive",
       "-WindowStyle",
@@ -42,11 +45,15 @@ function runHiddenPowerShell(script: string): {
       script,
     ],
     {
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     },
   );
+  return {
+    exitCode: result.status,
+    stdout: result.stdout ?? new Uint8Array(),
+    stderr: result.stderr ?? new Uint8Array(),
+  };
 }
 
 export type RunMode = RuntimeMode | "none";
@@ -63,6 +70,8 @@ export interface RuntimePaths {
   configPath: string;
   storePath: string;
   logPath: string;
+  localEndpoint: string;
+  socketPath: string;
 }
 
 export interface DarwinLaunchAgentStatus {
@@ -108,9 +117,10 @@ export function isServiceInstalled(): boolean {
 export function isServiceActive(): boolean {
   try {
     if (process.platform === "linux") {
-      const result = Bun.spawnSync(
-        ["systemctl", "--user", "is-active", "jin.service"],
-        { stdout: "pipe", stderr: "pipe" },
+      const result = spawnSync(
+        "systemctl",
+        ["--user", "is-active", "jin.service"],
+        { stdio: ["ignore", "pipe", "pipe"] },
       );
       const state = decode(result.stdout).trim();
       return state === "active" || state === "activating" || state === "reloading";
@@ -137,17 +147,20 @@ export function getDarwinLaunchAgentStatus(): DarwinLaunchAgentStatus | null {
   }
 
   try {
-    const uid = Bun.spawnSync(["id", "-u"], { stdout: "pipe", stderr: "pipe" });
+    const uid = spawnSync("id", ["-u"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const uidStr = decode(uid.stdout).trim();
     if (!uidStr) {
       return null;
     }
 
-    const result = Bun.spawnSync(
-      ["launchctl", "print", `gui/${uidStr}/com.jin.agent`],
-      { stdout: "pipe", stderr: "pipe" },
+    const result = spawnSync(
+      "launchctl",
+      ["print", `gui/${uidStr}/com.jin.agent`],
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
-    if (result.exitCode !== 0) {
+    if (result.status !== 0) {
       return null;
     }
 
@@ -180,11 +193,15 @@ export function getRuntimePaths(): RuntimePaths {
       ? resolve(raw.store.dbPath)
       : resolve(join(resolvedConfigDir, "store.db"));
 
+  const localEndpoint = resolveRuntimeLocalEndpoint(resolvedConfigDir);
+
   return {
     configDir: resolvedConfigDir,
     configPath: resolvedConfigPath,
     storePath,
     logPath: resolve(LOG_FILE),
+    localEndpoint,
+    socketPath: localEndpoint,
   };
 }
 
@@ -377,6 +394,7 @@ function buildOwnershipRecord(
     configDir: paths.configDir,
     storePath: paths.storePath,
     logPath: paths.logPath,
+    localEndpoint: paths.localEndpoint,
   };
 }
 
@@ -416,9 +434,10 @@ function isPidAlive(pid: number): boolean {
 function getServicePid(): number | null {
   try {
     if (process.platform === "linux") {
-      const result = Bun.spawnSync(
-        ["systemctl", "--user", "show", "jin.service", "--property", "MainPID", "--value"],
-        { stdout: "pipe", stderr: "pipe" },
+      const result = spawnSync(
+        "systemctl",
+        ["--user", "show", "jin.service", "--property", "MainPID", "--value"],
+        { stdio: ["ignore", "pipe", "pipe"] },
       );
       const pid = parseInt(decode(result.stdout).trim(), 10);
       return Number.isFinite(pid) && pid > 0 ? pid : null;
@@ -435,9 +454,8 @@ function getServicePid(): number | null {
 function inferProcessMode(pid: number): RuntimeMode {
   if (process.platform === "linux" || process.platform === "darwin") {
     try {
-      const result = Bun.spawnSync(["ps", "-o", "tty=", "-p", String(pid)], {
-        stdout: "pipe",
-        stderr: "pipe",
+      const result = spawnSync("ps", ["-o", "tty=", "-p", String(pid)], {
+        stdio: ["ignore", "pipe", "pipe"],
       });
       const tty = decode(result.stdout).trim();
       if (tty.length > 0 && tty !== "?" && tty !== "??") {
@@ -455,9 +473,8 @@ function getProcessStartedAt(pid: number): string | null {
   }
 
   try {
-    const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      stdio: ["ignore", "pipe", "pipe"],
     });
     const value = decode(result.stdout).trim();
     if (!value) {
@@ -526,7 +543,8 @@ function hasOwnerDrifted(
     previous.mode !== owner.mode ||
     previous.configDir !== owner.configDir ||
     previous.storePath !== owner.storePath ||
-    previous.logPath !== owner.logPath
+    previous.logPath !== owner.logPath ||
+    previous.localEndpoint !== owner.localEndpoint
   );
 }
 
@@ -537,7 +555,8 @@ function ownershipMatchesRuntime(
   return (
     owner.configDir === paths.configDir &&
     owner.storePath === paths.storePath &&
-    (owner.logPath ?? paths.logPath) === paths.logPath
+    (owner.logPath ?? paths.logPath) === paths.logPath &&
+    (owner.localEndpoint ?? paths.localEndpoint) === paths.localEndpoint
   );
 }
 
@@ -552,6 +571,7 @@ function parseOwnershipRecord(raw: unknown): RuntimeOwnershipRecord | null {
   const ownershipConfigDir = raw.configDir;
   const storePath = raw.storePath;
   const logPath = raw.logPath;
+  const localEndpoint = raw.localEndpoint;
 
   if (
     !pid ||
@@ -570,6 +590,7 @@ function parseOwnershipRecord(raw: unknown): RuntimeOwnershipRecord | null {
     configDir: ownershipConfigDir,
     storePath,
     ...(typeof logPath === "string" ? { logPath } : {}),
+    ...(typeof localEndpoint === "string" ? { localEndpoint } : {}),
   };
 }
 
@@ -608,6 +629,19 @@ function cleanupPidFile(): void {
   try {
     unlinkSync(PID_FILE);
   } catch {}
+}
+
+function resolveRuntimeLocalEndpoint(resolvedConfigDir: string): string {
+  if (process.platform !== "win32") {
+    return resolve(SOCKET_FILE);
+  }
+
+  const digest = createHash("sha256")
+    .update(resolvedConfigDir.toLowerCase())
+    .digest("hex")
+    .slice(0, 8);
+  const port = 37_000 + (Number.parseInt(digest, 16) % 10_000);
+  return `http://127.0.0.1:${port}`;
 }
 
 function decode(input: Uint8Array<ArrayBufferLike>): string {
