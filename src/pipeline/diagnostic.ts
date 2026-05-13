@@ -457,6 +457,10 @@ export class DiagnosticLogger {
 
 function workMeta(work: PipelineWorkItem): Record<string, unknown> {
   switch (work.kind) {
+    case "config-reload":
+      return {
+        source: work.source,
+      };
     case "ingest-adapter":
       return {
         adapterId: work.adapterId,

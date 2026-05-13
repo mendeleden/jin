@@ -34,8 +34,8 @@ export async function finalizeConfigChange(
   }
 
   if (!opts.yes) {
-    console.log("  Restart jin to apply config changes.");
-    console.log("  Re-run with `--yes` to perform a controlled restart now.");
+    console.log("  Running runtime will reload config shortly.");
+    console.log("  Re-run with `--yes` to force a full controlled restart instead.");
     return;
   }
 

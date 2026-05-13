@@ -3,12 +3,13 @@
 
 flowchart TD
     Mutate["jin sink add/remove<br/>jin route add/remove<br/>jin adapter enable/disable"] --> Validate["validate + write config.json"]
-    Validate --> RestartChoice{"apply immediately?"}
-    RestartChoice -->|No| Prompt["print restart instruction"]
-    RestartChoice -->|Yes or --yes| Restart["controlled restart<br/>stop runtime -> reload config -> start runtime"]
+    Validate --> Runtime{"runtime running?"}
+    Runtime -->|No| NextStart["applies on next start"]
+    Runtime -->|Yes| Reload["prioritized config-reload<br/>rebuild sinks/routes/adapters"]
+    Runtime -->|--yes| Restart["controlled restart<br/>stop runtime -> reload config -> start runtime"]
 
     Disable["jin sink disable <id>"] --> Durable["set sink.enabled = false in durable config"]
-    Durable --> Signal["signal runtime immediately"]
-    Signal --> Skip["pushDirty() skips that sink<br/>no full restart required"]
+    Durable --> Reload
+    Reload --> Apply["future push work uses<br/>committed config generation"]
 
-    Stop["jin stop"] --> Shutdown["emergency stop<br/>preempt queue, close watchers/timers,<br/>final bounded flush, exit"]
+    Stop["jin stop"] --> Shutdown["emergency stop<br/>preempt queue, close watchers/timers,<br/>cancel local work, exit"]

@@ -111,23 +111,10 @@ export async function runPipeline(
   let handedOffWorkItems = 0;
   const idleResolvers: Array<() => void> = [];
   let rssWarningActive = false;
+  let activeScanIntervalMs: number | null | undefined;
+  let periodicTimer: ReturnType<typeof setInterval> | null = null;
 
-  const scanIntervalMs =
-    options.scanIntervalMs === undefined
-      ? DEFAULT_SCAN_INTERVAL_MS
-      : options.scanIntervalMs;
-  const periodicTimer =
-    scanIntervalMs && scanIntervalMs > 0
-      ? setInterval(() => {
-          diag?.periodicTick();
-          enqueue({ kind: "reconcile-adapters" });
-          enqueue({
-            kind: "ingest-all",
-            hint: { kind: "periodic-scan" },
-          });
-          enqueue({ kind: "push" });
-        }, scanIntervalMs)
-      : null;
+  resetPeriodicTimer(currentScanIntervalMs());
 
   const coordinatorDone = coordinator();
 
@@ -145,6 +132,7 @@ export async function runPipeline(
 
   return {
     enqueue,
+    reloadConfig,
     waitForIdle,
     shutdown,
   };
@@ -160,6 +148,23 @@ export async function runPipeline(
       work.kind,
       work.kind === "ingest-adapter" ? work.adapterId : undefined,
     );
+    if (enqueueResult === "handed-off") {
+      handedOffWorkItems += 1;
+    }
+    resolveIdleIfNeeded();
+    return true;
+  }
+
+  function reloadConfig(source: "config-file" | "command"): boolean {
+    if (stopping) {
+      return false;
+    }
+
+    const enqueueResult = queue.enqueuePriority({
+      kind: "config-reload",
+      source,
+    });
+    diag?.queueEvent(enqueueResult, "config-reload");
     if (enqueueResult === "handed-off") {
       handedOffWorkItems += 1;
     }
@@ -208,7 +213,7 @@ export async function runPipeline(
     }
 
     await Promise.allSettled(
-      options.sinks.map(async (sink) => {
+      currentSinks().map(async (sink) => {
         try {
           await sink.close();
         } catch (error) {
@@ -240,6 +245,25 @@ export async function runPipeline(
         enforceRssBudget(`pipeline work item ${work.kind}`);
 
         switch (work.kind) {
+          case "config-reload": {
+            const t0 = performance.now();
+            await options.onConfigReload?.(work.source);
+            activeAdapters = await resolveAdapters(options.adapterSource);
+            if (watcherStarted) {
+              watcher.reconcile(activeAdapters);
+              diag?.watcherReconciled(
+                activeAdapters.map((adapter) => adapter.id),
+                deferWatcherStart,
+              );
+            }
+            resetPeriodicTimer(currentScanIntervalMs());
+            diag?.reconcileResult(
+              activeAdapters.length,
+              activeAdapters.map((adapter) => adapter.id),
+              performance.now() - t0,
+            );
+            break;
+          }
           case "reconcile-adapters": {
             const t0 = performance.now();
             activeAdapters = await resolveAdapters(options.adapterSource);
@@ -263,8 +287,8 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
-                workerIngest: options.workerIngest,
-                discoveryCache: options.discoveryCache,
+                workerIngest: currentWorkerIngest(),
+                discoveryCache: currentDiscoveryCache(),
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
                 },
@@ -308,8 +332,8 @@ export async function runPipeline(
                 reclaimBetweenAdapters: true,
                 trackChangedConversationIds: false,
                 logger,
-                workerIngest: options.workerIngest,
-                discoveryCache: options.discoveryCache,
+                workerIngest: currentWorkerIngest(),
+                discoveryCache: currentDiscoveryCache(),
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
                 },
@@ -334,11 +358,16 @@ export async function runPipeline(
           }
           case "push": {
             const t0 = performance.now();
-            const summary = await pushDirty(options.store, options.sinks, options.routes, {
-              batchSize: pushBatchSize,
-              logger,
-              diag,
-            });
+            const summary = await pushDirty(
+              options.store,
+              currentSinks(),
+              currentRoutes(),
+              {
+                batchSize: pushBatchSize,
+                logger,
+                diag,
+              },
+            );
             diag?.pushResult(summary, performance.now() - t0, summary.sinkBreakdown);
             break;
           }
@@ -353,8 +382,8 @@ export async function runPipeline(
                 loadConversationTimeoutMs,
                 trackChangedConversationIds: false,
                 logger,
-                workerIngest: options.workerIngest,
-                discoveryCache: options.discoveryCache,
+                workerIngest: currentWorkerIngest(),
+                discoveryCache: currentDiscoveryCache(),
                 onDiscoveryResult: (info) => {
                   diag?.discoveryResult(info);
                 },
@@ -368,7 +397,7 @@ export async function runPipeline(
                 },
               },
             );
-            await pushDirty(options.store, options.sinks, options.routes, {
+            await pushDirty(options.store, currentSinks(), currentRoutes(), {
               batchSize: pushBatchSize,
               logger,
               diag,
@@ -407,6 +436,72 @@ export async function runPipeline(
     enqueue({ kind: "push" });
   }
 
+  function currentSinks(): ReadonlyArray<typeof options.sinks[number]> {
+    return options.getSinks?.() ?? options.sinks;
+  }
+
+  function currentRoutes(): ReadonlyArray<typeof options.routes[number]> {
+    return options.getRoutes?.() ?? options.routes;
+  }
+
+  function currentWorkerIngest(): typeof options.workerIngest {
+    if (!options.workerIngest) {
+      return undefined;
+    }
+
+    return {
+      ...options.workerIngest,
+      adapterConfigs:
+        options.workerIngest.getAdapterConfigs?.() ??
+        options.workerIngest.adapterConfigs,
+    };
+  }
+
+  function currentDiscoveryCache(): typeof options.discoveryCache {
+    if (!options.discoveryCache) {
+      return undefined;
+    }
+
+    return {
+      ...options.discoveryCache,
+      adapterConfigs:
+        options.discoveryCache.getAdapterConfigs?.() ??
+        options.discoveryCache.adapterConfigs,
+    };
+  }
+
+  function resetPeriodicTimer(scanIntervalMs: number | null): void {
+    if (scanIntervalMs === activeScanIntervalMs) {
+      return;
+    }
+
+    if (periodicTimer) {
+      clearInterval(periodicTimer);
+      periodicTimer = null;
+    }
+
+    activeScanIntervalMs = scanIntervalMs;
+    if (scanIntervalMs === null || scanIntervalMs <= 0) {
+      return;
+    }
+
+    periodicTimer = setInterval(() => {
+      diag?.periodicTick();
+      enqueue({ kind: "reconcile-adapters" });
+      enqueue({
+        kind: "ingest-all",
+        hint: { kind: "periodic-scan" },
+      });
+      enqueue({ kind: "push" });
+    }, scanIntervalMs);
+  }
+
+  function currentScanIntervalMs(): number | null {
+    return normalizeScanIntervalMs(
+      options.getScanIntervalMs?.() ?? options.scanIntervalMs,
+    );
+  }
+
   function initiateShutdown(): void {
     if (shutdownInitiated) {
       return;
@@ -416,9 +511,7 @@ export async function runPipeline(
     stopping = true;
     watcher.close();
 
-    if (periodicTimer) {
-      clearInterval(periodicTimer);
-    }
+    resetPeriodicTimer(null);
 
     abandonedWorkItems = queue.discard(
       (item) => item.kind !== "shutdown-flush",
@@ -478,6 +571,22 @@ async function resolveAdapters(
   }
 
   return [...adapterSource];
+}
+
+function normalizeScanIntervalMs(
+  scanIntervalMs: number | null | undefined,
+): number | null {
+  if (scanIntervalMs === null) {
+    return null;
+  }
+  if (scanIntervalMs === undefined) {
+    return DEFAULT_SCAN_INTERVAL_MS;
+  }
+  if (!Number.isFinite(scanIntervalMs) || scanIntervalMs <= 0) {
+    return null;
+  }
+
+  return Math.floor(scanIntervalMs);
 }
 
 function normalizeBatchSize(

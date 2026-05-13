@@ -435,7 +435,7 @@ async function persistSinkControlChange(
   }
 
   if (runtimeUpdated) {
-    console.log("  Updated the active runtime without a full restart.");
+    console.log("  Active runtime status updated; config reload will apply shortly.");
   } else {
     console.log("  Change saved; it will apply on the next start.");
   }
