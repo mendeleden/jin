@@ -2,7 +2,7 @@ import {
   configDir,
   configPath,
   discoveryCachePath,
-  loadConfig,
+  loadRuntimeConfigGeneration,
   loadStartupConfig,
   resolveAdapterConfig,
   type JinConfig,
@@ -10,6 +10,7 @@ import {
 import type { Adapter as V2Adapter } from "../contracts/adapters";
 import type { Sink as V2Sink } from "../contracts/sinks";
 import { allAdapters, protectedSourceStartupNotices, startupProbeBlocked } from "../adapters/registry";
+import { createLocalControlBoundary } from "../api/control";
 import { startLocalApiServer, type LocalApiServer } from "../api/server";
 import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
@@ -140,6 +141,9 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   try {
     apiServer = startLocalApiServer({
       queryStore: store,
+      controlBoundary: createLocalControlBoundary({
+        requestConfigReload: () => pipelineHandle.reloadConfig("command"),
+      }),
       socketPath: runtimePaths.socketPath,
     });
   } catch (error) {
@@ -187,6 +191,7 @@ async function startPipeline(
       getSinks: () => currentSinks,
       getRoutes: () => currentConfig.routes,
       getScanIntervalMs: () => currentConfig.watch.pollIntervalMs,
+      shouldContinueSinkPush: (sinkId) => diskConfigAllowsSinkPush(sinkId, log),
       scanIntervalMs: currentConfig.watch.pollIntervalMs,
       watchDebounceMs: currentConfig.watch.debounceMs,
       // Runtime push batches stay tiny so the live Codex workload can drain
@@ -202,11 +207,12 @@ async function startPipeline(
           log,
         });
         if (!next) {
-          return;
+          return false;
         }
 
         currentConfig = next.config;
         currentSinks = next.sinks;
+        return true;
       },
       workerIngest: {
         command: resolveSelfCommand(),
@@ -510,7 +516,7 @@ async function reloadRuntimeConfig(
   },
 ): Promise<{ config: JinConfig; sinks: V2Sink[] } | null> {
   try {
-    const nextConfig = await loadConfig();
+    const nextConfig = await loadRuntimeConfigGeneration();
     if (JSON.stringify(nextConfig) === JSON.stringify(currentConfig)) {
       options.log("Config file changed, but the runtime view is unchanged.");
       return {
@@ -535,6 +541,22 @@ async function reloadRuntimeConfig(
     options.log(`ERROR: Config reload failed; stopping runtime. ${formatError(error)}`);
     requestSelfShutdown();
     return null;
+  }
+}
+
+async function diskConfigAllowsSinkPush(
+  sinkId: string,
+  log: RuntimeLog,
+): Promise<boolean> {
+  try {
+    const nextConfig = await loadRuntimeConfigGeneration();
+    const sinkConfig = nextConfig.sinks.find((sink) => sink.id === sinkId);
+    return sinkConfig?.enabled !== false;
+  } catch (error) {
+    log(
+      `WARNING: Stopping push while current config cannot be validated: ${formatError(error)}`,
+    );
+    return false;
   }
 }
 

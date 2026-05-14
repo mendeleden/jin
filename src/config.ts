@@ -249,6 +249,19 @@ export async function loadConfig(): Promise<JinConfig> {
   return normalizeConfig(JSON.parse(raw));
 }
 
+export async function loadRuntimeConfigGeneration(): Promise<JinConfig> {
+  ensureConfigDir();
+  const cfgPath = configPath();
+  if (!existsSync(cfgPath)) {
+    return defaultConfig();
+  }
+
+  const rawText = await Bun.file(cfgPath).text();
+  const raw = JSON.parse(rawText);
+  assertValidRuntimeConfigGeneration(raw);
+  return normalizeConfig(raw);
+}
+
 export async function loadStartupConfig(): Promise<JinConfig> {
   return withConfigLock(async () => {
     ensureConfigDir();
@@ -262,6 +275,7 @@ export async function loadStartupConfig(): Promise<JinConfig> {
     const rawText = await Bun.file(cfgPath).text();
     const raw = JSON.parse(rawText);
     const materialized = materializeConfigShape(raw);
+    assertValidRuntimeConfigGeneration(materialized.value);
     if (materialized.changed) {
       await writeConfigFile(materialized.value, { normalize: false });
     }
@@ -283,7 +297,7 @@ export async function updateConfig<T>(
   } = {},
 ): Promise<{ config: JinConfig; result: T; saved: boolean }> {
   return withConfigLock(async () => {
-    const config = await loadConfig();
+    const config = await loadRuntimeConfigGeneration();
     const result = await mutate(config);
     const shouldSave = opts.shouldSave?.(result, config) ?? true;
     if (shouldSave) {
@@ -616,6 +630,183 @@ function normalizeSinkConfig(raw: unknown): SinkConfig | null {
   }
 }
 
+function assertValidRuntimeConfigGeneration(raw: unknown): void {
+  if (!isRecord(raw)) {
+    throw new Error("config root must be an object");
+  }
+
+  assertValidAdaptersSection(raw.adapters);
+  assertValidSinksSection(raw.sinks);
+  assertValidRoutesSection(raw.routes);
+  assertValidWatchSection(raw.watch);
+}
+
+function assertValidAdaptersSection(raw: unknown): void {
+  if (raw === undefined) {
+    return;
+  }
+  if (!isRecord(raw)) {
+    throw new Error("config.adapters must be an object");
+  }
+
+  for (const [adapterId, value] of Object.entries(raw)) {
+    if (!isRecord(value)) {
+      throw new Error(`config.adapters.${adapterId} must be an object`);
+    }
+    if ("enabled" in value && typeof value.enabled !== "boolean") {
+      throw new Error(`config.adapters.${adapterId}.enabled must be a boolean`);
+    }
+    if (
+      "allowProtectedSource" in value &&
+      typeof value.allowProtectedSource !== "boolean"
+    ) {
+      throw new Error(
+        `config.adapters.${adapterId}.allowProtectedSource must be a boolean`,
+      );
+    }
+    if ("dataDir" in value && asNonEmptyString(value.dataDir) === undefined) {
+      throw new Error(`config.adapters.${adapterId}.dataDir must be a non-empty string`);
+    }
+  }
+}
+
+function assertValidSinksSection(raw: unknown): void {
+  if (raw === undefined) {
+    return;
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error("config.sinks must be an array");
+  }
+
+  raw.forEach((value, index) => assertValidSinkConfig(value, index));
+}
+
+function assertValidSinkConfig(raw: unknown, index: number): void {
+  const path = `config.sinks[${index}]`;
+  if (!isRecord(raw)) {
+    throw new Error(`${path} must be an object`);
+  }
+
+  const id = asNonEmptyString(raw.id);
+  if (!id) {
+    throw new Error(`${path}.id must be a non-empty string`);
+  }
+
+  const type = asSinkType(raw.type);
+  if (!type) {
+    throw new Error(`${path}.type must be one of ${SINK_TYPES.join(", ")}`);
+  }
+
+  assertOptionalBoolean(raw.enabled, `${path}.enabled`);
+  assertOptionalNonEmptyString(raw.teamId, `${path}.teamId`);
+  assertOptionalNonEmptyString(raw.userId, `${path}.userId`);
+
+  switch (type) {
+    case "postgres":
+      assertRequiredNonEmptyString(raw.connectionString, `${path}.connectionString`);
+      return;
+    case "s3":
+      assertRequiredNonEmptyString(raw.bucket, `${path}.bucket`);
+      assertRequiredNonEmptyString(raw.accessKeyId, `${path}.accessKeyId`);
+      assertRequiredNonEmptyString(raw.secretAccessKey, `${path}.secretAccessKey`);
+      assertOptionalNonEmptyString(raw.region, `${path}.region`);
+      assertOptionalNonEmptyString(raw.endpoint, `${path}.endpoint`);
+      assertOptionalNonEmptyString(raw.prefix, `${path}.prefix`);
+      assertOptionalBoolean(raw.pathStyle, `${path}.pathStyle`);
+      return;
+    case "webhook":
+      assertRequiredNonEmptyString(raw.url, `${path}.url`);
+      assertOptionalPositiveInteger(raw.timeoutMs, `${path}.timeoutMs`);
+      assertOptionalStringRecord(raw.headers, `${path}.headers`);
+      return;
+  }
+}
+
+function assertValidRoutesSection(raw: unknown): void {
+  if (raw === undefined) {
+    return;
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error("config.routes must be an array");
+  }
+
+  raw.forEach((value, index) => {
+    const path = `config.routes[${index}]`;
+    if (!isRecord(value)) {
+      throw new Error(`${path} must be an object`);
+    }
+    if (!isRecord(value.match)) {
+      throw new Error(`${path}.match must be an object`);
+    }
+    for (const key of ["remote", "adapter", "branch", "name"] as const) {
+      assertOptionalString(value.match[key], `${path}.match.${key}`);
+    }
+    if (!Array.isArray(value.sinks)) {
+      throw new Error(`${path}.sinks must be an array`);
+    }
+    value.sinks.forEach((sinkId, sinkIndex) => {
+      if (asNonEmptyString(sinkId) === undefined) {
+        throw new Error(`${path}.sinks[${sinkIndex}] must be a non-empty string`);
+      }
+    });
+  });
+}
+
+function assertValidWatchSection(raw: unknown): void {
+  if (raw === undefined) {
+    return;
+  }
+  if (!isRecord(raw)) {
+    throw new Error("config.watch must be an object");
+  }
+  assertOptionalPositiveInteger(raw.pollIntervalMs, "config.watch.pollIntervalMs");
+  assertOptionalPositiveInteger(raw.debounceMs, "config.watch.debounceMs");
+}
+
+function assertRequiredNonEmptyString(value: unknown, path: string): void {
+  if (asNonEmptyString(value) === undefined) {
+    throw new Error(`${path} must be a non-empty string`);
+  }
+}
+
+function assertOptionalNonEmptyString(value: unknown, path: string): void {
+  if (value !== undefined) {
+    assertRequiredNonEmptyString(value, path);
+  }
+}
+
+function assertOptionalString(value: unknown, path: string): void {
+  if (value !== undefined && typeof value !== "string") {
+    throw new Error(`${path} must be a string`);
+  }
+}
+
+function assertOptionalBoolean(value: unknown, path: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${path} must be a boolean`);
+  }
+}
+
+function assertOptionalPositiveInteger(value: unknown, path: string): void {
+  if (value !== undefined && asPositiveInteger(value) === undefined) {
+    throw new Error(`${path} must be a positive integer`);
+  }
+}
+
+function assertOptionalStringRecord(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  for (const [key, entryValue] of Object.entries(value)) {
+    if (typeof entryValue !== "string") {
+      throw new Error(`${path}.${key} must be a string`);
+    }
+  }
+}
+
 function normalizeRoutes(raw: unknown): RouteConfig[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -686,57 +877,74 @@ function resolveSinkUserId(raw: Record<string, unknown>): string | undefined {
 }
 
 function materializeConfigShape(raw: unknown): {
-  value: JinConfig | Record<string, unknown>;
+  value: unknown;
   changed: boolean;
 } {
   const base = defaultConfig();
   if (!isRecord(raw)) {
-    return { value: base, changed: true };
+    return { value: raw, changed: false };
   }
 
   const next: Record<string, unknown> = structuredClone(raw);
   let changed = false;
 
-  const materializedAdapters = materializeAdaptersSection(next.adapters, base.adapters);
-  if (materializedAdapters.changed) {
-    next.adapters = materializedAdapters.value;
+  if (next.adapters === undefined) {
+    next.adapters = structuredClone(base.adapters);
     changed = true;
+  } else if (isRecord(next.adapters)) {
+    const materializedAdapters = materializeAdaptersSection(
+      next.adapters,
+      base.adapters,
+    );
+    if (materializedAdapters.changed) {
+      next.adapters = materializedAdapters.value;
+      changed = true;
+    }
   }
 
-  if (!Array.isArray(next.sinks)) {
+  if (next.sinks === undefined) {
     next.sinks = [];
     changed = true;
   }
 
-  if (!Array.isArray(next.routes)) {
+  if (next.routes === undefined) {
     next.routes = [];
     changed = true;
   }
 
-  const materializedWatch = materializeWatchSection(next.watch, base.watch);
-  if (materializedWatch.changed) {
-    next.watch = materializedWatch.value;
+  if (next.watch === undefined) {
+    next.watch = { ...base.watch };
     changed = true;
+  } else if (isRecord(next.watch)) {
+    const materializedWatch = materializeWatchSection(next.watch, base.watch);
+    if (materializedWatch.changed) {
+      next.watch = materializedWatch.value;
+      changed = true;
+    }
   }
 
   return { value: next, changed };
 }
 
 function materializeAdaptersSection(
-  raw: unknown,
+  raw: Record<string, unknown>,
   fallback: Record<string, AdapterConfig>,
 ): {
   value: Record<string, unknown>;
   changed: boolean;
 } {
-  const next = isRecord(raw) ? structuredClone(raw) : {};
-  let changed = !isRecord(raw);
+  const next = structuredClone(raw);
+  let changed = false;
 
   for (const [adapterId, defaultAdapter] of Object.entries(fallback)) {
     const existing = next[adapterId];
-    if (!isRecord(existing)) {
+    if (existing === undefined) {
       next[adapterId] = { ...defaultAdapter };
       changed = true;
+      continue;
+    }
+
+    if (!isRecord(existing)) {
       continue;
     }
 
@@ -751,23 +959,16 @@ function materializeAdaptersSection(
 }
 
 function materializeWatchSection(
-  raw: unknown,
+  raw: Record<string, unknown>,
   fallback: WatchConfig,
 ): {
   value: Record<string, unknown>;
   changed: boolean;
 } {
-  if (!isRecord(raw)) {
-    return {
-      value: { ...fallback },
-      changed: true,
-    };
-  }
-
   const next = structuredClone(raw);
   let changed = false;
 
-  if (asPositiveInteger(next.pollIntervalMs) === undefined) {
+  if (next.pollIntervalMs === undefined) {
     next.pollIntervalMs = fallback.pollIntervalMs;
     changed = true;
   }

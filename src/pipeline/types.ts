@@ -10,7 +10,7 @@ export type PipelineWorkItem =
   | { kind: "ingest-all"; hint: ChangeHint }
   | { kind: "ingest-adapter"; adapterId: string; hint: ChangeHint }
   | { kind: "push" }
-  | { kind: "shutdown-flush" };
+  | { kind: "shutdown-flush"; flush?: boolean };
 
 export type QueueablePipelineWorkItem = Exclude<
   PipelineWorkItem,
@@ -82,7 +82,10 @@ export interface RunPipelineOptions {
   diagnosticLogPath?: string;
   onConfigReload?: (
     source: "config-file" | "command",
-  ) => void | Promise<void>;
+  ) => boolean | void | Promise<boolean | void>;
+  shouldContinueSinkPush?: (
+    sinkId: string,
+  ) => boolean | Promise<boolean>;
   workerIngest?: {
     command: string[];
     adapterConfigs: Record<string, AdapterConfig>;

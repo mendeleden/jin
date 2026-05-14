@@ -26,10 +26,22 @@ export type LocalControlHealthStatus = DesktopHealthStatus;
 export type LocalControlComponentDto = DesktopControlComponent;
 export type LocalControlStatusDto = DesktopControlStatus;
 export type LocalControlActionResultDto = DesktopControlActionResult;
+export type LocalConfigReloadSource = "command";
+
+export interface LocalConfigReloadResultDto {
+  action: "config-reload";
+  ok: boolean;
+  accepted: boolean;
+  source: LocalConfigReloadSource;
+  message: string;
+}
 
 export interface LocalControlBoundary {
   getStatus(): LocalControlStatusDto;
   runAction(action: LocalControlAction): Promise<LocalControlActionResultDto>;
+  reloadConfig?(
+    source?: LocalConfigReloadSource,
+  ): Promise<LocalConfigReloadResultDto>;
 }
 
 export interface LocalControlBoundaryOptions {
@@ -37,6 +49,9 @@ export interface LocalControlBoundaryOptions {
     action: LocalControlAction,
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   getStatus?: () => LocalControlStatusDto;
+  requestConfigReload?: (
+    source: LocalConfigReloadSource,
+  ) => boolean | Promise<boolean>;
 }
 
 export interface LifecycleCommandOptions {
@@ -53,6 +68,7 @@ export function createLocalControlBoundary(
 ): LocalControlBoundary {
   const executeAction = options.executeAction ?? executeLifecycleAction;
   const getStatus = options.getStatus ?? getLocalControlStatus;
+  const requestConfigReload = options.requestConfigReload;
 
   return {
     getStatus,
@@ -65,6 +81,38 @@ export function createLocalControlBoundary(
         stdout: result.stdout.trim(),
         stderr: result.stderr.trim(),
         status: getStatus(),
+      };
+    },
+    async reloadConfig(source = "command") {
+      if (!requestConfigReload) {
+        return {
+          action: "config-reload",
+          ok: false,
+          accepted: false,
+          source,
+          message:
+            "Config reload is unavailable because the local control boundary is not attached to a running pipeline.",
+        };
+      }
+
+      const accepted = await requestConfigReload(source);
+      if (!accepted) {
+        return {
+          action: "config-reload",
+          ok: false,
+          accepted: false,
+          source,
+          message:
+            "Config reload was not accepted because the runtime is stopping.",
+        };
+      }
+
+      return {
+        action: "config-reload",
+        ok: true,
+        accepted: true,
+        source,
+        message: "Config reload accepted.",
       };
     },
   };

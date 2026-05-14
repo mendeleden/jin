@@ -31,6 +31,9 @@ const {
   getLocalControlStatus,
 } = await import("../src/api/control");
 const { createRoutes, matchRoute } = await import("../src/api/routes");
+const { startLocalApiServer } = await import("../src/api/server");
+const { DESKTOP_AUTH_HEADER } = await import("../src/api/auth");
+const { requestDaemonConfigReload } = await import("../src/api/client");
 
 function makeOwner(mode: "daemon" | "service" | "foreground", pid = 515) {
   return {
@@ -206,6 +209,118 @@ describe("local control boundary", () => {
 
     expect(restartResponse.status).toBe(200);
     expect(actionCalls).toEqual(["start", "restart"]);
+  });
+
+  test("config reload route delegates to the attached pipeline reload callback", async () => {
+    const reloadCalls: string[] = [];
+    const routes = createRoutes({
+      queryStore: fakeQueryStore as any,
+      controlBoundary: createLocalControlBoundary({
+        requestConfigReload: (source) => {
+          reloadCalls.push(source);
+          return true;
+        },
+      }),
+    });
+
+    const route = matchRoute(routes, "POST", "/api/control/config/reload");
+    expect(route).not.toBeNull();
+
+    const response = await route!.handler(
+      new Request("http://localhost/api/control/config/reload", {
+        method: "POST",
+      }),
+      route!.params,
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(payload.accepted).toBe(true);
+    expect(payload.message).toBe("Config reload accepted.");
+    expect(reloadCalls).toEqual(["command"]);
+  });
+
+  test("config reload route rejects unauthenticated local API requests", async () => {
+    const reloadCalls: string[] = [];
+    const serveCalls: Array<{
+      fetch: (request: Request) => Promise<Response>;
+    }> = [];
+    const server = startLocalApiServer({
+      authToken: "reload-test-token",
+      platform: "darwin",
+      queryStore: fakeQueryStore as any,
+      socketPath: "/tmp/jin-local-control-boundary.sock",
+      controlBoundary: createLocalControlBoundary({
+        requestConfigReload: (source) => {
+          reloadCalls.push(source);
+          return true;
+        },
+      }),
+      serve: (options) => {
+        serveCalls.push({ fetch: options.fetch });
+        return { stop() {} };
+      },
+    });
+
+    const unauthorizedResponse = await serveCalls[0].fetch(
+      new Request("http://localhost/api/control/config/reload", {
+        method: "POST",
+      }),
+    );
+    expect(unauthorizedResponse.status).toBe(401);
+    expect(reloadCalls).toEqual([]);
+
+    const authorizedResponse = await serveCalls[0].fetch(
+      new Request("http://localhost/api/control/config/reload", {
+        method: "POST",
+        headers: { [DESKTOP_AUTH_HEADER]: "reload-test-token" },
+      }),
+    );
+    const authorizedPayload = await authorizedResponse.json();
+
+    expect(authorizedResponse.status).toBe(202);
+    expect(authorizedPayload.accepted).toBe(true);
+    expect(reloadCalls).toEqual(["command"]);
+
+    server?.stop();
+  });
+
+  test("config reload client posts to the authenticated local Unix socket endpoint", async () => {
+    const requests: Array<{ input: unknown; init: RequestInit & { unix?: string } }> = [];
+
+    const result = await requestDaemonConfigReload({
+      endpoint: "/tmp/jin-reload.sock",
+      token: "client-test-token",
+      timeoutMs: 500,
+      fetch: async (input, init) => {
+        requests.push({
+          input,
+          init: init as RequestInit & { unix?: string },
+        });
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            message: "Config reload accepted.",
+          }),
+          { status: 202 },
+        );
+      },
+    });
+
+    expect(result).toEqual({
+      status: "accepted",
+      statusCode: 202,
+      message: "Config reload accepted.",
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].input).toBe(
+      "http://localhost/api/control/config/reload",
+    );
+    expect(requests[0].init.method).toBe("POST");
+    expect(requests[0].init.unix).toBe("/tmp/jin-reload.sock");
+    expect(
+      new Headers(requests[0].init.headers).get(DESKTOP_AUTH_HEADER),
+    ).toBe("client-test-token");
   });
 
   test("packaged Desktop lifecycle actions resolve the installed jin CLI from PATH", () => {

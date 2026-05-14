@@ -113,6 +113,7 @@ export async function runPipeline(
   let rssWarningActive = false;
   let activeScanIntervalMs: number | null | undefined;
   let periodicTimer: ReturnType<typeof setInterval> | null = null;
+  let skipShutdownFlush = false;
 
   resetPeriodicTimer(currentScanIntervalMs());
 
@@ -247,7 +248,12 @@ export async function runPipeline(
         switch (work.kind) {
           case "config-reload": {
             const t0 = performance.now();
-            await options.onConfigReload?.(work.source);
+            const reloadResult = await options.onConfigReload?.(work.source);
+            if (reloadResult === false) {
+              skipShutdownFlush = true;
+              shouldStop = true;
+              break;
+            }
             activeAdapters = await resolveAdapters(options.adapterSource);
             if (watcherStarted) {
               watcher.reconcile(activeAdapters);
@@ -366,12 +372,18 @@ export async function runPipeline(
                 batchSize: pushBatchSize,
                 logger,
                 diag,
+                shouldContinueSinkPush: options.shouldContinueSinkPush,
               },
             );
             diag?.pushResult(summary, performance.now() - t0, summary.sinkBreakdown);
             break;
           }
           case "shutdown-flush": {
+            if (work.flush === false) {
+              shouldStop = true;
+              break;
+            }
+
             await ingestAll(
               activeAdapters,
               options.store,
@@ -401,6 +413,7 @@ export async function runPipeline(
               batchSize: pushBatchSize,
               logger,
               diag,
+              shouldContinueSinkPush: options.shouldContinueSinkPush,
             });
             shouldStop = true;
             break;
@@ -514,9 +527,11 @@ export async function runPipeline(
     resetPeriodicTimer(null);
 
     abandonedWorkItems = queue.discard(
-      (item) => item.kind !== "shutdown-flush",
+      skipShutdownFlush
+        ? () => true
+        : (item) => item.kind !== "shutdown-flush",
     );
-    queue.enqueue({ kind: "shutdown-flush" });
+    queue.enqueue({ kind: "shutdown-flush", flush: !skipShutdownFlush });
     diag?.queueEvent("queued", "shutdown-flush");
   }
 

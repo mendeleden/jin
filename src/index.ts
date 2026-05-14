@@ -237,8 +237,8 @@ const COMMAND_HELP: Record<string, string> = {
   USAGE
     jin sink add <type> [flags]
     jin sink remove <id> [--yes]
-    jin sink disable <id>
-    jin sink enable <id>
+    jin sink disable <id> [--yes]
+    jin sink enable <id> [--yes]
     jin sink repush <id>
 
   EXAMPLES
@@ -251,8 +251,8 @@ const COMMAND_HELP: Record<string, string> = {
   Manage low-level routing rules for local conversations
 
   USAGE
-    jin route add --sink=<id> [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>]
-    jin route remove [--sink=<id>] [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>]
+    jin route add --sink=<id> [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--yes]
+    jin route remove [--sink=<id>] [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--yes]
 
   EXAMPLES
     $ jin route add --remote="github.com/acme/*" --sink=team-postgres
@@ -535,17 +535,17 @@ async function main(): Promise<void> {
           break;
         case "disable":
           if (!sinkId || sinkId.startsWith("--")) {
-            console.error("Usage: jin sink disable <sink-id>");
+            console.error("Usage: jin sink disable <sink-id> [--yes]");
             process.exit(1);
           }
-          await sinkDisableCommand(sinkId);
+          await sinkDisableCommand(sinkId, { yes: !!flags.yes });
           break;
         case "enable":
           if (!sinkId || sinkId.startsWith("--")) {
-            console.error("Usage: jin sink enable <sink-id>");
+            console.error("Usage: jin sink enable <sink-id> [--yes]");
             process.exit(1);
           }
-          await sinkEnableCommand(sinkId);
+          await sinkEnableCommand(sinkId, { yes: !!flags.yes });
           break;
         case "repush":
           if (!sinkId || sinkId.startsWith("--")) {

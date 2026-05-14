@@ -88,6 +88,18 @@ export function createRoutes(
     return json(result, result.ok ? 200 : 409);
   });
 
+  routes.set("POST /api/control/config/reload", async () => {
+    if (!controlBoundary.reloadConfig) {
+      return json(
+        { error: "Config reload is not available for this runtime." },
+        409,
+      );
+    }
+
+    const result = await controlBoundary.reloadConfig("command");
+    return json(result, result.accepted ? 202 : 409);
+  });
+
   routes.set("GET /api/desktop/compatibility", () => {
     return json(buildDesktopCompatibilityInfo());
   });

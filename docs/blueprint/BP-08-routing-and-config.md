@@ -237,10 +237,15 @@ Why sink-scoped instead of top-level:
 - Later changes are applied through a prioritized `config-reload` control work
   item
 - The daemon may observe config changes from:
-  - config-mutating Jin commands that write durable config
+  - config-mutating Jin commands that write durable config and then request a
+    daemon-owned local control reload
   - a best-effort filesystem watcher on `config.json` for manual edits
 - first-party config-mutating commands must publish config atomically via
   durable replace semantics
+- first-party config-mutating commands must treat the daemon reload response as
+  an acceptance signal, not proof that the new generation has finished applying
+- if the daemon reload notification fails after a durable write, the command
+  must warn and leave the filesystem watcher / restart path as recovery
 - if a running daemon observes an invalid next config generation, it must stop
   and report the config error rather than continue serving the prior generation
 

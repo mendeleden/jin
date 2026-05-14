@@ -12,6 +12,9 @@ export interface PushOptions {
   diag?: DiagnosticLogger | null;
   reason?: DiagnosticPushReason;
   sampleIntervalMs?: number;
+  shouldContinueSinkPush?: (
+    sinkId: string,
+  ) => boolean | Promise<boolean>;
 }
 
 const NOOP_LOGGER: PipelineLogger = {
@@ -91,6 +94,15 @@ export async function pushDirty(
       start < routedConversationIds.length;
       start += batchSize, batchIndex += 1
     ) {
+      if (!(await shouldContinueSinkPush(sink.id, options, logger))) {
+        const remainingConversations = routedConversationIds.length - start;
+        sinkSkipped += remainingConversations;
+        logger.warn(
+          `Stopping push for disabled sink ${sink.id}; ${remainingConversations} conversation${remainingConversations === 1 ? "" : "s"} remain queued.`,
+        );
+        break;
+      }
+
       const batchConversationIds = routedConversationIds.slice(
         start,
         start + batchSize,
@@ -386,6 +398,25 @@ function errorToMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+async function shouldContinueSinkPush(
+  sinkId: string,
+  options: PushOptions,
+  logger: PipelineLogger,
+): Promise<boolean> {
+  if (!options.shouldContinueSinkPush) {
+    return true;
+  }
+
+  try {
+    return (await options.shouldContinueSinkPush(sinkId)) !== false;
+  } catch (error) {
+    logger.warn(
+      `Stopping push for sink ${sinkId}; current config state could not be verified: ${errorToMessage(error)}`,
+    );
+    return false;
+  }
 }
 
 function isSinkEnabled(sink: Sink): boolean {

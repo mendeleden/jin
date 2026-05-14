@@ -23,10 +23,7 @@ import { DiagnosticLogger } from "../pipeline/diagnostic";
 import { pushDirty } from "../pipeline/push";
 import type { PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
-import {
-  applySinkPauseControl,
-  finalizeConfigChange,
-} from "./config-control";
+import { finalizeConfigChange } from "./config-control";
 import { join } from "path";
 
 export interface SinkCommandOptions {
@@ -119,12 +116,18 @@ export async function sinkRemoveCommand(
   });
 }
 
-export async function sinkDisableCommand(sinkId: string): Promise<void> {
-  await setSinkEnabled(sinkId, false);
+export async function sinkDisableCommand(
+  sinkId: string,
+  opts: { yes?: boolean } = {},
+): Promise<void> {
+  await setSinkEnabled(sinkId, false, opts);
 }
 
-export async function sinkEnableCommand(sinkId: string): Promise<void> {
-  await setSinkEnabled(sinkId, true);
+export async function sinkEnableCommand(
+  sinkId: string,
+  opts: { yes?: boolean } = {},
+): Promise<void> {
+  await setSinkEnabled(sinkId, true, opts);
 }
 
 export async function sinkRepushCommand(sinkId: string): Promise<void> {
@@ -381,7 +384,11 @@ async function validateSink(sinkConfig: SinkConfig, index: number): Promise<void
   }
 }
 
-async function setSinkEnabled(sinkId: string, enabled: boolean): Promise<void> {
+async function setSinkEnabled(
+  sinkId: string,
+  enabled: boolean,
+  opts: { yes?: boolean } = {},
+): Promise<void> {
   if (!sinkId) {
     fail("specify a sink id");
   }
@@ -420,25 +427,18 @@ async function setSinkEnabled(sinkId: string, enabled: boolean): Promise<void> {
     return;
   }
 
-  await persistSinkControlChange(sinkId, enabled);
+  await persistSinkControlChange(sinkId, enabled, opts);
 }
 
 async function persistSinkControlChange(
   sinkId: string,
   enabled: boolean,
+  opts: { yes?: boolean },
 ): Promise<void> {
-  const runtimeUpdated = applySinkPauseControl(sinkId, !enabled);
-  if (enabled) {
-    console.log(`  Sink ${sinkId} enabled.`);
-  } else {
-    console.log(`  Sink ${sinkId} disabled.`);
-  }
-
-  if (runtimeUpdated) {
-    console.log("  Active runtime status updated; config reload will apply shortly.");
-  } else {
-    console.log("  Change saved; it will apply on the next start.");
-  }
+  await finalizeConfigChange({
+    yes: opts.yes,
+    changeSummary: `Sink ${sinkId} ${enabled ? "enabled" : "disabled"}`,
+  });
 }
 
 function createSinkCommandLogger(): PipelineLogger {

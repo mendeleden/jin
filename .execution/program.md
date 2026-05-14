@@ -1,73 +1,60 @@
-# Program State
+# Jin Execution Program
 
-- phase: `release recovery`
-- current date: `2026-04-29`
-- current focus: `prune stale live-control artifacts, finish W3-CLEANUP-02, then harden release gates in W3-VALIDATE-02`
+Updated: 2026-05-13
+Branch: `fix/config-mutation-boundary-19`
+Focus: Config mutation boundary hardening after Desktop daemon IPC review.
 
-## TL;DR
+## Current Thesis
+
+Config-mutating CLI commands should not rely on indirect file watching as their primary apply path. They should write durable config, then ask the single running daemon to reload through the local API/socket boundary. File watching remains a compatibility and manual-edit fallback.
+
+## Active Packets
+
+| Packet | Status | Owner | Purpose |
+| --- | --- | --- | --- |
+| W4-CONFIG-01 | approved | worker | Daemon local API route for config reload and command-side notification |
+| W4-CONFIG-02 | queued | worker | Immutable reload/queue status snapshots for CLI and Desktop |
+
+## Dependency Graph
 
 ```mermaid
-flowchart LR
-  Cleanup02["W3-CLEANUP-02<br/>approved<br/>legacy CI cleanup landed"]
-  Validate02["W3-VALIDATE-02<br/>in_progress<br/>release-gate hardening"]
-  MainCI["main CI<br/>currently red"]
-  Release["v0.8.12 retag/release"]
+flowchart TD
+  BP07[BP-07 Process Lifecycle]
+  BP08[BP-08 Routing and Config]
+  ReloadPipeline[Current branch config-reload pipeline]
+  W4C01[W4-CONFIG-01 Daemon reload control]
+  W4C02[W4-CONFIG-02 Runtime reload and queue status]
+  Desktop[Desktop daemon IPC]
+  CLI[Config-mutating CLI commands]
 
-  Cleanup02 --> MainCI
-  Cleanup02 --> Validate02
-  Validate02 --> MainCI
-  MainCI --> Release
+  BP07 --> W4C01
+  BP08 --> W4C01
+  ReloadPipeline --> W4C01
+  W4C01 --> CLI
+  W4C01 --> W4C02
+  BP07 --> W4C02
+  BP08 --> W4C02
+  W4C02 --> Desktop
+  W4C02 --> CLI
 ```
 
-## Packet State
+## Coordination Rules
 
-- archived packet state: `.execution/archive/packets/`
-- live packets:
-  - `W3-CLEANUP-02` — `approved`
-  - `W3-VALIDATE-02` — `in_progress`
-  - `W3-SINK-04` — `needs_codex`
-  - `W3-E2E-01` — `review_ready`
-  - `W3-SERVICE-01` — `blocked`
-  - `W3-PR-01` — `blocked`
-- historical nonterminal packet files from the old Wave 3 rollout remain in
-  `.execution/packets/` for now and should be normalized or archived in a
-  second pass:
-  - `W3-ADAPTER-08`
-  - `W3-DOCS-01`
-  - `W3-PERF-04`
-  - `W3-PERF-07`
-  - `W3-PERF-09`
-  - `W3-PERF-10`
-  - `W3-PERF-11`
-  - `W3-SINK-05`
-  - `W3-UI-01`
+- W4-CONFIG-01 owns command apply and daemon reload route behavior.
+- W4-CONFIG-02 owns status DTOs and runtime queue/reload visibility.
+- Do not change Desktop renderer code in either packet.
+- Stop and update BP-07/BP-08 before implementing any contract extension that conflicts with frozen blueprint language.
 
-## Active Agents
+## Latest Status
 
-- `codex-BRAIN`
-- `codex-WORKER-release-gate-hardening`
+- W4-CONFIG-01 implementation is complete, focused validation is green, and BP/code rechecks passed.
+- Resolved review findings: sink enable/disable no longer mutates runtime pause state directly, config mutations cross the local daemon reload boundary, startup/reload strict validation rejects malformed generations, fatal reload shutdown skips stale final-flush, active sink-disable checks at push batch boundaries, and route/sink help includes `--yes` parity.
+- W4-CONFIG-02 should land after W4-CONFIG-01 so status can preserve the accepted-vs-completed distinction.
+- Huygens completed read-only design review for W4-CONFIG-02; recommended queue/reload snapshot fields were copied into the packet.
 
-Archived historical heartbeats live under:
+## Exit Criteria
 
-- `.execution/archive/agents/`
-
-## Next Dispatches
-
-- drive `W3-VALIDATE-02` to review-ready from the cleaned baseline
-- reconcile `W3-SINK-04` once release-path CI noise is gone
-- retag/release only after `main` CI is green again
-
-## Blockers
-
-- `main` CI is red on stale legacy release/unit surfaces
-- release `v0.8.12` must not be tagged until cleanup + validation hardening land
-- `.execution/blueprints.md` still reflects pre-merge `W3-SINK-06` / `W3-TEAM-03`
-  state and needs a separate reviewer-owned refresh
-
-## Notes
-
-- terminal packet-state files were archived to `.execution/archive/packets/`
-- stale tmp diagrams were moved to `docs/execution/archive/tmp-diagram/`
-- `docs/execution/tasks/` and `docs/execution/prompts/` were intentionally left
-  in place for now because they are still referenced by historical audits and
-  reviews; archive/migration of those docs should be a separate pass
+- Packets and prompts exist for both lanes.
+- W4-CONFIG-01 has implementation, tests, and review.
+- W4-CONFIG-02 has implementation or an approved narrowed follow-up if status shape requires council review.
+- `bun run typecheck` and focused tests pass.

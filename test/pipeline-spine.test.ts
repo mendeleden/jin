@@ -314,6 +314,79 @@ describe("pipeline spine", () => {
     }
   });
 
+  test("stops remaining local push batches when sink config is disabled mid-push", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    store.writeBundle(makeBundle("alpha-2", "alpha"));
+    store.writeBundle(makeBundle("alpha-3", "alpha"));
+    let continueChecks = 0;
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      pushBatchSize: 1,
+      shouldContinueSinkPush: (sinkId) => {
+        expect(sinkId).toBe("primary");
+        continueChecks += 1;
+        return continueChecks === 1;
+      },
+    });
+
+    try {
+      handle.enqueue({ kind: "push" });
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(sink.pushCalls[0].map((payload) => payload.conversation.id)).toEqual([
+        "alpha-1",
+      ]);
+      expect(store.conversationsNeedingPush("primary")).toEqual([
+        "alpha-2",
+        "alpha-3",
+      ]);
+      expect(continueChecks).toBeGreaterThanOrEqual(2);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("fatal config reload stops without shutdown flushing stale sink routes", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    const reloadStarted = deferred<void>();
+    const finishReload = deferred<void>();
+    const reloadCompleted = deferred<void>();
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      onConfigReload: async () => {
+        reloadStarted.resolve();
+        await finishReload.promise;
+        reloadCompleted.resolve();
+        return false;
+      },
+    });
+
+    handle.reloadConfig("command");
+    await reloadStarted.promise;
+    handle.enqueue({ kind: "push" });
+    finishReload.resolve();
+    await reloadCompleted.promise;
+
+    const result = await handle.shutdown();
+
+    expect(result.timedOut).toBe(false);
+    expect(sink.pushCalls).toHaveLength(0);
+    expect(store.conversationsNeedingPush("primary")).toEqual(["alpha-1"]);
+  });
+
   test("shutdown skips queued normal work and performs one bounded final flush", async () => {
     const store = new InMemoryConversationStore();
     const sink = new TestSink("primary");
