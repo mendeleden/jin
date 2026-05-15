@@ -10,6 +10,8 @@
 - Do not add standalone `.mmd` copies of Mermaid diagrams unless they are generated from a current source-of-truth doc or explicitly owned as first-class artifacts.
 - Prefer small, typed changes to existing files.
 - Run focused validation after changes when practical.
+- Prefer `bun run test` over raw `bun test` for broad local validation. The repo runner isolates each `.test.ts` file in a fresh Bun process so top-level `mock.module()` calls cannot leak across files.
+- Use `bun run test:integration` for the Docker-backed local Postgres persona test; it is intentionally outside the default unit suite.
 
 ## Workflow
 

@@ -3,6 +3,7 @@ import {
   configPath,
   discoveryCachePath,
   loadRuntimeConfigGeneration,
+  loadRuntimeConfigSnapshot,
   loadStartupConfig,
   resolveAdapterConfig,
   type JinConfig,
@@ -17,6 +18,7 @@ import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
 import { appendDiagnosticEvent } from "../pipeline/diagnostic";
 import { runPipeline } from "../pipeline/loop";
+import type { PushDeliverySnapshot } from "../pipeline/push";
 import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import {
@@ -191,7 +193,7 @@ async function startPipeline(
       getSinks: () => currentSinks,
       getRoutes: () => currentConfig.routes,
       getScanIntervalMs: () => currentConfig.watch.pollIntervalMs,
-      shouldContinueSinkPush: (sinkId) => diskConfigAllowsSinkPush(sinkId, log),
+      getCurrentDeliverySnapshot: () => loadPushDeliverySnapshot(),
       scanIntervalMs: currentConfig.watch.pollIntervalMs,
       watchDebounceMs: currentConfig.watch.debounceMs,
       // Runtime push batches stay tiny so the live Codex workload can drain
@@ -544,20 +546,16 @@ async function reloadRuntimeConfig(
   }
 }
 
-async function diskConfigAllowsSinkPush(
-  sinkId: string,
-  log: RuntimeLog,
-): Promise<boolean> {
-  try {
-    const nextConfig = await loadRuntimeConfigGeneration();
-    const sinkConfig = nextConfig.sinks.find((sink) => sink.id === sinkId);
-    return sinkConfig?.enabled !== false;
-  } catch (error) {
-    log(
-      `WARNING: Stopping push while current config cannot be validated: ${formatError(error)}`,
-    );
-    return false;
-  }
+async function loadPushDeliverySnapshot(): Promise<PushDeliverySnapshot> {
+  const snapshot = await loadRuntimeConfigSnapshot();
+  return {
+    generationToken: snapshot.generationToken,
+    sinks: snapshot.config.sinks.map((sink) => ({
+      id: sink.id,
+      enabled: sink.enabled,
+    })),
+    routes: snapshot.config.routes,
+  };
 }
 
 function requestSelfShutdown(): void {

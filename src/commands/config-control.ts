@@ -7,7 +7,7 @@ import { restartCommand } from "./start";
 export async function persistConfigChange(
   config: JinConfig,
   opts: {
-    yes?: boolean;
+    restart?: boolean;
     changeSummary?: string;
   } = {},
 ): Promise<void> {
@@ -17,7 +17,7 @@ export async function persistConfigChange(
 
 export async function finalizeConfigChange(
   opts: {
-    yes?: boolean;
+    restart?: boolean;
     changeSummary?: string;
   } = {},
 ): Promise<void> {
@@ -32,7 +32,7 @@ export async function finalizeConfigChange(
     return;
   }
 
-  if (opts.yes) {
+  if (opts.restart) {
     console.log("  Restarting jin to apply config changes...");
     await restartCommand({
       ...(runtime.owner?.mode === "service" ? { service: true } : {}),
@@ -43,7 +43,7 @@ export async function finalizeConfigChange(
   const reloadResult = await requestDaemonConfigReload();
   if (reloadResult.status === "accepted") {
     console.log("  Running runtime accepted config reload request.");
-    console.log("  Re-run with `--yes` to force a full controlled restart instead.");
+    console.log("  Re-run with `--restart` to force a full controlled restart instead.");
     return;
   }
 

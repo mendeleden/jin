@@ -2,6 +2,7 @@ import {
   DEFAULT_S3_PREFIX,
   DEFAULT_S3_REGION,
   loadConfig,
+  loadRuntimeConfigGeneration,
   updateConfig,
   type JinConfig,
   type SinkConfig,
@@ -41,7 +42,7 @@ export interface SinkCommandOptions {
   pathStyle?: boolean;
   teamId?: string;
   userId?: string;
-  yes?: boolean;
+  restart?: boolean;
 }
 
 export interface SinkCandidateInput extends SinkCommandOptions {
@@ -52,8 +53,9 @@ export async function sinkAddCommand(
   type: SinkType,
   opts: SinkCommandOptions,
 ): Promise<void> {
+  await preflightSinkCandidate({ ...opts, type });
   const { result } = await updateConfig(
-    (config) => ensureSinkConfigured(config, { ...opts, type }),
+    (config) => ensureSinkConfigured(config, { ...opts, type }, { validate: false }),
     {
       shouldSave: (result) => result.created,
     },
@@ -65,7 +67,7 @@ export async function sinkAddCommand(
   }
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `Added sink ${result.sinkId}`,
   });
   console.log(
@@ -75,7 +77,7 @@ export async function sinkAddCommand(
 
 export async function sinkRemoveCommand(
   sinkId: string,
-  opts: { yes?: boolean } = {},
+  opts: { restart?: boolean } = {},
 ): Promise<void> {
   if (!sinkId) {
     fail("specify a sink id");
@@ -108,7 +110,7 @@ export async function sinkRemoveCommand(
   });
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary:
       result.affectedRoutes > 0
         ? `Removed sink ${sinkId} and updated ${result.affectedRoutes} route${result.affectedRoutes === 1 ? "" : "s"}`
@@ -118,14 +120,14 @@ export async function sinkRemoveCommand(
 
 export async function sinkDisableCommand(
   sinkId: string,
-  opts: { yes?: boolean } = {},
+  opts: { restart?: boolean } = {},
 ): Promise<void> {
   await setSinkEnabled(sinkId, false, opts);
 }
 
 export async function sinkEnableCommand(
   sinkId: string,
-  opts: { yes?: boolean } = {},
+  opts: { restart?: boolean } = {},
 ): Promise<void> {
   await setSinkEnabled(sinkId, true, opts);
 }
@@ -239,6 +241,7 @@ export async function sinkRepushCommand(sinkId: string): Promise<void> {
 export async function ensureSinkConfigured(
   config: JinConfig,
   input: SinkCandidateInput,
+  opts: { validate?: boolean } = {},
 ): Promise<{ sinkId: string; created: boolean; sink: SinkConfig }> {
   const candidate = buildSinkConfig(config, input);
 
@@ -261,9 +264,39 @@ export async function ensureSinkConfigured(
     );
   }
 
-  await validateSink(candidate, config.sinks.length);
+  if (opts.validate !== false) {
+    await validateSink(candidate, config.sinks.length);
+  }
   config.sinks.push(candidate);
   return { sinkId: candidate.id, created: true, sink: candidate };
+}
+
+export async function preflightSinkCandidate(
+  input: SinkCandidateInput,
+): Promise<void> {
+  const config = await loadRuntimeConfigGeneration();
+  const candidate = buildSinkConfig(config, input);
+
+  const existingById = findSinkIndexById(config, candidate.id);
+  if (existingById >= 0) {
+    const existing = config.sinks[existingById];
+    if (sameSinkIdentity(existing, candidate)) {
+      return;
+    }
+    fail(`sink id "${candidate.id}" is already configured`);
+  }
+
+  const equivalent = config.sinks.find((sink) => sameSinkTransport(sink, candidate));
+  if (equivalent) {
+    if (sameSinkIdentity(equivalent, candidate)) {
+      return;
+    }
+    fail(
+      `sink transport is already configured as "${equivalent.id}" with different teamId/userId; duplicate transport endpoints with different export identity are not supported yet`,
+    );
+  }
+
+  await validateSink(candidate, config.sinks.length);
 }
 
 export function findSinkIndexById(config: Pick<JinConfig, "sinks">, sinkId: string): number {
@@ -387,7 +420,7 @@ async function validateSink(sinkConfig: SinkConfig, index: number): Promise<void
 async function setSinkEnabled(
   sinkId: string,
   enabled: boolean,
-  opts: { yes?: boolean } = {},
+  opts: { restart?: boolean } = {},
 ): Promise<void> {
   if (!sinkId) {
     fail("specify a sink id");
@@ -433,10 +466,10 @@ async function setSinkEnabled(
 async function persistSinkControlChange(
   sinkId: string,
   enabled: boolean,
-  opts: { yes?: boolean },
+  opts: { restart?: boolean },
 ): Promise<void> {
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `Sink ${sinkId} ${enabled ? "enabled" : "disabled"}`,
   });
 }

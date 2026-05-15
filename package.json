@@ -7,7 +7,7 @@
     "jin": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun run scripts/test.ts unit",
     "test:release-gates": "bun test test/lifecycle-boundary.test.ts test/local-control-boundary.test.ts test/runtime-state-local-owner.test.ts",
     "dev": "bun run src/index.ts",
     "build": "bun build ./src/index.ts --compile --outfile jin",
@@ -16,7 +16,8 @@
     "desktop:start": "bun run desktop:build && electron desktop/dist/main.js",
     "desktop:typecheck": "tsc -p desktop/tsconfig.json --noEmit",
     "typecheck": "tsc --noEmit",
-    "test:integration": "/bin/sh -c 'docker compose -f test/docker-compose.integration.yml up -d --wait postgres && bun test test/persona-local-postgres.test.ts; status=$?; docker compose -f test/docker-compose.integration.yml down -v; exit $status'"
+    "test:integration": "bun run scripts/test.ts integration",
+    "test:all": "bun run scripts/test.ts all"
   },
   "dependencies": {},
   "devDependencies": {

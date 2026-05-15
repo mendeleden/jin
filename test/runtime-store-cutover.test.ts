@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -75,6 +76,7 @@ mock.module("../src/pipeline/loop", () => ({
 }));
 
 mock.module("../src/updater", () => ({
+  VERSION: "0.0.0-test",
   checkForUpdate: async () => null,
 }));
 
@@ -139,6 +141,10 @@ afterEach(() => {
   delete process.env.JIN_RSS_WARNING_MB;
   delete process.env.JIN_RSS_HARD_LIMIT_MB;
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("W3-RUNTIME-01 live cutover", () => {

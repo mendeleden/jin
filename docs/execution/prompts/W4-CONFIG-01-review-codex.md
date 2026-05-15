@@ -21,8 +21,13 @@ Use a code-review mindset. Findings first, ordered by severity, with file and li
 - Does the daemon delegate to the coordinator reload work item?
 - Does file watching remain a fallback rather than the only apply mechanism?
 - Are daemon-unavailable and notification-failure cases clear to users?
+- Does a successful config reload enqueue push so new or retargeted sinks process existing backlog without waiting for another ingest?
+- Does active push work re-check current sink existence, sink enablement, and routes before each local batch?
+- If config changes during an in-flight sink push, does local delivery state remain dirty rather than recording stale success?
+- Do external sink health checks run outside the config write lock?
+- Is explicit full-restart behavior consistently exposed as `--restart` for config mutations?
 - Are secrets excluded from any new response or logs?
-- Are tests sufficient for command path, local API auth, and fallback behavior?
+- Are tests sufficient for command path, local API auth, fallback behavior, retargeted-sink backlog, active push brakes, in-flight config change, and sink health preflight?
 - Does the implementation violate BP-07, BP-08, or ontology language?
 
 ## Output

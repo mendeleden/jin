@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 let runtimeStatus: any;
 let runtimePaths: any;
@@ -60,6 +60,10 @@ beforeEach(() => {
   components = [
     { name: "watcher", status: "stopped", lifecycleState: "stopped" },
   ];
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("local control boundary", () => {

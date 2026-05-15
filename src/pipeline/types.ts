@@ -3,6 +3,7 @@ import type { AdapterConfig, RouteConfig } from "../contracts/config";
 import type { Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
 import type { SqliteDiscoveryCache } from "../db/discovery-cache";
+import type { PushDeliverySnapshot } from "./push";
 
 export type PipelineWorkItem =
   | { kind: "reconcile-adapters" }
@@ -86,6 +87,9 @@ export interface RunPipelineOptions {
   shouldContinueSinkPush?: (
     sinkId: string,
   ) => boolean | Promise<boolean>;
+  getCurrentDeliverySnapshot?: (
+    sinkId: string,
+  ) => PushDeliverySnapshot | Promise<PushDeliverySnapshot>;
   workerIngest?: {
     command: string[];
     adapterConfigs: Record<string, AdapterConfig>;

@@ -47,6 +47,10 @@ function parseBooleanFlag(value: string | boolean | undefined): boolean | undefi
 
 const flags = parseFlags(args.slice(1));
 
+function readConfigRestartFlag(): boolean {
+  return !!flags.restart;
+}
+
 const COMMAND_HELP: Record<string, string> = {
   search: `
   Search local conversation content
@@ -124,6 +128,7 @@ const COMMAND_HELP: Record<string, string> = {
     --sink=<id>        Use an existing sink by ID
     --remote=<url>     Match by git remote URL
     --json             Output as JSON
+    --restart          Force a controlled runtime restart after saving config
 
   LOW-LEVEL BYO INTEGRATION
     jin sink add <type> ...
@@ -151,6 +156,7 @@ const COMMAND_HELP: Record<string, string> = {
 
   FLAGS
     --remove-sink      Also remove the sink if no routes still reference it
+    --restart          Force a controlled runtime restart after saving config
 
   EXAMPLES
     $ jin disconnect my-repo
@@ -235,10 +241,10 @@ const COMMAND_HELP: Record<string, string> = {
   Manage low-level integration destinations
 
   USAGE
-    jin sink add <type> [flags]
-    jin sink remove <id> [--yes]
-    jin sink disable <id> [--yes]
-    jin sink enable <id> [--yes]
+    jin sink add <type> [flags] [--restart]
+    jin sink remove <id> [--restart]
+    jin sink disable <id> [--restart]
+    jin sink enable <id> [--restart]
     jin sink repush <id>
 
   EXAMPLES
@@ -251,8 +257,8 @@ const COMMAND_HELP: Record<string, string> = {
   Manage low-level routing rules for local conversations
 
   USAGE
-    jin route add --sink=<id> [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--yes]
-    jin route remove [--sink=<id>] [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--yes]
+    jin route add --sink=<id> [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--restart]
+    jin route remove [--sink=<id>] [--remote=<glob>] [--adapter=<id>] [--branch=<glob>] [--name=<glob>] [--restart]
 
   EXAMPLES
     $ jin route add --remote="github.com/acme/*" --sink=team-postgres
@@ -462,7 +468,7 @@ async function main(): Promise<void> {
         userId: (flags["user-id"] || flags.userId) as string | undefined,
         remote: flags.remote as string | undefined,
         json: !!flags.json,
-        yes: !!flags.yes,
+        restart: readConfigRestartFlag(),
       });
       break;
     }
@@ -477,7 +483,7 @@ async function main(): Promise<void> {
       await disconnectCommand(project, {
         "remove-sink": !!flags["remove-sink"],
         removeSink: !!flags.removeSink,
-        yes: !!flags.yes,
+        restart: readConfigRestartFlag(),
       });
       break;
     }
@@ -522,30 +528,30 @@ async function main(): Promise<void> {
             pathStyle:
               parseBooleanFlag(flags["path-style"]) ??
               parseBooleanFlag(flags.pathStyle),
-            yes: !!flags.yes,
+            restart: readConfigRestartFlag(),
           });
           break;
         }
         case "remove":
           if (!sinkId || sinkId.startsWith("--")) {
-            console.error("Usage: jin sink remove <sink-id> [--yes]");
+            console.error("Usage: jin sink remove <sink-id> [--restart]");
             process.exit(1);
           }
-          await sinkRemoveCommand(sinkId, { yes: !!flags.yes });
+          await sinkRemoveCommand(sinkId, { restart: readConfigRestartFlag() });
           break;
         case "disable":
           if (!sinkId || sinkId.startsWith("--")) {
-            console.error("Usage: jin sink disable <sink-id> [--yes]");
+            console.error("Usage: jin sink disable <sink-id> [--restart]");
             process.exit(1);
           }
-          await sinkDisableCommand(sinkId, { yes: !!flags.yes });
+          await sinkDisableCommand(sinkId, { restart: readConfigRestartFlag() });
           break;
         case "enable":
           if (!sinkId || sinkId.startsWith("--")) {
-            console.error("Usage: jin sink enable <sink-id> [--yes]");
+            console.error("Usage: jin sink enable <sink-id> [--restart]");
             process.exit(1);
           }
-          await sinkEnableCommand(sinkId, { yes: !!flags.yes });
+          await sinkEnableCommand(sinkId, { restart: readConfigRestartFlag() });
           break;
         case "repush":
           if (!sinkId || sinkId.startsWith("--")) {
@@ -570,7 +576,7 @@ async function main(): Promise<void> {
         adapter: flags.adapter as string | undefined,
         branch: flags.branch as string | undefined,
         name: flags.name as string | undefined,
-        yes: !!flags.yes,
+        restart: readConfigRestartFlag(),
       };
 
       switch (action) {

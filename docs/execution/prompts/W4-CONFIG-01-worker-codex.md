@@ -6,7 +6,7 @@ You are not alone in the codebase. Do not revert changes made by others. Keep yo
 
 ## Mission
 
-Move first-party config mutation apply from indirect file-watch-only behavior to an explicit daemon local API reload request.
+Move first-party config mutation apply from indirect file-watch-only behavior to an explicit daemon local API reload request, then harden sink push behavior when routes/sinks change while push work is active.
 
 ## Required Read Order
 
@@ -28,6 +28,11 @@ Move first-party config mutation apply from indirect file-watch-only behavior to
 - The daemon route must use existing local auth.
 - The daemon route delegates to the coordinator reload path, not a command-side runtime.
 - Keep file-watch reload as fallback.
+- Successful config reload enqueues push so added or retargeted sinks receive existing backlog immediately.
+- Push batches re-check current sink existence, sink enablement, and current routes before egress.
+- If config changes while a sink batch is in flight, do not record local delivery success for that batch.
+- External sink health checks must run outside the config write lock.
+- Config-mutation full restart is requested with `--restart`.
 - Add tests before or with the implementation.
 - Do not touch Desktop UI code, adapters, sinks, or store schema.
 
@@ -35,6 +40,7 @@ Move first-party config mutation apply from indirect file-watch-only behavior to
 
 - `bun run typecheck`
 - `bun test test/config-mutation-control.test.ts test/local-control-boundary.test.ts`
+- `bun test test/pipeline-spine.test.ts`
 
 ## Final Response
 

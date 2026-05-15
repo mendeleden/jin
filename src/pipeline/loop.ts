@@ -268,6 +268,7 @@ export async function runPipeline(
               activeAdapters.map((adapter) => adapter.id),
               performance.now() - t0,
             );
+            enqueuePush();
             break;
           }
           case "reconcile-adapters": {
@@ -373,6 +374,7 @@ export async function runPipeline(
                 logger,
                 diag,
                 shouldContinueSinkPush: options.shouldContinueSinkPush,
+                getCurrentDeliverySnapshot: options.getCurrentDeliverySnapshot,
               },
             );
             diag?.pushResult(summary, performance.now() - t0, summary.sinkBreakdown);
@@ -414,6 +416,7 @@ export async function runPipeline(
               logger,
               diag,
               shouldContinueSinkPush: options.shouldContinueSinkPush,
+              getCurrentDeliverySnapshot: options.getCurrentDeliverySnapshot,
             });
             shouldStop = true;
             break;

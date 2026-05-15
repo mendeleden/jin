@@ -382,12 +382,12 @@ Most config-mutating commands follow this pattern:
 
 | Command | Mutates Config | Default Apply Path | Full Restart Optional? |
 |---------|---------------|--------------------|------------------------|
-| `jin sink add <type>` | Adds sink definition | Prioritized `config-reload` | Yes (`--yes`) |
-| `jin sink remove <id>` | Removes sink + routes | Prioritized `config-reload` | Yes (`--yes`) |
-| `jin sink disable/enable <id>` | Toggles sink delivery | Prioritized `config-reload` | Yes (`--yes`) |
-| `jin route add ...` | Adds route | Prioritized `config-reload` | Yes (`--yes`) |
-| `jin route remove ...` | Removes route | Prioritized `config-reload` | Yes (`--yes`) |
-| `jin adapter enable/disable` | Toggles adapter | Prioritized `config-reload` | Yes (`--yes`) |
+| `jin sink add <type>` | Adds sink definition | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin sink remove <id>` | Removes sink + routes | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin sink disable/enable <id>` | Toggles sink delivery | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin route add ...` | Adds route | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin route remove ...` | Removes route | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin adapter enable/disable` | Toggles adapter | Prioritized `config-reload` | Yes (`--restart`) |
 
 ### Prioritized `config-reload`
 
@@ -419,7 +419,7 @@ This is the durable rule:
 ### Service Mode
 
 In service mode, live config reload remains the default path. If the operator
-explicitly requests `--yes`, the command delegates restart to the service
+explicitly requests `--restart`, the command delegates restart to the service
 manager:
 - macOS: `launchctl kickstart -k gui/${uid}/com.jin.agent`
 - Linux: `systemctl --user restart jin.service`
@@ -429,7 +429,7 @@ The config-mutating command does not fork a new daemon. It writes config and
 either:
 - causes the running owner to perform the same daemon-owned `config-reload`
   generation cutover, or
-- tells the service manager to restart if `--yes` was requested.
+- tells the service manager to restart if `--restart` was requested.
 
 ---
 
@@ -444,7 +444,7 @@ immediate runtime control without a restart:
 |------|-----------|-------|-------------|
 | **Emergency stop** | `jin stop` | Immediate local brake | Panic — "stop everything NOW" |
 | **Reconfigure** | Config mutation + prioritized `config-reload` | Immediate generation cutover | Planned change — add sink, update route, disable sink, retarget adapters |
-| **Full recycle** | Config mutation + restart (`--yes`) | ~2 seconds | Force a clean process restart after a config change |
+| **Full recycle** | Config mutation + restart (`--restart`) | ~2 seconds | Force a clean process restart after a config change |
 | **Selective replay** | `jin sink repush <id>` | Manual / bounded by push time | Repair — "re-deliver to this one sink" |
 
 ### Emergency Stop (`jin stop`)
@@ -488,7 +488,7 @@ jin sink enable <sink-id>
 - Ingest continues under the new generation — data accumulates in the store
 - Disable is **durable** — survives restart
 - `enable` sets `enabled: true` and uses the same reconfigure path
-- For permanent removal, use `jin sink remove <id> --yes`
+- For permanent removal, use `jin sink remove <id> --restart`
 
 **Why durable:** The "wrong sink / private data" scenario is exactly when
 the user might panic-restart (`jin stop` then `jin start`). If disable

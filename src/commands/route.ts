@@ -9,7 +9,7 @@ export interface RouteCommandOptions {
   adapter?: string;
   branch?: string;
   name?: string;
-  yes?: boolean;
+  restart?: boolean;
 }
 
 export async function routeAddCommand(
@@ -39,7 +39,7 @@ export async function routeAddCommand(
   }
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `${result.created ? "Added" : "Updated"} route ${formatRouteMatch(result.match)}`,
   });
 }
@@ -58,7 +58,7 @@ export async function routeRemoveCommand(
   }
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `Removed route target from ${formatRouteMatch(result.match)}`,
   });
 }

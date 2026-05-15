@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -169,6 +170,10 @@ afterEach(() => {
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
   removeDirWithRetry(tempDir);
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("config mutation and control commands", () => {
@@ -394,7 +399,26 @@ describe("config mutation and control commands", () => {
     expect(nextConfig.sinks).toEqual(config.sinks);
   });
 
-  test("route add --yes performs a service-aware controlled restart", async () => {
+  test("sink add health check runs outside the config lock", async () => {
+    const lockStates: boolean[] = [];
+    fakeSink = {
+      ...createFakeSink(),
+      healthCheck: async () => {
+        lockStates.push(existsSync(configLockPath()));
+        return { ok: true };
+      },
+    };
+
+    await sinkAddCommand("postgres", {
+      id: "postgres-team",
+      connectionString: "postgresql://localhost:5432/jin",
+    });
+
+    expect(lockStates).toEqual([false]);
+    expect(existsSync(configLockPath())).toBe(false);
+  });
+
+  test("route add --restart performs a service-aware controlled restart", async () => {
     const config = defaultConfig();
     config.sinks = [
       {
@@ -422,7 +446,7 @@ describe("config mutation and control commands", () => {
     await routeAddCommand({
       remote: "https://github.com/org/alpha.git",
       sink: "postgres-team",
-      yes: true,
+      restart: true,
     });
 
     const nextConfig = await readTestConfig(tempDir);
@@ -516,7 +540,7 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toHaveLength(0);
   });
 
-  test("sink enable and disable --yes perform a controlled restart", async () => {
+  test("sink enable and disable --restart perform a controlled restart", async () => {
     const config = defaultConfig();
     config.sinks = [
       {
@@ -541,7 +565,7 @@ describe("config mutation and control commands", () => {
       issues: [],
     };
 
-    await sinkDisableCommand("postgres-team", { yes: true });
+    await sinkDisableCommand("postgres-team", { restart: true });
 
     let nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(false);
@@ -549,7 +573,7 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toEqual([{ service: true }]);
 
     restartCalls = [];
-    await sinkEnableCommand("postgres-team", { yes: true });
+    await sinkEnableCommand("postgres-team", { restart: true });
 
     nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(true);

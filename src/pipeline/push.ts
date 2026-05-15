@@ -12,9 +12,18 @@ export interface PushOptions {
   diag?: DiagnosticLogger | null;
   reason?: DiagnosticPushReason;
   sampleIntervalMs?: number;
+  getCurrentDeliverySnapshot?: (
+    sinkId: string,
+  ) => PushDeliverySnapshot | Promise<PushDeliverySnapshot>;
   shouldContinueSinkPush?: (
     sinkId: string,
   ) => boolean | Promise<boolean>;
+}
+
+export interface PushDeliverySnapshot {
+  generationToken: string;
+  sinks: ReadonlyArray<{ id: string; enabled?: boolean }>;
+  routes: ReadonlyArray<RouteConfig>;
 }
 
 const NOOP_LOGGER: PipelineLogger = {
@@ -58,66 +67,70 @@ export async function pushDirty(
     if (dirtyConversationIds.length === 0) {
       continue;
     }
-    const routedConversationIds = dirtyConversationIds.filter((conversationId) =>
-      conversationTargetsSink(store, routes, sink.id, conversationId),
-    );
-    const staleConversations =
-      dirtyConversationIds.length - routedConversationIds.length;
-
-    const totalBatches = Math.ceil(routedConversationIds.length / batchSize);
+    const totalBatches = Math.ceil(dirtyConversationIds.length / batchSize);
     const sinkStartedAt = performance.now();
     diag?.pushStart({
       sinkId: sink.id,
       reason,
-      dirtyConversations: routedConversationIds.length,
-      staleConversations,
+      dirtyConversations: dirtyConversationIds.length,
+      staleConversations: 0,
       batchSize,
       batchCount: totalBatches,
     });
 
-    if (routedConversationIds.length === 0) {
-      diag?.pushSinkResult({
-        sinkId: sink.id,
-        reason,
-        dirtyConversations: 0,
-        staleConversations,
-        pushed: 0,
-        failed: 0,
-        skippedConversations: 0,
-        durationMs: performance.now() - sinkStartedAt,
-      });
-      continue;
-    }
-
     for (
       let start = 0, batchIndex = 0;
-      start < routedConversationIds.length;
+      start < dirtyConversationIds.length;
       start += batchSize, batchIndex += 1
     ) {
-      if (!(await shouldContinueSinkPush(sink.id, options, logger))) {
-        const remainingConversations = routedConversationIds.length - start;
+      const deliverySnapshot = await getCurrentDeliverySnapshot(
+        sink.id,
+        routes,
+        sink,
+        options,
+        logger,
+      );
+
+      if (
+        !deliverySnapshot ||
+        !(await shouldContinueSinkPush(sink.id, options, logger)) ||
+        !deliverySnapshotAllowsSink(deliverySnapshot, sink.id) ||
+        !deliverySnapshotRoutesSink(deliverySnapshot, sink.id)
+      ) {
+        const remainingConversations = dirtyConversationIds.length - start;
         sinkSkipped += remainingConversations;
         logger.warn(
-          `Stopping push for disabled sink ${sink.id}; ${remainingConversations} conversation${remainingConversations === 1 ? "" : "s"} remain queued.`,
+          `Stopping push for inactive sink ${sink.id}; ${remainingConversations} conversation${remainingConversations === 1 ? "" : "s"} remain queued.`,
         );
         break;
       }
 
-      const batchConversationIds = routedConversationIds.slice(
+      const dirtyBatchConversationIds = dirtyConversationIds.slice(
         start,
         start + batchSize,
       );
+      const batchConversationIds = dirtyBatchConversationIds.filter((conversationId) =>
+        conversationTargetsSink(
+          store,
+          deliverySnapshot.routes,
+          sink.id,
+          conversationId,
+        ),
+      );
+      const staleConversations =
+        dirtyBatchConversationIds.length - batchConversationIds.length;
       const payloads = batchConversationIds
         .map((conversationId) => createPayload(store, conversationId))
         .filter((payload): payload is PushPayload => payload !== null);
-      const skippedConversations = batchConversationIds.length - payloads.length;
+      const skippedConversations =
+        staleConversations + batchConversationIds.length - payloads.length;
       const selectedConversations = Math.min(
-        routedConversationIds.length,
-        start + batchConversationIds.length,
+        dirtyConversationIds.length,
+        start + dirtyBatchConversationIds.length,
       );
       const remainingConversations = Math.max(
         0,
-        routedConversationIds.length - selectedConversations,
+        dirtyConversationIds.length - selectedConversations,
       );
 
       sinkSkipped += skippedConversations;
@@ -126,18 +139,18 @@ export async function pushDirty(
         reason,
         batchIndex: batchIndex + 1,
         batchCount: totalBatches,
-        totalDirtyConversations: routedConversationIds.length,
+        totalDirtyConversations: dirtyConversationIds.length,
         selectedConversations,
         remainingConversations,
-        dirtyInBatch: batchConversationIds.length,
+        dirtyInBatch: dirtyBatchConversationIds.length,
         payloadCount: payloads.length,
         skippedConversations,
-        dirtyConversationIds: batchConversationIds,
+        dirtyConversationIds: dirtyBatchConversationIds,
         payloadConversationIds: payloads.map((payload) => payload.conversation.id),
       });
 
       if (payloads.length === 0) {
-        if (start + batchSize < routedConversationIds.length) {
+        if (start + batchSize < dirtyConversationIds.length) {
           await Bun.sleep(0);
         }
         continue;
@@ -155,7 +168,7 @@ export async function pushDirty(
               reason,
               batchIndex: batchIndex + 1,
               batchCount: totalBatches,
-              totalDirtyConversations: routedConversationIds.length,
+              totalDirtyConversations: dirtyConversationIds.length,
               selectedConversations,
               remainingConversations,
               inFlightConversations: payloads.length,
@@ -173,6 +186,20 @@ export async function pushDirty(
           result.failed,
           logger,
         );
+        if (
+          await deliveryGenerationChanged(
+            sink.id,
+            deliverySnapshot.generationToken,
+            options,
+            logger,
+          )
+        ) {
+          sinkSkipped += payloads.length;
+          logger.warn(
+            `Config changed while sink ${sink.id} push was in flight; leaving ${payloads.length} conversation${payloads.length === 1 ? "" : "s"} dirty for retry.`,
+          );
+          continue;
+        }
 
         for (const payload of payloads) {
           const error = errorsByConversation.get(payload.conversation.id);
@@ -185,7 +212,7 @@ export async function pushDirty(
               conversationId: payload.conversation.id,
               attemptedRevision: payload.attemptedRevision,
               batchIndex: batchIndex + 1,
-              totalDirtyConversations: routedConversationIds.length,
+              totalDirtyConversations: dirtyConversationIds.length,
               selectedConversations,
               ok: false,
               error,
@@ -207,7 +234,7 @@ export async function pushDirty(
             conversationId: payload.conversation.id,
             attemptedRevision: payload.attemptedRevision,
             batchIndex: batchIndex + 1,
-            totalDirtyConversations: routedConversationIds.length,
+            totalDirtyConversations: dirtyConversationIds.length,
             selectedConversations,
             ok: true,
           });
@@ -220,6 +247,20 @@ export async function pushDirty(
         }
       } catch (error) {
         logger.error(`Sink ${sink.id} failed during push`, error);
+        if (
+          await deliveryGenerationChanged(
+            sink.id,
+            deliverySnapshot.generationToken,
+            options,
+            logger,
+          )
+        ) {
+          sinkSkipped += payloads.length;
+          logger.warn(
+            `Config changed while failed sink ${sink.id} push was in flight; leaving ${payloads.length} conversation${payloads.length === 1 ? "" : "s"} dirty for retry.`,
+          );
+          continue;
+        }
         const message = errorToMessage(error);
 
         for (const payload of payloads) {
@@ -231,7 +272,7 @@ export async function pushDirty(
             conversationId: payload.conversation.id,
             attemptedRevision: payload.attemptedRevision,
             batchIndex: batchIndex + 1,
-            totalDirtyConversations: routedConversationIds.length,
+            totalDirtyConversations: dirtyConversationIds.length,
             selectedConversations,
             ok: false,
             error: message,
@@ -245,7 +286,7 @@ export async function pushDirty(
         }
       }
 
-      if (start + batchSize < routedConversationIds.length) {
+      if (start + batchSize < dirtyConversationIds.length) {
         await Bun.sleep(0);
       }
     }
@@ -253,8 +294,8 @@ export async function pushDirty(
     diag?.pushSinkResult({
       sinkId: sink.id,
       reason,
-      dirtyConversations: routedConversationIds.length,
-      staleConversations,
+      dirtyConversations: dirtyConversationIds.length,
+      staleConversations: sinkSkipped,
       pushed: sinkPushed,
       failed: sinkFailed,
       skippedConversations: sinkSkipped,
@@ -269,6 +310,67 @@ export async function pushDirty(
     failedConversations,
     sinkBreakdown,
   };
+}
+
+async function getCurrentDeliverySnapshot(
+  sinkId: string,
+  routes: ReadonlyArray<RouteConfig>,
+  sink: Sink,
+  options: PushOptions,
+  logger: PipelineLogger,
+): Promise<PushDeliverySnapshot | null> {
+  if (!options.getCurrentDeliverySnapshot) {
+    return {
+      generationToken: "",
+      sinks: [sink],
+      routes,
+    };
+  }
+
+  try {
+    return await options.getCurrentDeliverySnapshot(sinkId);
+  } catch (error) {
+    logger.warn(
+      `Stopping push for sink ${sinkId}; current config state could not be loaded: ${errorToMessage(error)}`,
+    );
+    return null;
+  }
+}
+
+function deliverySnapshotAllowsSink(
+  snapshot: PushDeliverySnapshot,
+  sinkId: string,
+): boolean {
+  const sink = snapshot.sinks.find((candidate) => candidate.id === sinkId);
+  return sink !== undefined && sink.enabled !== false;
+}
+
+function deliverySnapshotRoutesSink(
+  snapshot: PushDeliverySnapshot,
+  sinkId: string,
+): boolean {
+  return snapshot.routes.some((route) => route.sinks.includes(sinkId));
+}
+
+async function deliveryGenerationChanged(
+  sinkId: string,
+  previousToken: string,
+  options: PushOptions,
+  logger: PipelineLogger,
+): Promise<boolean> {
+  if (!options.getCurrentDeliverySnapshot || previousToken.length === 0) {
+    return false;
+  }
+
+  try {
+    const current = await options.getCurrentDeliverySnapshot(sinkId);
+    return current.generationToken !== previousToken;
+  } catch (error) {
+    logger.warn(
+      `Treating sink ${sinkId} push result as uncommitted because current config state could not be loaded: ${errorToMessage(error)}`,
+    );
+    return true;
+  }
 }
 
 function conversationTargetsSink(

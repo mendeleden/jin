@@ -16,6 +16,7 @@ import {
 import {
   ensureSinkConfigured,
   findSinkIndexById,
+  preflightSinkCandidate,
   type SinkCandidateInput,
 } from "./sink";
 import { finalizeConfigChange } from "./config-control";
@@ -33,7 +34,7 @@ interface ConnectOptions {
   userId?: string;
   remote?: string;
   json?: boolean;
-  yes?: boolean;
+  restart?: boolean;
 }
 
 interface ProjectRow {
@@ -69,15 +70,16 @@ export async function connectCommand(
   if (!project && !opts.remote) {
     if (opts.team) {
       ensureConfigDir();
+      await preflightTeamSink(opts);
       const { result: sinkResult } = await updateConfig(
-        (config) => resolveOrCreateSink(config, opts),
+        (config) => resolveOrCreateSink(config, opts, { validateSink: false }),
         {
           shouldSave: (result) => result.created,
         },
       );
       if (sinkResult.created) {
         await finalizeConfigChange({
-          yes: opts.yes,
+          restart: opts.restart,
           changeSummary: `Added sink ${sinkDisplayLabel(sinkResult.sink)}`,
         });
       } else {
@@ -108,9 +110,12 @@ export async function connectCommand(
 
   ensureConfigDir();
   const routeTarget = resolveConnectTarget(project, opts);
+  await preflightTeamSink(opts);
   const { result } = await updateConfig(
     async (config) => {
-      const sinkResult = await resolveOrCreateSink(config, opts);
+      const sinkResult = await resolveOrCreateSink(config, opts, {
+        validateSink: false,
+      });
       const routeResult = upsertRoute(config, routeTarget.match, [sinkResult.sinkId]);
       return { sinkResult, routeResult };
     },
@@ -129,7 +134,7 @@ export async function connectCommand(
   }
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `${
       routeResult.created ? "Connected" : "Updated"
     } ${routeTarget.label} -> ${sinkDisplayLabel(sinkResult.sink)}`,
@@ -340,7 +345,7 @@ export async function connectionsCommand(): Promise<void> {
 
 export async function disconnectCommand(
   project: string,
-  opts: { "remove-sink"?: boolean; removeSink?: boolean; yes?: boolean },
+  opts: { "remove-sink"?: boolean; removeSink?: boolean; restart?: boolean },
 ): Promise<void> {
   if (!project) {
     fail("specify a project to disconnect", [
@@ -390,7 +395,7 @@ export async function disconnectCommand(
   }
 
   await finalizeConfigChange({
-    yes: opts.yes,
+    restart: opts.restart,
     changeSummary: `Disconnected ${project} (${formatRouteMatch(match)})`,
   });
 }
@@ -484,6 +489,7 @@ function sinkDisplayLabel(sink: SinkConfig): string {
 async function resolveOrCreateSink(
   config: JinConfig,
   opts: ConnectOptions,
+  options: { validateSink?: boolean } = {},
 ): Promise<{ sinkId: string; created: boolean; sink: SinkConfig }> {
   if (opts.sink) {
     const sinkIndex = findSinkIndexById(config, opts.sink);
@@ -502,7 +508,9 @@ async function resolveOrCreateSink(
 
   if (opts.team) {
     const decoded = decodeTeamConfig(opts.team);
-    return ensureSinkConfigured(config, toSinkCandidate(decoded, opts));
+    return ensureSinkConfigured(config, toSinkCandidate(decoded, opts), {
+      validate: options.validateSink,
+    });
   }
 
   fail("specify a sink type or existing sink", [
@@ -513,6 +521,15 @@ async function resolveOrCreateSink(
     "    jin sink add <type> ...",
     '    jin route add --remote="github.com/org/repo" --sink=<id>',
   ]);
+}
+
+async function preflightTeamSink(opts: ConnectOptions): Promise<void> {
+  if (!opts.team || opts.sink) {
+    return;
+  }
+
+  const decoded = decodeTeamConfig(opts.team);
+  await preflightSinkCandidate(toSinkCandidate(decoded, opts));
 }
 
 function toSinkCandidate(

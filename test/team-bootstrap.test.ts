@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { afterAll, describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { join } from "path";
 import { createFakeSink } from "./helpers";
 
@@ -94,6 +94,10 @@ afterEach(() => {
   console_.restore();
   exitMock.restore();
   env.cleanup();
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 // ── jin team bridge (was team-config) ───────────────────────────────────

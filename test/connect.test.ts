@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -82,6 +82,10 @@ afterEach(() => {
   exitMock.restore();
   delete process.env.JIN_CONFIG_DIR;
   removeTestDir(tempDir);
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("jin connect", () => {

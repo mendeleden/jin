@@ -8,7 +8,7 @@ flowchart TD
     Runtime -->|Yes| Control["daemon local control API<br/>POST /api/control/config/reload"]
     Control --> Ack["202 accepted means queued/coalesced<br/>not completed"]
     Ack --> Reload["prioritized config-reload<br/>rebuild sinks/routes/adapters"]
-    Runtime -->|--yes when supported| Restart["controlled restart<br/>stop runtime -> reload config -> start runtime"]
+    Runtime -->|--restart when supported| Restart["controlled restart<br/>stop runtime -> reload config -> start runtime"]
 
     Disable["jin sink disable <id>"] --> Durable["set sink.enabled = false in durable config"]
     Durable --> Control

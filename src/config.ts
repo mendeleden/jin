@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
+import { createHash } from "node:crypto";
 import { homedir } from "os";
 import { join } from "path";
 import {
@@ -135,6 +136,11 @@ export interface JinConfig extends Omit<ContractJinConfig, "sinks" | "routes" | 
   store?: StoreConfig;
 }
 
+export interface RuntimeConfigSnapshot {
+  config: JinConfig;
+  generationToken: string;
+}
+
 const DEFAULT_ADAPTER_IDS = [
   "claude-code",
   "cursor",
@@ -250,16 +256,27 @@ export async function loadConfig(): Promise<JinConfig> {
 }
 
 export async function loadRuntimeConfigGeneration(): Promise<JinConfig> {
+  return (await loadRuntimeConfigSnapshot()).config;
+}
+
+export async function loadRuntimeConfigSnapshot(): Promise<RuntimeConfigSnapshot> {
   ensureConfigDir();
   const cfgPath = configPath();
   if (!existsSync(cfgPath)) {
-    return defaultConfig();
+    const config = defaultConfig();
+    return {
+      config,
+      generationToken: hashConfigGeneration(JSON.stringify(config)),
+    };
   }
 
   const rawText = await Bun.file(cfgPath).text();
   const raw = JSON.parse(rawText);
   assertValidRuntimeConfigGeneration(raw);
-  return normalizeConfig(raw);
+  return {
+    config: normalizeConfig(raw),
+    generationToken: hashConfigGeneration(rawText),
+  };
 }
 
 export async function loadStartupConfig(): Promise<JinConfig> {
@@ -458,6 +475,10 @@ function isPermissionError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "EPERM"
   );
+}
+
+function hashConfigGeneration(rawText: string): string {
+  return createHash("sha256").update(rawText).digest("hex");
 }
 
 function defaultAdapters(): Record<string, AdapterConfig> {

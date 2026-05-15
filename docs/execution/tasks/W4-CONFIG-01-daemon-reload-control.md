@@ -78,10 +78,18 @@ When a Jin command mutates `config.json`, the command must persist the config du
 - Add a daemon-local control route for config reload, for example `POST /api/control/config/reload`.
 - The route must require the same local daemon authentication as existing control/status routes.
 - The route must enqueue the existing coordinator-owned config reload path and return an acknowledgement.
+- A successful config reload must enqueue push work so newly added or retargeted sinks recompute backlog immediately under the new route generation.
 - First-party config-mutating commands should call this route after durable config write when a daemon is running.
 - If the daemon is not running, the command should keep current "applies on next start" behavior.
 - If the daemon notification fails but the daemon is expected to be running, the command must surface a clear warning and rely on the file watcher fallback rather than silently claiming success.
 - `fs.watch(config.json)` remains as a fallback for manual edits, MDM/profile writes, old clients, and recovery.
+- Push work must re-check current config at local batch boundaries before data leaves Jin:
+  - sink still exists
+  - sink is still enabled
+  - candidate conversations still route to that sink under current routes
+- If config changes while a sink batch is in flight, the pipeline must not record local success for that batch; remote writes may have landed, but local delivery state stays conservative for idempotent retry.
+- External sink health checks must not run while holding the config write lock.
+- The full-restart override flag is `--restart`.
 
 ## Acceptance Checks
 
@@ -90,6 +98,10 @@ When a Jin command mutates `config.json`, the command must persist the config du
 - A focused test proving the command path calls the daemon reload route or injected equivalent after a config mutation.
 - A focused test proving unauthenticated reload requests are rejected at the local API boundary.
 - A focused test proving daemon-unavailable behavior does not corrupt config and reports next-start or fallback semantics.
+- A focused test proving config reload enqueues push so an added/retargeted sink receives existing dirty backlog without waiting for another ingest.
+- Focused tests proving route removal, sink removal, and sink disable stop remaining local push batches.
+- A focused test proving config changes during an in-flight sink push leave local push state dirty.
+- A focused test proving sink health checks run outside the config lock.
 
 ## BP Acceptance Matrix
 
@@ -99,6 +111,8 @@ When a Jin command mutates `config.json`, the command must persist the config du
 | BP-07 | Local control surfaces are authenticated and transport-owned. | Reload route uses existing local auth and transport behavior. |
 | BP-08 | Config mutation commands persist durable config first. | Commands still use `updateConfig` / `saveConfig` before daemon notification. |
 | BP-08 | Runtime config changes are applied by the coordinator pipeline. | Reload route delegates to `PipelineHandle.reloadConfig` / coordinator work item. |
+| BP-08 | Delivery-affecting config changes are real-time brakes. | Push batches re-read current config before egress and avoid recording success across generation changes. |
+| BP-08 | New or retargeted sinks receive backlog from existing local revisions. | Successful reload enqueues push; push state remains per-sink revision based. |
 | BP-08 | Manual config edits remain supported. | File watcher fallback remains and is covered by tests or explicit non-regression. |
 
 ## V1 Comparison
@@ -119,14 +133,17 @@ Report changed files, acceptance checks, BP matrix result, V1 comparison, and an
 - Wired daemon startup to delegate reload requests to `PipelineHandle.reloadConfig("command")`.
 - Config-mutating commands now notify the daemon after durable writes and warn on notification failure.
 - `jin sink enable/disable` now participates in the reload notification path without mutating runtime pause state directly.
-- `jin sink enable/disable --yes` now has controlled-restart parity with other config-mutating sink commands.
+- Config-mutating commands now use `--restart` for explicit controlled restart behavior.
 - Existing config mutations and live reload now reject invalid sink/route/watch generations instead of silently normalizing malformed entries away.
 - Startup now rejects invalid existing config instead of normalizing it into the live generation.
 - Invalid live reload now stops without running shutdown final-flush against stale sinks/routes.
-- Active push work now checks durable sink enablement before each local batch, so disabling a sink stops remaining local batches after any already-in-flight batch.
+- Active push work now checks current sink existence, sink enablement, and current routes before each local batch, so route/sink removal or disable stops remaining local batches after any already-in-flight batch.
+- Config reload now enqueues push so added or retargeted sinks recompute existing backlog immediately under the new config generation.
+- In-flight push batches no longer record local success if the config generation changed before the sink result returned.
+- Sink add health checks now run before acquiring the config write lock; the lock-protected section re-checks identity conflicts before writing.
 - BP-08 and the config mutation Mermaid source clarify accepted-vs-completed reload semantics.
-- Pasteur review findings were addressed: direct sink pause mutation removed, `--yes` parity added, and strict runtime config generation validation added.
-- Rawls/Euler review findings were addressed: startup strict validation, no-flush fatal reload shutdown, active push batch gating, and route help `--yes` visibility.
+- Pasteur review findings were addressed: direct sink pause mutation removed, `--restart` parity added, and strict runtime config generation validation added.
+- Rawls/Euler review findings were addressed: startup strict validation, no-flush fatal reload shutdown, active push batch gating, and route help `--restart` visibility.
 
 ## Validation
 
@@ -135,4 +152,10 @@ Report changed files, acceptance checks, BP matrix result, V1 comparison, and an
 - `bun test test/config.test.ts test/config-mutation-control.test.ts`
 - `bun test test/pipeline-spine.test.ts test/runtime-store-cutover.test.ts`
 - `bun run test:release-gates`
-- Disposable real-daemon smoke: `bun /private/tmp/jin-midrun-reload-smoke.ts ./jin .`
+- CI unit matrix command from `.github/workflows/ci.yml`
+- `bun run test`
+- `bun run test:integration`
+- `bun run test:all`
+- `bun build ./src/index.ts --compile --outfile /private/tmp/jin-validate`
+- `bun run test/acceptance/verify.ts /private/tmp/jin-validate`
+- Earlier disposable real-daemon smoke for the base reload lane: `bun /private/tmp/jin-midrun-reload-smoke.ts ./jin .`

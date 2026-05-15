@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -126,6 +127,10 @@ beforeEach(() => {
 afterEach(() => {
   console_.restore();
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("lifecycle runtime boundary", () => {
