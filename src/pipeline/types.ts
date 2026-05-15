@@ -3,13 +3,15 @@ import type { AdapterConfig, RouteConfig } from "../contracts/config";
 import type { Sink } from "../contracts/sinks";
 import type { ConversationStore } from "../contracts/store";
 import type { SqliteDiscoveryCache } from "../db/discovery-cache";
+import type { PushDeliverySnapshot } from "./push";
 
 export type PipelineWorkItem =
   | { kind: "reconcile-adapters" }
+  | { kind: "config-reload"; source: "config-file" | "command" }
   | { kind: "ingest-all"; hint: ChangeHint }
   | { kind: "ingest-adapter"; adapterId: string; hint: ChangeHint }
   | { kind: "push" }
-  | { kind: "shutdown-flush" };
+  | { kind: "shutdown-flush"; flush?: boolean };
 
 export type QueueablePipelineWorkItem = Exclude<
   PipelineWorkItem,
@@ -60,6 +62,9 @@ export interface RunPipelineOptions {
   store: ConversationStore;
   sinks: ReadonlyArray<Sink>;
   routes: ReadonlyArray<RouteConfig>;
+  getSinks?: () => ReadonlyArray<Sink>;
+  getRoutes?: () => ReadonlyArray<RouteConfig>;
+  getScanIntervalMs?: () => number | null | undefined;
   logger?: PipelineLogger;
   ingestBatchSize?: number;
   pushBatchSize?: number;
@@ -76,13 +81,24 @@ export interface RunPipelineOptions {
     result: PipelineShutdownResult,
   ) => void | Promise<void>;
   diagnosticLogPath?: string;
+  onConfigReload?: (
+    source: "config-file" | "command",
+  ) => boolean | void | Promise<boolean | void>;
+  shouldContinueSinkPush?: (
+    sinkId: string,
+  ) => boolean | Promise<boolean>;
+  getCurrentDeliverySnapshot?: (
+    sinkId: string,
+  ) => PushDeliverySnapshot | Promise<PushDeliverySnapshot>;
   workerIngest?: {
     command: string[];
     adapterConfigs: Record<string, AdapterConfig>;
+    getAdapterConfigs?: () => Record<string, AdapterConfig>;
   };
   discoveryCache?: {
     store: SqliteDiscoveryCache;
     adapterConfigs: Record<string, AdapterConfig>;
+    getAdapterConfigs?: () => Record<string, AdapterConfig>;
   };
 }
 
@@ -93,6 +109,7 @@ export interface PipelineShutdownResult {
 
 export interface PipelineHandle {
   enqueue(work: QueueablePipelineWorkItem): boolean;
+  reloadConfig(source: "config-file" | "command"): boolean;
   waitForIdle(): Promise<void>;
   shutdown(): Promise<PipelineShutdownResult>;
 }

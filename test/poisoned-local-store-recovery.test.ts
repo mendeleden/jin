@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -111,6 +112,10 @@ afterEach(() => {
   exitMock?.restore();
   exitMock = null;
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 describe("W3-RECOVERY-01 poisoned local store recovery guidance", () => {

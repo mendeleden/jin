@@ -8,8 +8,10 @@ import {
   DEFAULT_SCAN_INTERVAL_MS,
   DEFAULT_WEBHOOK_TIMEOUT_MS,
   defaultConfig,
+  loadRuntimeConfigGeneration,
   loadStartupConfig,
   normalizeConfig,
+  updateConfig,
 } from "../src/config";
 
 afterEach(() => {
@@ -214,5 +216,187 @@ describe("loadStartupConfig", () => {
     });
     expect(written.adapters["claude-code"]).toEqual({ enabled: true });
     expect(written.adapters.codex).toEqual({ enabled: true });
+  });
+
+  test("rejects invalid existing config on startup instead of normalizing it live", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          sinks: [
+            {
+              id: "postgres-team",
+              type: "postgres",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    await expect(loadStartupConfig()).rejects.toThrow(
+      "config.sinks[0].connectionString must be a non-empty string",
+    );
+  });
+
+  test("rejects malformed explicit startup sections instead of replacing them", async () => {
+    const cases: Array<{
+      name: string;
+      config: unknown;
+      message: string;
+    }> = [
+      {
+        name: "root",
+        config: [],
+        message: "config root must be an object",
+      },
+      {
+        name: "adapters",
+        config: { adapters: [] },
+        message: "config.adapters must be an object",
+      },
+      {
+        name: "adapter entry",
+        config: { adapters: { cursor: false } },
+        message: "config.adapters.cursor must be an object",
+      },
+      {
+        name: "sinks",
+        config: { sinks: { bad: true } },
+        message: "config.sinks must be an array",
+      },
+      {
+        name: "routes",
+        config: { routes: { bad: true } },
+        message: "config.routes must be an array",
+      },
+      {
+        name: "watch",
+        config: { watch: [] },
+        message: "config.watch must be an object",
+      },
+      {
+        name: "watch poll",
+        config: { watch: { pollIntervalMs: 0 } },
+        message: "config.watch.pollIntervalMs must be a positive integer",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const dir = mkdtempSync(join(tmpdir(), `jin-config-test-${testCase.name}-`));
+      process.env.JIN_CONFIG_DIR = dir;
+      writeFileSync(
+        join(dir, "config.json"),
+        JSON.stringify(testCase.config, null, 2),
+      );
+
+      await expect(loadStartupConfig()).rejects.toThrow(testCase.message);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("loadRuntimeConfigGeneration", () => {
+  test("rejects invalid sink generations instead of silently dropping them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          adapters: {},
+          sinks: [
+            {
+              id: "postgres-team",
+              type: "postgres",
+            },
+          ],
+          routes: [],
+          watch: {
+            pollIntervalMs: 10_000,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await expect(loadRuntimeConfigGeneration()).rejects.toThrow(
+      "config.sinks[0].connectionString must be a non-empty string",
+    );
+  });
+
+  test("rejects invalid route generations instead of normalizing them empty", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          sinks: [],
+          routes: [
+            {
+              match: "github.com/acme/*",
+              sinks: ["postgres-team"],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    await expect(loadRuntimeConfigGeneration()).rejects.toThrow(
+      "config.routes[0].match must be an object",
+    );
+  });
+});
+
+describe("updateConfig", () => {
+  test("refuses to mutate an invalid existing generation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-config-test-"));
+    process.env.JIN_CONFIG_DIR = dir;
+
+    writeFileSync(
+      join(dir, "config.json"),
+      JSON.stringify(
+        {
+          sinks: [
+            {
+              id: "postgres-team",
+              type: "postgres",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    await expect(
+      updateConfig((config) => {
+        config.routes.push({
+          match: {},
+          sinks: ["postgres-team"],
+        });
+      }),
+    ).rejects.toThrow(
+      "config.sinks[0].connectionString must be a non-empty string",
+    );
+
+    const persisted = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
+    expect(persisted.sinks).toEqual([
+      {
+        id: "postgres-team",
+        type: "postgres",
+      },
+    ]);
+    expect(persisted.routes).toBeUndefined();
   });
 });

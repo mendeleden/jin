@@ -32,6 +32,21 @@ export class WorkQueue {
     });
   }
 
+  enqueuePriority(item: PipelineWorkItem): WorkQueueEnqueueResult {
+    if (this.hasEquivalentQueuedItem(item)) {
+      return "coalesced";
+    }
+
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter(item);
+      return "handed-off";
+    }
+
+    this.items.unshift(item);
+    return "queued";
+  }
+
   discard(
     predicate: (item: PipelineWorkItem) => boolean = () => true,
   ): number {
@@ -100,6 +115,16 @@ export class WorkQueue {
     }
 
     return false;
+  }
+
+  private hasEquivalentQueuedItem(next: PipelineWorkItem): boolean {
+    return this.items.some((item) => {
+      if (item.kind !== next.kind) {
+        return false;
+      }
+
+      return item.kind === "config-reload" && next.kind === "config-reload";
+    });
   }
 }
 

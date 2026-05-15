@@ -1,75 +1,67 @@
 import { saveConfig, type JinConfig } from "../config";
-import type { RuntimeIssue } from "../contracts/lifecycle";
+import { requestDaemonConfigReload } from "../api/client";
 import { getWatcherState } from "../daemon/process-state";
-import { getRuntimeStatus, markRuntimeRunning } from "../daemon/runtime-state";
+import { getRuntimeStatus } from "../daemon/runtime-state";
 import { restartCommand } from "./start";
-
-const OPERATOR_PAUSE_PREFIX = "sink paused by operator:";
 
 export async function persistConfigChange(
   config: JinConfig,
   opts: {
-    yes?: boolean;
+    restart?: boolean;
     changeSummary?: string;
   } = {},
 ): Promise<void> {
   await saveConfig(config);
+  await finalizeConfigChange(opts);
+}
 
+export async function finalizeConfigChange(
+  opts: {
+    restart?: boolean;
+    changeSummary?: string;
+  } = {},
+): Promise<void> {
   if (opts.changeSummary) {
     console.log(`  ${opts.changeSummary}.`);
   }
 
   const watcher = getWatcherState();
-  if (watcher.status !== "running") {
+  const runtime = getRuntimeStatus();
+  if (!isRuntimeExpectedToReloadConfig(runtime, watcher)) {
     console.log("  Changes will apply the next time jin starts.");
     return;
   }
 
-  if (!opts.yes) {
-    console.log("  Restart jin to apply config changes.");
-    console.log("  Re-run with `--yes` to perform a controlled restart now.");
+  if (opts.restart) {
+    console.log("  Restarting jin to apply config changes...");
+    await restartCommand({
+      ...(runtime.owner?.mode === "service" ? { service: true } : {}),
+    });
     return;
   }
 
-  console.log("  Restarting jin to apply config changes...");
-  const runtime = getRuntimeStatus();
-  await restartCommand({
-    ...(runtime.owner?.mode === "service" ? { service: true } : {}),
-  });
-}
-
-export function applySinkPauseControl(
-  sinkId: string,
-  paused: boolean,
-): boolean {
-  const runtime = getRuntimeStatus();
-  if (
-    !runtime.owner ||
-    (runtime.state !== "running" && runtime.state !== "degraded")
-  ) {
-    return false;
+  const reloadResult = await requestDaemonConfigReload();
+  if (reloadResult.status === "accepted") {
+    console.log("  Running runtime accepted config reload request.");
+    console.log("  Re-run with `--restart` to force a full controlled restart instead.");
+    return;
   }
 
-  const nextIssues = runtime.issues.filter(
-    (issue) => !isOperatorPauseIssue(issue, sinkId),
+  console.log(
+    `  WARNING: Config saved, but jin could not notify the running runtime to reload: ${reloadResult.message}`,
   );
+  console.log(
+    "  File watcher fallback will try to apply the change; otherwise restart jin.",
+  );
+}
 
-  if (paused) {
-    nextIssues.push({
-      subsystem: "push",
-      message: operatorPauseMessage(sinkId),
-      paused: true,
-    });
+function isRuntimeExpectedToReloadConfig(
+  runtime: ReturnType<typeof getRuntimeStatus>,
+  watcher: ReturnType<typeof getWatcherState>,
+): boolean {
+  if (runtime.owner && runtime.state !== "stopped" && runtime.state !== "stopping") {
+    return true;
   }
 
-  markRuntimeRunning(runtime.owner.mode, nextIssues);
-  return true;
-}
-
-function operatorPauseMessage(sinkId: string): string {
-  return `${OPERATOR_PAUSE_PREFIX} ${sinkId}`;
-}
-
-function isOperatorPauseIssue(issue: RuntimeIssue, sinkId: string): boolean {
-  return issue.message === operatorPauseMessage(sinkId);
+  return watcher.status === "running";
 }

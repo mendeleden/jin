@@ -15,10 +15,10 @@ return which sinks should receive it. The pipeline (BP-02) calls this
 function at push time — it does not persist routing decisions. Config
 defines the rules; routing evaluates them.
 
-Config is durable intent. The running daemon is a snapshot of that intent.
-Changing config requires either restarting the daemon or using a
-config-mutating command that performs a controlled restart on the caller's
-behalf.
+Config is durable intent. The running daemon owns an in-memory applied view of
+that intent. Config changes do not take effect through ad hoc rereads in random
+call sites; they take effect only through a coordinator-owned `config-reload`
+transition or a full restart.
 
 ## Scope
 
@@ -26,7 +26,7 @@ BP-08 owns:
 - **Durable config schema** — adapters, sinks, routes, watch settings
 - **Route matching semantics** — glob patterns, AND logic, sink selection
 - **Config-mutating commands** — connect, disconnect, route add/remove
-- **Apply/restart semantics** — how config changes reach the runtime
+- **Apply/reload semantics** — how config changes reach the runtime
 - **Emergency runtime controls** — stop, sink disable/enable, sink repush
 
 BP-08 does NOT own:
@@ -232,16 +232,29 @@ Why sink-scoped instead of top-level:
 ### Loading
 
 - Config lives at `~/.config/jin/config.json` (or `$JIN_CONFIG_DIR/config.json`)
-- Loaded **once** at startup, snapshotted for the session (BP-07 invariant)
-- Changes to the config file require restart to take effect
-- No hot-reload in v2
+- The runtime loads an initial config at startup and treats it as generation 0
+  of the active runtime config
+- Later changes are applied through a prioritized `config-reload` control work
+  item
+- The daemon may observe config changes from:
+  - config-mutating Jin commands that write durable config and then request a
+    daemon-owned local control reload
+  - a best-effort filesystem watcher on `config.json` for manual edits
+- first-party config-mutating commands must publish config atomically via
+  durable replace semantics
+- first-party config-mutating commands must treat the daemon reload response as
+  an acceptance signal, not proof that the new generation has finished applying
+- if the daemon reload notification fails after a durable write, the command
+  must warn and leave the filesystem watcher / restart path as recovery
+- if a running daemon observes an invalid next config generation, it must stop
+  and report the config error rather than continue serving the prior generation
 
-**Why no hot-reload:** Config changes can add/remove sinks, change routes,
-or disable adapters. These affect the coordinator's adapter set, watcher
-paths, and sink connections. Applying mid-run safely would require a
-config-change work item in the coordinator queue with full adapter/sink
-reconciliation. The restart cost is ~2 seconds (re-ingest is fast because
-bundle hashes skip unchanged data via BP-05).
+**Why explicit reload instead of ad hoc hot-reload:** Config changes can
+add/remove sinks, change routes, or disable adapters. These affect the
+coordinator's adapter set, watcher paths, sink connections, and push
+selection. Jin must therefore funnel config transitions through one explicit
+coordinator-owned reload path rather than letting arbitrary subsystems reread
+the file whenever they notice disk activity.
 
 ### First Run
 
@@ -286,7 +299,8 @@ Steps:
 2. Add sink to `config.sinks[]`
 3. **Prompt: "Add a route to this sink?"** — offers to create a route
    immediately so the sink starts receiving data
-4. Write config; prompt to restart if daemon is running
+4. Write config atomically
+5. If the daemon is running, trigger a prioritized config reload
 
 A sink with no routes targeting it receives nothing. `jin status` warns:
 ```
@@ -347,58 +361,75 @@ For v2, use `jin sink add` / `jin sink remove` and `jin route add` /
 
 ---
 
-## Config Mutation and Controlled Restart
+## Config Mutation and Live Apply
 
-Config-mutating commands write durable config. They do not hot-patch the
-live runtime. Instead, they can optionally trigger a controlled restart.
+Config-mutating commands write durable config. By default, a running daemon
+should absorb those changes through the prioritized `config-reload` path
+without a full process restart.
 
 ### The Pattern
 
 ```
-jin sink add postgres --connection-string="..." --user-id="eden" --yes
+jin sink add postgres --connection-string="..." --user-id="eden"
   1. Validates connection (healthCheck)
-  2. Writes sink to config.json
-  3. --yes: stops running daemon → starts it again (config reloaded)
-     (no --yes: prints "Restart jin to apply changes")
+  2. Writes config atomically
+  3. If the daemon is running, trigger prioritized `config-reload`
+  4. The coordinator reloads config, reconciles adapters/watchers/sinks,
+     and future push work uses the new routes
 ```
 
 Most config-mutating commands follow this pattern:
 
-| Command | Mutates Config | Restartable |
-|---------|---------------|-------------|
-| `jin sink add <type>` | Adds sink definition | Yes (`--yes`) |
-| `jin sink remove <id>` | Removes sink + routes | Yes (`--yes`) |
-| `jin route add ...` | Adds route | Yes (`--yes`) |
-| `jin route remove ...` | Removes route | Yes (`--yes`) |
-| `jin adapter enable/disable` | Toggles adapter | Yes (`--yes`) |
+| Command | Mutates Config | Default Apply Path | Full Restart Optional? |
+|---------|---------------|--------------------|------------------------|
+| `jin sink add <type>` | Adds sink definition | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin sink remove <id>` | Removes sink + routes | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin sink disable/enable <id>` | Toggles sink delivery | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin route add ...` | Adds route | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin route remove ...` | Removes route | Prioritized `config-reload` | Yes (`--restart`) |
+| `jin adapter enable/disable` | Toggles adapter | Prioritized `config-reload` | Yes (`--restart`) |
 
-**Exception — `jin sink disable/enable`:** See §Selective Sink Disable
-below. Disable writes durable config AND signals the runtime immediately
-without a full restart. This is an explicit exception to the "config
-changes require restart" rule because disable is an operator safety
-control that must take effect within seconds, not after a restart cycle.
+### Prioritized `config-reload`
 
-### Why Not Hot-Reload
+`config-reload` is a control-plane event, not just another background task.
 
-Hot-reload requires:
-- Adapter set reconciliation (watchers, caches)
-- Sink connection lifecycle (open new, close removed)
-- Route evaluation against new rules mid-push
-- Coordinator awareness of config transitions
+Requirements:
 
-Controlled restart gets all of this for free — the startup sequence
-(BP-07) handles it. The cost is ~2 seconds of downtime during which no
-pushes occur. Data is safe in SQLite.
+- it must jump ahead of ordinary queued `push` and periodic ingest work
+- it must coalesce repeated config-disk churn into the latest durable config
+- it must validate the next generation before resuming normal work
+- if the next generation is invalid, the runtime must stop and surface the
+  config error; it must not continue on the previous generation
+- it must reload the whole config generation, not patch individual fields in
+  place from scattered call sites
+- it must rebuild the active sink set
+- it must refresh route selection inputs
+- it must refresh adapter config used for discovery/load and watcher
+  reconciliation
+- it must reconcile watched paths and runtime timers against the new adapter
+  set
+
+This is the durable rule:
+
+> Config changes become live only when the coordinator commits a
+> `config-reload` transition or the process restarts. If the next config
+> generation is invalid, the runtime stops instead of continuing on stale
+> config.
 
 ### Service Mode
 
-In service mode, `--yes` delegates restart to the service manager:
+In service mode, live config reload remains the default path. If the operator
+explicitly requests `--restart`, the command delegates restart to the service
+manager:
 - macOS: `launchctl kickstart -k gui/${uid}/com.jin.agent`
 - Linux: `systemctl --user restart jin.service`
 - Windows: restart via Task Scheduler
 
-The config-mutating command does not fork a new daemon. It writes config
-and tells the service manager to restart.
+The config-mutating command does not fork a new daemon. It writes config and
+either:
+- causes the running owner to perform the same daemon-owned `config-reload`
+  generation cutover, or
+- tells the service manager to restart if `--restart` was requested.
 
 ---
 
@@ -407,13 +438,13 @@ and tells the service manager to restart.
 Config mutation covers planned changes. But there are scenarios that need
 immediate runtime control without a restart:
 
-### Three Distinct Control Needs
+### Four Distinct Control Needs
 
 | Need | Mechanism | Speed | When to use |
 |------|-----------|-------|-------------|
-| **Emergency stop** | `jin stop` | Immediate (seconds) | Panic — "stop everything NOW" |
-| **Reconfigure** | Config mutation + restart | ~2 seconds | Planned change — add sink, update route |
-| **Selective disable** | `jin sink disable <id>` | Immediate | Calm — "stop pushing to this one sink" |
+| **Emergency stop** | `jin stop` | Immediate local brake | Panic — "stop everything NOW" |
+| **Reconfigure** | Config mutation + prioritized `config-reload` | Immediate generation cutover | Planned change — add sink, update route, disable sink, retarget adapters |
+| **Full recycle** | Config mutation + restart (`--restart`) | ~2 seconds | Force a clean process restart after a config change |
 | **Selective replay** | `jin sink repush <id>` | Manual / bounded by push time | Repair — "re-deliver to this one sink" |
 
 ### Emergency Stop (`jin stop`)
@@ -423,16 +454,16 @@ not remember sink IDs or think about routes. They will type `jin stop`.
 
 **This is correct behavior.** `jin stop` is the emergency brake:
 
-1. Triggers graceful shutdown (BP-07)
-2. In-flight push completes current batch (max 20 conversations)
-3. All pushes stop
+1. Triggers shutdown (BP-07)
+2. Stops admitting new ingest/push work immediately
+3. Aborts any Jin-local adapter/push worker execution still in flight
 4. Data is safe in local SQLite
 5. User investigates, fixes routes, restarts
 
-**Blast radius:** Bounded by one push batch (20 conversations × N sinks).
-If the user types `jin stop` within seconds of noticing the problem, at
-most one or two batches have been sent. Already-sent data cannot be
-revoked — if an HTTP request or SQL batch landed, it landed.
+**Blast radius:** Bounded by data that has already left Jin. Already-sent data
+cannot be revoked — if an HTTP request, object upload, or SQL transaction
+landed before the local brake, it landed. But Jin must not keep pushing the old
+generation just because a large payload or batch was already underway.
 
 **Recovery:** Fix config (`jin route remove`, `jin sink remove`), then
 `jin start`. The store retains all data. Push resumes only to sinks
@@ -449,13 +480,15 @@ jin sink enable <sink-id>
 ```
 
 **Semantics:**
-- `disable` sets `enabled: false` on the sink in durable config AND
-  signals the runtime so the coordinator skips this sink immediately
-- Other sinks continue pushing normally
-- Ingest continues — data accumulates in the store
+- `disable` sets `enabled: false` on the sink in durable config and triggers
+  the same prioritized `config-reload` path as any other config mutation
+- Active push work that is still local to Jin should be interrupted immediately;
+  already-landed remote writes cannot be revoked
+- Other sinks continue pushing once the new generation commits
+- Ingest continues under the new generation — data accumulates in the store
 - Disable is **durable** — survives restart
-- `enable` sets `enabled: true` and signals the runtime
-- For permanent removal, use `jin sink remove <id> --yes`
+- `enable` sets `enabled: true` and uses the same reconfigure path
+- For permanent removal, use `jin sink remove <id> --restart`
 
 **Why durable:** The "wrong sink / private data" scenario is exactly when
 the user might panic-restart (`jin stop` then `jin start`). If disable
@@ -463,13 +496,10 @@ were ephemeral, the restart re-enables the sink and resumes pushing to the
 wrong place. Durable disable means the sink stays off until the user
 explicitly enables it.
 
-**Why disable is an exception to the no-hot-patch rule:** Most config
-changes (add sink, add route) require restart because they affect the
-coordinator's adapter set, watcher paths, and sink connections. Disable is
-different — it only sets a filter flag that `pushDirty()` checks before
-including a sink. No reconnection, no watcher change, no adapter
-reconciliation. The runtime can absorb this change safely without a full
-restart cycle.
+**Why disable is no longer mechanically special:** v2 live apply treats all
+delivery-affecting config changes as real-time brakes. `jin sink disable` is
+still an important operator surface, but it should not require a sink-specific
+runtime control lane separate from the main config generation cutover.
 
 `jin status` shows disabled sinks clearly:
 ```
@@ -479,10 +509,10 @@ Sinks:
                       Run: jin sink enable s3-archive
 ```
 
-**Implementation:** `pushDirty()` checks `sink.enabled` before including
-a sink. No new work queue item type — it's a filter, not a work item.
-`disable` writes config and signals the runtime via the daemon boundary
-so the change takes effect immediately without a full restart.
+**Implementation:** the coordinator rebuilds active sinks from durable config on
+the next generation cutover. If an in-flight push worker is interrupted before
+returning success, the parent records no new success for those payloads and
+they remain dirty for a later retry.
 
 ### Selective Sink Repush
 
@@ -550,7 +580,7 @@ durable state.
 | Glob patterns (not regex) | Switching to regex changes every route in every config file. Globs cover 99% of use cases and are simpler. |
 | `git_remote` as primary routing key | Config, deployment guides, and route examples all use git_remote. Reverting to cwd breaks cross-machine routing. |
 | No default/fallback sinks | Every push requires an explicit route match. Adding a catch-all later is easy (wildcard route). Removing an accidental catch-all after data has been pushed is not. Safe zero-state is a one-way door. |
-| Config snapshot at startup | Adding hot-reload requires coordinator work items for config transitions. Snapshot is simpler and avoids mid-push route changes. |
+| Coordinator-owned config reload | Live apply is valuable, but only if the daemon owns the transition. Arbitrary call-site rereads would make push selection, sink lifecycle, and watcher reconciliation nondeterministic. |
 | SinkConfig discriminated union | Code that switches on `type` depends on the union structure. Flattening back to a bag breaks type narrowing everywhere. |
 
 ---

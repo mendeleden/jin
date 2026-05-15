@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -6,7 +7,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtempSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ConversationBundle } from "../src/contracts/conversations";
@@ -27,6 +28,15 @@ let watcherState: any;
 let runtimeStatus: any;
 let restartCalls: any[] = [];
 let markRuntimeRunningCalls: Array<{ mode: string; issues: any[] }> = [];
+let configReloadRequests: any[] = [];
+let configReloadResult:
+  | { status: "accepted"; statusCode: number; message: string }
+  | { status: "rejected"; statusCode: number; message: string }
+  | { status: "failed"; message: string } = {
+    status: "accepted",
+    statusCode: 202,
+    message: "Config reload accepted.",
+  };
 let runtimePaths = {
   configDir: "",
   configPath: "",
@@ -83,6 +93,13 @@ mock.module("../src/commands/start", () => ({
   },
 }));
 
+mock.module("../src/api/client", () => ({
+  requestDaemonConfigReload: async (opts: unknown) => {
+    configReloadRequests.push(opts ?? {});
+    return configReloadResult;
+  },
+}));
+
 mock.module("../src/adapters/registry", () => ({
   allAdapters: () => mockAdapters,
   createAdapter: (adapterId: string) =>
@@ -99,7 +116,12 @@ mock.module("../src/commands/ingest", () => ({
   ingestCommand: async () => {},
 }));
 
-const { defaultConfig } = await import("../src/config");
+const {
+  configLockPath,
+  defaultConfig,
+  saveConfig,
+  updateConfig,
+} = await import("../src/config");
 const { encodeTeamConfig } = await import("../src/sinks/types");
 const { connectCommand } = await import("../src/commands/connect");
 const { watchCommand } = await import("../src/commands/watch");
@@ -130,6 +152,12 @@ beforeEach(() => {
   runtimeStatus = { state: "stopped", issues: [] };
   restartCalls = [];
   markRuntimeRunningCalls = [];
+  configReloadRequests = [];
+  configReloadResult = {
+    status: "accepted",
+    statusCode: 202,
+    message: "Config reload accepted.",
+  };
   mockAdapters = [];
   fakeSink = createFakeSink();
   console_ = captureConsole();
@@ -144,8 +172,87 @@ afterEach(() => {
   removeDirWithRetry(tempDir);
 });
 
+afterAll(() => {
+  mock.restore();
+});
+
 describe("config mutation and control commands", () => {
-  test("sink add writes durable config and requires explicit restart by default", async () => {
+  test("saveConfig writes atomically and releases the config lock", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+
+    await saveConfig(config);
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual(config.sinks);
+    expect(existsSync(configLockPath())).toBe(false);
+    expect(readdirSync(tempDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("updateConfig does not persist partial mutations when the mutator fails", async () => {
+    const config = defaultConfig();
+    await writeTestConfig(tempDir, config);
+
+    await expect(
+      updateConfig((nextConfig) => {
+        nextConfig.sinks.push({
+          id: "postgres-team",
+          type: "postgres",
+          enabled: true,
+          connectionString: "postgresql://localhost:5432/jin",
+        });
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks).toEqual([]);
+  });
+
+  test("updateConfig serializes concurrent mutations so later saves do not clobber earlier changes", async () => {
+    const config = defaultConfig();
+    await writeTestConfig(tempDir, config);
+
+    await Promise.all([
+      updateConfig(async (nextConfig) => {
+        await Bun.sleep(20);
+        nextConfig.sinks.push({
+          id: "postgres-team",
+          type: "postgres",
+          enabled: true,
+          connectionString: "postgresql://localhost:5432/jin",
+        });
+        return "sink";
+      }),
+      updateConfig((nextConfig) => {
+        nextConfig.routes.push({
+          match: { remote: "github.com/org/alpha" },
+          sinks: ["postgres-team"],
+        });
+        return "route";
+      }),
+    ]);
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks.map((sink: { id: string }) => sink.id)).toEqual([
+      "postgres-team",
+    ]);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["postgres-team"],
+      },
+    ]);
+  });
+
+  test("sink add writes durable config and live-reloads by default", async () => {
     watcherState = {
       name: "watcher",
       status: "running",
@@ -174,7 +281,91 @@ describe("config mutation and control commands", () => {
       },
     ]);
     expect(restartCalls).toHaveLength(0);
-    expect(console_.logs.join("\n")).toContain("Restart jin to apply config changes.");
+    expect(configReloadRequests).toEqual([{}]);
+    expect(console_.logs.join("\n")).toContain(
+      "Running runtime accepted config reload request.",
+    );
+  });
+
+  test("config mutation warns and keeps durable config when daemon reload notification fails", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    watcherState = {
+      name: "watcher",
+      status: "running",
+      mode: "daemon",
+      pid: 445,
+      lifecycleState: "running",
+    };
+    runtimeStatus = {
+      state: "running",
+      owner: makeOwner("daemon", 445),
+      issues: [],
+    };
+    configReloadResult = {
+      status: "failed",
+      message: "connection refused",
+    };
+
+    await routeAddCommand({
+      remote: "https://github.com/org/alpha.git",
+      sink: "postgres-team",
+    });
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["postgres-team"],
+      },
+    ]);
+    expect(configReloadRequests).toEqual([{}]);
+    expect(restartCalls).toHaveLength(0);
+    expect(console_.logs.join("\n")).toContain(
+      "WARNING: Config saved, but jin could not notify the running runtime to reload: connection refused",
+    );
+    expect(console_.logs.join("\n")).toContain(
+      "File watcher fallback will try to apply the change; otherwise restart jin.",
+    );
+  });
+
+  test("config mutation keeps next-start behavior when no daemon is running", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    await routeAddCommand({
+      remote: "https://github.com/org/alpha.git",
+      sink: "postgres-team",
+    });
+
+    const nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.routes).toEqual([
+      {
+        match: { remote: "github.com/org/alpha" },
+        sinks: ["postgres-team"],
+      },
+    ]);
+    expect(configReloadRequests).toEqual([]);
+    expect(console_.logs.join("\n")).toContain(
+      "Changes will apply the next time jin starts.",
+    );
   });
 
   test("sink add refuses duplicate transport endpoints when export identity differs", async () => {
@@ -208,7 +399,26 @@ describe("config mutation and control commands", () => {
     expect(nextConfig.sinks).toEqual(config.sinks);
   });
 
-  test("route add --yes performs a service-aware controlled restart", async () => {
+  test("sink add health check runs outside the config lock", async () => {
+    const lockStates: boolean[] = [];
+    fakeSink = {
+      ...createFakeSink(),
+      healthCheck: async () => {
+        lockStates.push(existsSync(configLockPath()));
+        return { ok: true };
+      },
+    };
+
+    await sinkAddCommand("postgres", {
+      id: "postgres-team",
+      connectionString: "postgresql://localhost:5432/jin",
+    });
+
+    expect(lockStates).toEqual([false]);
+    expect(existsSync(configLockPath())).toBe(false);
+  });
+
+  test("route add --restart performs a service-aware controlled restart", async () => {
     const config = defaultConfig();
     config.sinks = [
       {
@@ -236,7 +446,7 @@ describe("config mutation and control commands", () => {
     await routeAddCommand({
       remote: "https://github.com/org/alpha.git",
       sink: "postgres-team",
-      yes: true,
+      restart: true,
     });
 
     const nextConfig = await readTestConfig(tempDir);
@@ -249,7 +459,7 @@ describe("config mutation and control commands", () => {
     expect(restartCalls).toEqual([{ service: true }]);
   });
 
-  test("manual protected-source opt-in changes the startup notice after restart", async () => {
+  test("manual protected-source opt-in changes the startup notice after config update", async () => {
     const config = defaultConfig();
     mockAdapters = [];
 
@@ -314,21 +524,61 @@ describe("config mutation and control commands", () => {
 
     let nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(false);
+    expect(configReloadRequests).toEqual([{}]);
     expect(restartCalls).toHaveLength(0);
-    expect(markRuntimeRunningCalls[0]?.issues).toEqual([
-      {
-        subsystem: "push",
-        message: "sink paused by operator: postgres-team",
-        paused: true,
-      },
-    ]);
+    expect(markRuntimeRunningCalls).toEqual([]);
+    expect(console_.logs.join("\n")).toContain(
+      "Running runtime accepted config reload request.",
+    );
 
     await sinkEnableCommand("postgres-team");
 
     nextConfig = await readTestConfig(tempDir);
     expect(nextConfig.sinks[0].enabled).toBe(true);
-    expect(markRuntimeRunningCalls.at(-1)?.issues).toEqual([]);
+    expect(configReloadRequests).toEqual([{}, {}]);
+    expect(markRuntimeRunningCalls).toEqual([]);
     expect(restartCalls).toHaveLength(0);
+  });
+
+  test("sink enable and disable --restart perform a controlled restart", async () => {
+    const config = defaultConfig();
+    config.sinks = [
+      {
+        id: "postgres-team",
+        type: "postgres",
+        enabled: true,
+        connectionString: "postgresql://localhost:5432/jin",
+      },
+    ];
+    await writeTestConfig(tempDir, config);
+
+    watcherState = {
+      name: "watcher",
+      status: "running",
+      mode: "service",
+      pid: 516,
+      lifecycleState: "running",
+    };
+    runtimeStatus = {
+      state: "running",
+      owner: makeOwner("service", 516),
+      issues: [],
+    };
+
+    await sinkDisableCommand("postgres-team", { restart: true });
+
+    let nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks[0].enabled).toBe(false);
+    expect(configReloadRequests).toEqual([]);
+    expect(restartCalls).toEqual([{ service: true }]);
+
+    restartCalls = [];
+    await sinkEnableCommand("postgres-team", { restart: true });
+
+    nextConfig = await readTestConfig(tempDir);
+    expect(nextConfig.sinks[0].enabled).toBe(true);
+    expect(configReloadRequests).toEqual([]);
+    expect(restartCalls).toEqual([{ service: true }]);
   });
 
   test("sink repush resets and replays only the selected sink state", async () => {

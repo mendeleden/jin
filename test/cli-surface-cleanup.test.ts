@@ -40,6 +40,22 @@ test("jin help for connect/start/stop no longer shows removed compatibility flag
   expect(stop.stdout).not.toContain("--ui");
 });
 
+test("jin help for config mutations advertises --restart, not --yes", async () => {
+  const connect = await runCli(["help", "connect"]);
+  const disconnect = await runCli(["help", "disconnect"]);
+  const sink = await runCli(["help", "sink"]);
+  const route = await runCli(["help", "route"]);
+
+  expect(connect.stdout).toContain("--restart");
+  expect(connect.stdout).not.toContain("--yes");
+  expect(disconnect.stdout).toContain("--restart");
+  expect(disconnect.stdout).not.toContain("--yes");
+  expect(sink.stdout).toContain("--restart");
+  expect(sink.stdout).not.toContain("--yes");
+  expect(route.stdout).toContain("--restart");
+  expect(route.stdout).not.toContain("--yes");
+});
+
 test("jin help for desktop documents optional install and update flow", async () => {
   const result = await runCli(["help", "desktop"]);
 

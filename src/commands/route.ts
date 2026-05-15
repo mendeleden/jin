@@ -1,6 +1,6 @@
-import { loadConfig, type JinConfig, type RouteMatch } from "../config";
+import { updateConfig, type JinConfig, type RouteMatch } from "../config";
 import { normalizeAdapterId, normalizeRemote } from "../routing";
-import { persistConfigChange } from "./config-control";
+import { finalizeConfigChange } from "./config-control";
 import { findSinkIndexById } from "./sink";
 
 export interface RouteCommandOptions {
@@ -9,7 +9,7 @@ export interface RouteCommandOptions {
   adapter?: string;
   branch?: string;
   name?: string;
-  yes?: boolean;
+  restart?: boolean;
 }
 
 export async function routeAddCommand(
@@ -19,12 +19,18 @@ export async function routeAddCommand(
     fail("route add requires --sink");
   }
 
-  const config = await loadConfig();
-  if (findSinkIndexById(config, opts.sink) === -1) {
-    fail(`sink "${opts.sink}" not found`);
-  }
+  const { result } = await updateConfig(
+    (config) => {
+      if (findSinkIndexById(config, opts.sink!) === -1) {
+        fail(`sink "${opts.sink}" not found`);
+      }
 
-  const result = upsertRoute(config, opts, [opts.sink]);
+      return upsertRoute(config, opts, [opts.sink!]);
+    },
+    {
+      shouldSave: (result) => result.changed,
+    },
+  );
   if (!result.changed) {
     console.log(
       `  Route ${formatRouteMatch(result.match)} already includes ${opts.sink}.`,
@@ -32,8 +38,8 @@ export async function routeAddCommand(
     return;
   }
 
-  await persistConfigChange(config, {
-    yes: opts.yes,
+  await finalizeConfigChange({
+    restart: opts.restart,
     changeSummary: `${result.created ? "Added" : "Updated"} route ${formatRouteMatch(result.match)}`,
   });
 }
@@ -41,14 +47,18 @@ export async function routeAddCommand(
 export async function routeRemoveCommand(
   opts: RouteCommandOptions,
 ): Promise<void> {
-  const config = await loadConfig();
-  const result = removeRoute(config, opts, opts.sink);
+  const { result } = await updateConfig(
+    (config) => removeRoute(config, opts, opts.sink),
+    {
+      shouldSave: (result) => result.changed,
+    },
+  );
   if (!result.changed) {
     fail(`route ${formatRouteMatch(result.match)} not found`);
   }
 
-  await persistConfigChange(config, {
-    yes: opts.yes,
+  await finalizeConfigChange({
+    restart: opts.restart,
     changeSummary: `Removed route target from ${formatRouteMatch(result.match)}`,
   });
 }

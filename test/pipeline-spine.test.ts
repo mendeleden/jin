@@ -265,6 +265,295 @@ describe("pipeline spine", () => {
     }
   });
 
+  test("prioritizes config reload ahead of queued push work and uses refreshed routes", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    const firstFindChanged = deferred<void>();
+    let routes: RouteConfig[] = [];
+    const alpha = new TestAdapter("alpha", {
+      async findChanged() {
+        await firstFindChanged.promise;
+        return [makeRef("alpha-1", "alpha")];
+      },
+      async loadConversation(ref) {
+        return makeBundle(ref.id, "alpha");
+      },
+    });
+
+    const handle = await startPipeline({
+      adapterSource: [alpha],
+      store,
+      sinks: [sink],
+      routes,
+      getRoutes: () => routes,
+      onConfigReload: async () => {
+        routes = ROUTE_ALL_TO_PRIMARY;
+      },
+    });
+
+    try {
+      handle.enqueue({
+        kind: "ingest-adapter",
+        adapterId: "alpha",
+        hint: { kind: "startup-scan" },
+      });
+
+      await waitFor(() => alpha.findChangedHints.length === 1);
+      handle.enqueue({ kind: "push" });
+      handle.reloadConfig("command");
+
+      firstFindChanged.resolve();
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(
+        sink.pushCalls[0].map((payload) => payload.conversation.id),
+      ).toEqual(["alpha-1"]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("config reload enqueues push so retargeted sinks receive existing backlog", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("secondary");
+    let sinks: Sink[] = [];
+    let routes: RouteConfig[] = [];
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    store.writeBundle(makeBundle("alpha-2", "alpha"));
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks,
+      routes,
+      getSinks: () => sinks,
+      getRoutes: () => routes,
+      onConfigReload: async () => {
+        sinks = [sink];
+        routes = [{ match: {}, sinks: ["secondary"] }];
+      },
+    });
+
+    try {
+      handle.reloadConfig("command");
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(sink.pushCalls[0].map((payload) => payload.conversation.id)).toEqual([
+        "alpha-1",
+        "alpha-2",
+      ]);
+      expect(store.conversationsNeedingPush("secondary")).toEqual([]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("stops remaining local push batches when current config disables the sink", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    store.writeBundle(makeBundle("alpha-2", "alpha"));
+    store.writeBundle(makeBundle("alpha-3", "alpha"));
+    let deliveryChecks = 0;
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      pushBatchSize: 1,
+      getCurrentDeliverySnapshot: (sinkId) => {
+        expect(sinkId).toBe("primary");
+        deliveryChecks += 1;
+        const enabled = deliveryChecks <= 2;
+        return {
+          generationToken: enabled ? "enabled" : "disabled",
+          sinks: [{ id: "primary", enabled }],
+          routes: ROUTE_ALL_TO_PRIMARY,
+        };
+      },
+    });
+
+    try {
+      handle.enqueue({ kind: "push" });
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(sink.pushCalls[0].map((payload) => payload.conversation.id)).toEqual([
+        "alpha-1",
+      ]);
+      expect(store.conversationsNeedingPush("primary")).toEqual([
+        "alpha-2",
+        "alpha-3",
+      ]);
+      expect(deliveryChecks).toBeGreaterThanOrEqual(3);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("stops remaining local push batches when current routes no longer target the sink", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    let deliveryChecks = 0;
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    store.writeBundle(makeBundle("alpha-2", "alpha"));
+    store.writeBundle(makeBundle("alpha-3", "alpha"));
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      pushBatchSize: 1,
+      getCurrentDeliverySnapshot: () => {
+        deliveryChecks += 1;
+        const routes = deliveryChecks <= 2 ? ROUTE_ALL_TO_PRIMARY : [];
+        return {
+          generationToken: routes.length > 0 ? "routed" : "unrouted",
+          sinks: [{ id: "primary", enabled: true }],
+          routes,
+        };
+      },
+    });
+
+    try {
+      handle.enqueue({ kind: "push" });
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(sink.pushCalls[0].map((payload) => payload.conversation.id)).toEqual([
+        "alpha-1",
+      ]);
+      expect(store.conversationsNeedingPush("primary")).toEqual([
+        "alpha-2",
+        "alpha-3",
+      ]);
+      expect(deliveryChecks).toBeGreaterThanOrEqual(3);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("stops remaining local push batches when current config removes the sink", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    let deliveryChecks = 0;
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    store.writeBundle(makeBundle("alpha-2", "alpha"));
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      pushBatchSize: 1,
+      getCurrentDeliverySnapshot: () => {
+        deliveryChecks += 1;
+        const sinkPresent = deliveryChecks <= 2;
+        return {
+          generationToken: sinkPresent ? "present" : "removed",
+          sinks: sinkPresent ? [{ id: "primary", enabled: true }] : [],
+          routes: ROUTE_ALL_TO_PRIMARY,
+        };
+      },
+    });
+
+    try {
+      handle.enqueue({ kind: "push" });
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(sink.pushCalls[0].map((payload) => payload.conversation.id)).toEqual([
+        "alpha-1",
+      ]);
+      expect(store.conversationsNeedingPush("primary")).toEqual(["alpha-2"]);
+      expect(deliveryChecks).toBeGreaterThanOrEqual(3);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("does not record push success when config changes during an in-flight batch", async () => {
+    const store = new InMemoryConversationStore();
+    const pushStarted = deferred<void>();
+    const finishPush = deferred<void>();
+    const sink = new TestSink("primary");
+    let generationToken = "before";
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+
+    sink.pushImpl = async (payloads) => {
+      pushStarted.resolve();
+      await finishPush.promise;
+      return {
+        pushed: payloads.length,
+        failed: 0,
+        errors: [],
+      };
+    };
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      getCurrentDeliverySnapshot: () => ({
+        generationToken,
+        sinks: [{ id: "primary", enabled: true }],
+        routes: ROUTE_ALL_TO_PRIMARY,
+      }),
+    });
+
+    try {
+      handle.enqueue({ kind: "push" });
+      await pushStarted.promise;
+      generationToken = "after";
+      finishPush.resolve();
+      await handle.waitForIdle();
+
+      expect(sink.pushCalls).toHaveLength(1);
+      expect(store.conversationsNeedingPush("primary")).toEqual(["alpha-1"]);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
+  test("fatal config reload stops without shutdown flushing stale sink routes", async () => {
+    const store = new InMemoryConversationStore();
+    const sink = new TestSink("primary");
+    store.writeBundle(makeBundle("alpha-1", "alpha"));
+    const reloadStarted = deferred<void>();
+    const finishReload = deferred<void>();
+    const reloadCompleted = deferred<void>();
+
+    const handle = await startPipeline({
+      adapterSource: [],
+      store,
+      sinks: [sink],
+      routes: ROUTE_ALL_TO_PRIMARY,
+      onConfigReload: async () => {
+        reloadStarted.resolve();
+        await finishReload.promise;
+        reloadCompleted.resolve();
+        return false;
+      },
+    });
+
+    handle.reloadConfig("command");
+    await reloadStarted.promise;
+    handle.enqueue({ kind: "push" });
+    finishReload.resolve();
+    await reloadCompleted.promise;
+
+    const result = await handle.shutdown();
+
+    expect(result.timedOut).toBe(false);
+    expect(sink.pushCalls).toHaveLength(0);
+    expect(store.conversationsNeedingPush("primary")).toEqual(["alpha-1"]);
+  });
+
   test("shutdown skips queued normal work and performs one bounded final flush", async () => {
     const store = new InMemoryConversationStore();
     const sink = new TestSink("primary");
@@ -421,6 +710,7 @@ class TestSink implements Sink {
   readonly name: string;
   readonly pushCalls: PushPayload[][] = [];
   closeCalls = 0;
+  pushImpl?: (payloads: PushPayload[]) => Promise<PushResult>;
 
   constructor(readonly id: string) {
     this.name = id;
@@ -428,11 +718,14 @@ class TestSink implements Sink {
 
   async push(payloads: PushPayload[]): Promise<PushResult> {
     this.pushCalls.push(clonePayloads(payloads));
-    return {
-      pushed: payloads.length,
-      failed: 0,
-      errors: [],
-    };
+    const result = this.pushImpl
+      ? await this.pushImpl(payloads)
+      : {
+          pushed: payloads.length,
+          failed: 0,
+          errors: [],
+        };
+    return result;
   }
 
   async healthCheck() {
