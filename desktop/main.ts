@@ -9,6 +9,7 @@ import {
   DESKTOP_PRELOAD_FILE,
   DESKTOP_WEB_PREFERENCES,
 } from "./security";
+import { resolveDesktopEntry } from "./entry";
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -34,7 +35,12 @@ async function createMainWindow(): Promise<BrowserWindow> {
     }
   });
 
-  await window.loadFile(join(CURRENT_DIR, "index.html"));
+  const entry = resolveDesktopEntry(CURRENT_DIR);
+  if (entry.kind === "dev-server") {
+    await window.loadURL(entry.url);
+  } else {
+    await window.loadFile(entry.filePath);
+  }
   return window;
 }
 

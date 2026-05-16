@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { join } from "path";
 import { DESKTOP_IPC_CHANNELS, createDesktopBridge } from "../desktop/bridge";
 import { createDesktopDaemonClient } from "../desktop/daemon-client";
+import {
+  DESKTOP_DEV_SERVER_URL_ENV,
+  normalizeDesktopDevServerUrl,
+  resolveDesktopEntry,
+} from "../desktop/entry";
 import { installDesktopBridge } from "../desktop/preload";
 import {
   DESKTOP_CONTENT_SECURITY_POLICY,
@@ -23,6 +29,8 @@ import type {
   DesktopConversationDetailView,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopLogsView,
+  DesktopRoutingView,
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
@@ -54,6 +62,38 @@ describe("desktop shell service", () => {
     expect(DESKTOP_CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
   });
 
+  test("desktop dev entry is explicit localhost-only React/Vite wiring", () => {
+    const currentDir = "/tmp/jin-desktop-dist";
+
+    expect(resolveDesktopEntry(currentDir, {})).toEqual({
+      kind: "file",
+      filePath: join(currentDir, "index.html"),
+    });
+    expect(
+      resolveDesktopEntry(currentDir, {
+        [DESKTOP_DEV_SERVER_URL_ENV]:
+          "http://127.0.0.1:5174/desktop/index.dev.html",
+      }),
+    ).toEqual({
+      kind: "dev-server",
+      url: "http://127.0.0.1:5174/desktop/index.dev.html",
+    });
+    expect(() =>
+      normalizeDesktopDevServerUrl("https://127.0.0.1:5174"),
+    ).toThrow("must use http");
+    expect(() =>
+      normalizeDesktopDevServerUrl("http://192.168.1.20:5174"),
+    ).toThrow("must point at localhost");
+
+    const devHtml = readFileSync(
+      new URL("../desktop/index.dev.html", import.meta.url),
+      "utf8",
+    );
+    expect(devHtml).toContain("/desktop/react-entry.tsx");
+    expect(devHtml).toContain("ws://127.0.0.1:*");
+    expect(devHtml).toContain("http://localhost:*");
+  });
+
   test("daemon client reads the typed desktop viewer route paths", async () => {
     const requests: Array<{
       method: string;
@@ -80,6 +120,8 @@ describe("desktop shell service", () => {
       since: "7d",
       limit: 12,
     });
+    const logs = await client.getLogs({ limit: 25 });
+    const routing = await client.getRouting();
     const detail = await client.getConversationDetail("desktop-child");
     const trace = await client.getTraceView("desktop-child");
     const tree = await client.getTreeView("desktop-child");
@@ -87,6 +129,8 @@ describe("desktop shell service", () => {
     expect(compatibility.desktopApiVersion).toBe(DESKTOP_API_VERSION);
     expect(home.overview.conversations).toBe(3);
     expect(list.conversations[0]?.id).toBe("desktop-child");
+    expect(logs.lines.at(-1)).toBe("Pushed 2 conversations to sink team-postgres.");
+    expect(routing.projects[0]?.sinks[0]?.sinkId).toBe("team-postgres");
     expect(detail.conversation.id).toBe("desktop-child");
     expect(trace.selectedConversationId).toBe("desktop-child");
     expect(tree.selectedConversationId).toBe("desktop-child");
@@ -102,6 +146,8 @@ describe("desktop shell service", () => {
         method: "GET",
         path: "/api/desktop/conversations?adapter=claude-code&since=7d&limit=12",
       },
+      { method: "GET", path: "/api/desktop/logs?limit=25" },
+      { method: "GET", path: "/api/desktop/routing" },
       { method: "GET", path: "/api/desktop/conversations/desktop-child" },
       { method: "GET", path: "/api/desktop/conversations/desktop-child/trace" },
       { method: "GET", path: "/api/desktop/conversations/desktop-child/tree" },
@@ -208,6 +254,8 @@ describe("desktop shell service", () => {
 
     const snapshot = await bridge.getHomeSnapshot();
     const list = await bridge.listConversations({ limit: 4 });
+    const logs = await bridge.getLogs({ limit: 12 });
+    const routing = await bridge.getRouting();
     const detail = await bridge.getConversationDetail("desktop-child");
     const trace = await bridge.getTraceView("desktop-child");
     const tree = await bridge.getTreeView("desktop-child");
@@ -215,6 +263,8 @@ describe("desktop shell service", () => {
 
     expect(snapshot.data?.overview.conversations).toBe(3);
     expect(list.conversations[0]?.id).toBe("desktop-child");
+    expect(logs.returnedLines).toBe(3);
+    expect(routing.projects[0]?.gitRemote).toBe("github.com/acme/jin");
     expect(detail.parent?.id).toBe("desktop-root");
     expect(trace.conversations).toHaveLength(2);
     expect(tree.tree?.conversation.id).toBe("desktop-root");
@@ -222,6 +272,8 @@ describe("desktop shell service", () => {
     expect(Array.from(handlers.keys())).toEqual([
       DESKTOP_IPC_CHANNELS.homeSnapshot,
       DESKTOP_IPC_CHANNELS.controlAction,
+      DESKTOP_IPC_CHANNELS.logs,
+      DESKTOP_IPC_CHANNELS.routing,
       DESKTOP_IPC_CHANNELS.conversationList,
       DESKTOP_IPC_CHANNELS.conversationDetail,
       DESKTOP_IPC_CHANNELS.traceView,
@@ -235,6 +287,13 @@ describe("desktop shell service", () => {
         "delete",
       ),
     ).rejects.toThrow("Invalid Desktop control action");
+    await expect(
+      invokeRegisteredHandler(
+        handlers,
+        DESKTOP_IPC_CHANNELS.logs,
+        { limit: 0 },
+      ),
+    ).rejects.toThrow("Invalid Desktop logs limit");
     await expect(
       invokeRegisteredHandler(
         handlers,
@@ -281,6 +340,14 @@ function resolveRoutePayload(path: string): unknown {
     "/api/desktop/conversations?adapter=claude-code&since=7d&limit=12"
   ) {
     return makeConversationListView();
+  }
+
+  if (path === "/api/desktop/logs?limit=25") {
+    return makeLogsView();
+  }
+
+  if (path === "/api/desktop/routing") {
+    return makeRoutingView();
   }
 
   if (path === "/api/desktop/conversations/desktop-child") {
@@ -364,6 +431,68 @@ function makeHomeData(): DesktopHomeData {
         sessions: 2,
         tokens: 144,
         cost: 0.8,
+      },
+    ],
+  };
+}
+
+function makeLogsView(): DesktopLogsView {
+  return {
+    generatedAt: "2026-04-29T08:55:00.000Z",
+    path: "/tmp/jin/jin.log",
+    limit: 25,
+    totalLines: 3,
+    returnedLines: 3,
+    truncated: false,
+    lines: [
+      "Local daemon query socket ready.",
+      "WARN watcher restart delayed.",
+      "Pushed 2 conversations to sink team-postgres.",
+    ],
+  };
+}
+
+function makeRoutingView(): DesktopRoutingView {
+  return {
+    generatedAt: "2026-04-29T08:55:00.000Z",
+    sinks: [
+      {
+        id: "team-postgres",
+        type: "postgres",
+        enabled: true,
+        name: "team-postgres",
+        teamId: "jin-team",
+        userId: "eden-mbp",
+      },
+    ],
+    routes: [
+      {
+        index: 0,
+        match: {
+          remote: "github.com/acme/*",
+        },
+        sinkIds: ["team-postgres"],
+      },
+    ],
+    projects: [
+      {
+        id: "github.com%2Facme%2Fjin",
+        name: "github.com/acme/jin",
+        gitRemote: "github.com/acme/jin",
+        conversationCount: 3,
+        routedConversations: 3,
+        unroutedConversations: 0,
+        totalTokens: 244,
+        totalCost: 1.32,
+        lastSeen: "2026-04-29T08:55:00.000Z",
+        adapters: ["claude-code"],
+        sinks: [
+          {
+            sinkId: "team-postgres",
+            routedConversations: 3,
+            active: true,
+          },
+        ],
       },
     ],
   };
@@ -579,6 +708,12 @@ function buildDaemonClient() {
     },
     async getHomeData() {
       return makeHomeData();
+    },
+    async getLogs() {
+      return makeLogsView();
+    },
+    async getRouting() {
+      return makeRoutingView();
     },
     async listConversations() {
       return makeConversationListView();

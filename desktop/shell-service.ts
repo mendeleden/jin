@@ -10,6 +10,9 @@ import type {
   DesktopControlActionResult,
   DesktopCompatibilityStatus,
   DesktopHomeSnapshot,
+  DesktopLogsRequest,
+  DesktopLogsView,
+  DesktopRoutingView,
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
@@ -35,6 +38,8 @@ export interface DesktopIpcMain {
 export interface DesktopShellService {
   getHomeSnapshot(): Promise<DesktopHomeSnapshot>;
   runControlAction(action: LocalControlAction): Promise<DesktopControlActionResult>;
+  getLogs(request?: DesktopLogsRequest): Promise<DesktopLogsView>;
+  getRouting(): Promise<DesktopRoutingView>;
   listConversations(
     request?: DesktopConversationListRequest,
   ): Promise<DesktopConversationListView>;
@@ -99,6 +104,12 @@ export function createDesktopShellService(
     async runControlAction(action) {
       return controlBoundary.runAction(action);
     },
+    async getLogs(request) {
+      return daemonClient.getLogs(request);
+    },
+    async getRouting() {
+      return daemonClient.getRouting();
+    },
     async listConversations(request) {
       return daemonClient.listConversations(request);
     },
@@ -128,6 +139,16 @@ export function registerDesktopIpcHandlers(
       return service.runControlAction(parseControlAction(action));
     },
   );
+  replaceHandler(
+    ipcMain,
+    DESKTOP_IPC_CHANNELS.logs,
+    (_event, request) => {
+      return service.getLogs(parseLogsRequest(request));
+    },
+  );
+  replaceHandler(ipcMain, DESKTOP_IPC_CHANNELS.routing, () => {
+    return service.getRouting();
+  });
   replaceHandler(
     ipcMain,
     DESKTOP_IPC_CHANNELS.conversationList,
@@ -177,6 +198,27 @@ function parseControlAction(value: unknown): LocalControlAction {
   }
 
   throw new Error("Invalid Desktop control action.");
+}
+
+function parseLogsRequest(value: unknown): DesktopLogsRequest | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!isPlainRecord(value)) {
+    throw new Error("Invalid Desktop logs request.");
+  }
+
+  const request: DesktopLogsRequest = {};
+  const limit = value.limit;
+  if (limit !== undefined) {
+    if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
+      throw new Error("Invalid Desktop logs limit.");
+    }
+    request.limit = limit;
+  }
+
+  return request;
 }
 
 function parseConversationListRequest(

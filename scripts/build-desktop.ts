@@ -25,7 +25,7 @@ await buildEntry({
   external: ["electron"],
 });
 await buildEntry({
-  entrypoint: "renderer.ts",
+  entrypoint: "react-entry.tsx",
   outfile: "renderer.js",
   target: "browser",
   format: "esm",

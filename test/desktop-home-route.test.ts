@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createApiFetchHandler } from "../src/api/server";
 import {
   DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
   DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
+  buildDesktopLogsView,
 } from "../src/api/routes";
 import { getStore, type SqliteConversationStore } from "../src/db";
 import type {
@@ -46,6 +47,39 @@ describe("desktop viewer routes", () => {
       minimumDesktopApiVersion: DESKTOP_MINIMUM_API_VERSION,
       updateCommand: DESKTOP_UPDATE_COMMAND,
       cliUpdateCommand: CLI_UPDATE_COMMAND,
+    });
+  });
+
+  test("serves bounded desktop log tails without exposing direct file access to renderer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-desktop-logs-"));
+    cleanups.push(() => removeTestDir(dir));
+    const logPath = join(dir, "jin.log");
+    writeFileSync(
+      logPath,
+      [
+        "Local daemon query socket ready.",
+        "WARN watcher restart delayed.",
+        "Pushed 2 conversations to sink team-postgres.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const payload = buildDesktopLogsView(logPath, { limit: 2 });
+
+    expect(payload.path).toBe(logPath);
+    expect(payload.limit).toBe(2);
+    expect(payload.totalLines).toBe(3);
+    expect(payload.returnedLines).toBe(2);
+    expect(payload.truncated).toBe(true);
+    expect(payload.lines).toEqual([
+      "WARN watcher restart delayed.",
+      "Pushed 2 conversations to sink team-postgres.",
+    ]);
+
+    expect(buildDesktopLogsView(join(dir, "missing.log"), { limit: 2 })).toMatchObject({
+      totalLines: 0,
+      returnedLines: 0,
+      lines: [],
     });
   });
 

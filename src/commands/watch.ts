@@ -146,6 +146,8 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       controlBoundary: createLocalControlBoundary({
         requestConfigReload: () => pipelineHandle.reloadConfig("command"),
       }),
+      diagnosticLogPath: diagnosticPath,
+      getRssBytes: () => process.memoryUsage().rss,
       socketPath: runtimePaths.socketPath,
     });
   } catch (error) {

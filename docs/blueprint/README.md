@@ -18,6 +18,7 @@ not the other way around.
 | [BP-08](BP-08-routing-and-config.md) | Routing & Configuration | **reviewed** | How do conversations match to sinks? How does config mutation work? |
 | [BP-09](BP-09-cli-split.md) | CLI Split — jin vs jin team | **reviewed** | Which commands belong to the developer? Which to the operator? |
 | [BP-10](BP-10-performance-validation.md) | Performance Validation & Release Gate | **draft** | How do packets prove perf and memory budgets before release? |
+| [BP-11](BP-11-desktop-daemon-boundary.md) | Desktop Daemon Boundary | **draft** | Which local daemon APIs and Desktop IPC channels are stable product capabilities? |
 | [BP-Product-Strategy](BP-Product-Strategy.md) | Product Strategy | **draft** | What are the enduring product boundaries for Daemon, Desktop, Team, and integrations? |
 
 ## Dependency Order
@@ -34,10 +35,14 @@ BP-05 (Store)    BP-06 (Sinks)    BP-07 (Lifecycle)    BP-08 (Routing)
   └──────────────→ BP-10 (Performance Validation)
 BP-02 ───────────→ BP-10
 BP-04 ───────────→ BP-10
+BP-07 ───────────→ BP-11 (Desktop Daemon Boundary)
+BP-08 ───────────→ BP-11
 ```
 
 BP-01 and BP-04 come first for runtime structure. BP-10 sits on top of
 BP-02/BP-04/BP-05 as the release-validation contract for perf-sensitive work.
+BP-11 sits on top of BP-07/BP-08 as the catalog for daemon APIs and Desktop IPC
+channels.
 
 Preview-friendly standalone Mermaid diagrams derived from these blueprint docs
 live under `docs/blueprint/mermaid/`.

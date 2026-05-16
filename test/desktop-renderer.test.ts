@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { renderApp, type RendererState } from "../desktop/renderer";
+import {
+  DesktopRendererController,
+  ESTIMATED_COST_HELP,
+  renderApp,
+  type RendererState,
+} from "../desktop/renderer";
+import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
 import type {
   Conversation,
   Message,
@@ -11,6 +17,8 @@ import type {
   DesktopConversationListView,
   DesktopControlStatus,
   DesktopHomeSnapshot,
+  DesktopLogsView,
+  DesktopRoutingView,
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
@@ -23,6 +31,64 @@ import {
 import { VERSION } from "../src/updater";
 
 describe("desktop renderer", () => {
+  test("controller refreshes through injected preload bridge state", async () => {
+    const snapshots: RendererState[] = [];
+    const library = makeConversationListView();
+    library.conversations = [
+      makeChildConversation(),
+      makeForkConversation(),
+      makeRootConversation(),
+    ];
+    const controller = new DesktopRendererController({
+      bridge: {
+        async getHomeSnapshot() {
+          return makeSnapshot("running");
+        },
+        async listConversations() {
+          return library;
+        },
+        async getConversationDetail() {
+          return makeConversationDetailView();
+        },
+        async getLogs() {
+          return makeLogsView();
+        },
+        async getRouting() {
+          return makeRoutingView();
+        },
+        async getTraceView() {
+          return makeTraceView();
+        },
+        async getTreeView() {
+          return makeTreeView();
+        },
+        async runControlAction() {
+          return {
+            action: "restart",
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            status: makeStatus("running"),
+          };
+        },
+      },
+      initialState: {
+        activeView: "conversations",
+      },
+      onChange(state) {
+        snapshots.push(state);
+      },
+    });
+
+    await controller.refreshShell({ preserveSelection: true });
+
+    const finalSnapshot = snapshots.at(-1);
+    expect(finalSnapshot?.snapshot?.status.runtime.state).toBe("running");
+    expect(finalSnapshot?.library?.conversations[0]?.id).toBe("desktop-child");
+    expect(finalSnapshot?.detail?.conversation.id).toBe("desktop-child");
+  });
+
   test("stopping runtime in conversations view renders a paused workbench state", () => {
     const html = renderApp(
       makeState({
@@ -97,12 +163,341 @@ describe("desktop renderer", () => {
     expect(html).toContain("Usage by harness");
     expect(html).toContain("Usage by model");
     expect(html).toContain("claude-opus");
-    expect(html).toContain("Daily usage by harness");
+    expect(html).toContain("Token &amp; Cost Observatory");
+    expect(html).toContain("Daily burn chart");
+    expect(html).toContain("usage-area-svg");
     expect(html).toContain("usage-chart");
+    expect(html).toContain("Mission Control");
+    expect(html).toContain("Conversation Flow");
+    expect(html).toContain('data-home-flow-graph="mission-control"');
+    expect(html).toContain(
+      "Conversation flow from git projects to adapters and trace relationships",
+    );
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
     expect(html).not.toContain("Daemon status and boundary paths");
+  });
+
+  test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
+    const runningHtml = renderApp(
+      makeState({
+        activeView: "home",
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+    const runningMetrics = extractSidebarRuntimeMetrics(runningHtml);
+
+    expect(extractMetricLabels(runningMetrics)).toEqual([
+      "Conversations",
+      "Messages",
+      "Tool calls",
+      "Tokens",
+      "Cost (estimated)",
+    ]);
+    expect(runningMetrics).not.toContain("<span>Traces</span>");
+    expect(runningMetrics).toContain("$1.32");
+    expect(runningMetrics.indexOf("Cost (estimated)")).toBeGreaterThan(
+      runningMetrics.indexOf("Tokens"),
+    );
+    expect(runningHtml).toContain("<span>Traces</span>");
+    expect(runningHtml).not.toContain("Next surfaces");
+    expect(runningHtml).not.toContain("<span>Search</span>");
+    expect(runningHtml).not.toContain("<span>Projects</span>");
+    expect(runningHtml).not.toContain("<span>Health</span>");
+
+    const placeholderHtml = renderApp(
+      makeState({
+        activeView: "home",
+        snapshot: makeSnapshot("stopped"),
+      }),
+    );
+    const placeholderMetrics = extractSidebarRuntimeMetrics(placeholderHtml);
+
+    expect(extractMetricLabels(placeholderMetrics)).toEqual([
+      "Conversations",
+      "Messages",
+      "Tool calls",
+      "Tokens",
+      "Cost (estimated)",
+    ]);
+    expect(placeholderMetrics).not.toContain("<span>Traces</span>");
+  });
+
+  test("react shell renders Home and Routing through componentized surfaces", () => {
+    const homeHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+
+    expect(homeHtml).toContain('data-home-flow-graph="mission-control"');
+    expect(homeHtml).toContain("Mission Control");
+    expect(homeHtml).toContain("Conversation Flow");
+    expect(homeHtml).not.toContain("data-legacy-html-view");
+
+    const routingHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "routing",
+        snapshot: makeSnapshot("running"),
+        routing: makeRoutingView(),
+      }),
+    );
+
+    expect(routingHtml).toContain('data-routing-graph="project-to-sink"');
+    expect(routingHtml).toContain("Project to sink routing flow graph");
+    expect(routingHtml).toContain("Local-only conversations stay in project cards");
+    expect(routingHtml).not.toContain("data-legacy-html-view");
+  });
+
+  test("react shell keeps deferred views behind an explicit legacy adapter", () => {
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "logs",
+        snapshot: makeSnapshot("running"),
+        logs: makeLogsView(),
+      }),
+    );
+
+    expect(html).toContain('data-legacy-html-view="logs"');
+    expect(html).toContain("Daemon log tail");
+  });
+
+  test("react sidebar cost uses a Radix tooltip affordance with the full estimated amount", () => {
+    const snapshot = makeSnapshot("running");
+    if (!snapshot.data) {
+      throw new Error("expected running snapshot data");
+    }
+    snapshot.data.overview = {
+      ...snapshot.data.overview,
+      cost: 1234567.89,
+    };
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot,
+      }),
+    );
+    const costMetric = extractReactCostMetric(html);
+
+    expect(costMetric).toContain("Cost (estimated)");
+    expect(costMetric).toContain("$1,234,567.89");
+    expect(costMetric).toContain('data-cost-tooltip-trigger="estimated-cost"');
+    expect(costMetric).toContain("sidebar-cost-tooltip-content");
+    expect(costMetric).toContain(ESTIMATED_COST_HELP);
+    expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
+      costMetric.indexOf("$1,234,567.89"),
+    );
+    const sidebar = extractReactSidebar(html);
+    expect(sidebar).not.toContain("Next surfaces");
+    expect(sidebar).not.toContain(">Search<");
+    expect(sidebar).not.toContain(">Projects<");
+    expect(sidebar).not.toContain(">Health<");
+  });
+
+  test("logs workspace renders the daemon log tail through desktop state", () => {
+    const html = renderApp(
+      makeState({
+        activeView: "logs",
+        snapshot: makeSnapshot("running"),
+        logs: makeLogsView(),
+      }),
+    );
+
+    expect(html).toContain("Daemon log tail");
+    expect(html).toContain("Runtime log");
+    expect(html).toContain("/tmp/jin/jin.log");
+    expect(html).toContain("Local daemon query socket ready.");
+    expect(html).toContain("WARN watcher restart delayed.");
+    expect(html).toContain("log-line warning");
+  });
+
+  test("routing workspace renders project-to-sink graph state", () => {
+    const html = renderApp(
+      makeState({
+        activeView: "routing",
+        snapshot: makeSnapshot("running"),
+        routing: makeRoutingView(),
+      }),
+    );
+
+    expect(html).toContain("Projects &rarr; Sinks");
+    expect(html).toContain("Project to sink routing flow graph");
+    expect(html).toContain(">acme/jin.git</div>");
+    expect(html).toContain(">mendeleden/jin.git</div>");
+    expect(html).not.toContain(">https://github.com/acme/jin.git</div>");
+    expect(html.match(/data-project-label-width="326"/g)).toHaveLength(2);
+    expect(html).toContain(">2 routed, 1 local only</div>");
+    expect(html).not.toContain("2 / 3 routed - 244 tokens");
+    expect(html).toContain("Remote: https://github.com/acme/jin.git");
+    expect(html).toContain("Conversations: 2 routed / 3 total");
+    expect(html).toContain("Tokens: 244");
+    expect(html).toContain("Adapters: claude-code, codex");
+    expect(html).toContain(
+      "Sink targets: team-postgres (postgres): 2 routed, active; local only: 1",
+    );
+    expect(html).toContain("team-postgres");
+    expect(html).toContain('data-routing-graph="project-to-sink"');
+    expect(html).toContain('data-sink-node-id="team-postgres"');
+    expect(html).toContain('data-sink-node-id="archive-s3"');
+    expect(html.match(/data-sink-node-id=/g)).toHaveLength(2);
+    expect(html).not.toContain("Thickness = routed conversations");
+    expect(html).toContain("Solid blue = routed sink path");
+    expect(html).toContain("Local-only conversations stay in project cards");
+    expect(html).not.toContain("Dashed amber = unrouted conversations");
+    expect(html).not.toContain("routing-flow-path muted");
+    expect(html.match(/data-refresh="shell"/g) ?? []).toHaveLength(1);
+    expect(extractTopbar(html)).toContain('data-refresh="shell"');
+    expect(extractRoutingWorkspace(html)).not.toContain('data-refresh="shell"');
+    const routingFlowStrokeWidths = Array.from(
+      html.matchAll(
+        /<path class="routing-flow-path(?: muted)?"[^>]*stroke-width="([^"]+)"/g,
+      ),
+      (match) => match[1],
+    );
+    expect(routingFlowStrokeWidths).toHaveLength(2);
+    expect([...new Set(routingFlowStrokeWidths)]).toEqual(["4"]);
+    expect(html).toContain("Route rules");
+    expect(html).toContain("remote=github.com/acme/*");
+    expect(html).toContain("enabled");
+  });
+
+  test("routing graph bounds long project and sink labels with detail affordances", () => {
+    const routing = makeRoutingView();
+    const longRemote =
+      "https://github.com/acme/extremely-long-routing-graph-overflow-regression-repository.git";
+    const longSinkId =
+      "earlywarning-postgres-production-primary-logical-replica-destination";
+
+    routing.sinks[0] = {
+      ...routing.sinks[0]!,
+      id: longSinkId,
+      name: longSinkId,
+    };
+    routing.routes[0] = {
+      ...routing.routes[0]!,
+      sinkIds: [longSinkId],
+    };
+    routing.projects[0] = {
+      ...routing.projects[0]!,
+      id:
+        "github.com%2Facme%2F" +
+        "extremely-long-routing-graph-overflow-regression-repository.git",
+      name: longRemote,
+      gitRemote: longRemote,
+      sinks: [
+        {
+          sinkId: longSinkId,
+          routedConversations: 2,
+          active: true,
+        },
+      ],
+    };
+
+    const html = renderApp(
+      makeState({
+        activeView: "routing",
+        snapshot: makeSnapshot("running"),
+        routing,
+      }),
+    );
+
+    expect(html).toContain('viewBox="0 0 1280 ');
+    expect(html).toContain('data-project-label-width="326"');
+    expect(html).toContain('data-sink-label-width="254"');
+    expect(html.match(/data-label-truncated="true"/g)).toHaveLength(2);
+    expect(html).toContain(">acme/extremely-long-rou...repository.git</div>");
+    expect(html).toContain(">earlywarning-pos...stination</div>");
+    expect(html).not.toContain(
+      `class="routing-node-label-title">${longRemote}</div>`,
+    );
+    expect(html).not.toContain(
+      `class="routing-node-label-title">${longSinkId}</div>`,
+    );
+    expect(html).toContain(`Remote: ${longRemote}`);
+    expect(html).toContain(`ID: ${longSinkId}`);
+    expect(html).toContain(`data-sink-node-id="${longSinkId}"`);
+  });
+
+  test("routing graph keeps local-only projects in cards without placeholder legs", () => {
+    const routing = makeRoutingView();
+    routing.projects.push({
+      id: "github.com%2Facme%2Flocal-only",
+      name: "https://github.com/acme/local-only.git",
+      gitRemote: "https://github.com/acme/local-only.git",
+      conversationCount: 5,
+      routedConversations: 0,
+      unroutedConversations: 5,
+      totalTokens: 900,
+      totalCost: 0.88,
+      lastSeen: "2026-04-29T08:57:00.000Z",
+      adapters: ["codex"],
+      sinks: [],
+    });
+
+    const html = renderApp(
+      makeState({
+        activeView: "routing",
+        snapshot: makeSnapshot("running"),
+        routing,
+      }),
+    );
+
+    expect(html).toContain(">0 routed, 5 local only</div>");
+    expect(html).toContain("Sink targets: none; local only: 5");
+    expect(html).not.toContain("unrouted");
+    expect(html).not.toContain("routing-flow-path muted");
+    expect(html).not.toContain("stroke-dasharray");
+    expect(
+      Array.from(html.matchAll(/<path class="routing-flow-path"/g)),
+    ).toHaveLength(2);
+  });
+
+  test("logs refresh reports stale preload bridges with an actionable error", async () => {
+    const snapshots: RendererState[] = [];
+    const controller = new DesktopRendererController({
+      bridge: {
+        async getHomeSnapshot() {
+          return makeSnapshot("running");
+        },
+        async listConversations() {
+          return makeConversationListView();
+        },
+        async getConversationDetail() {
+          return makeConversationDetailView();
+        },
+        async getTraceView() {
+          return makeTraceView();
+        },
+        async getTreeView() {
+          return makeTreeView();
+        },
+        async runControlAction() {
+          return {
+            action: "restart",
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            status: makeStatus("running"),
+          };
+        },
+      } as any,
+      initialState: {
+        activeView: "logs",
+        snapshot: makeSnapshot("running"),
+      },
+      onChange(state) {
+        snapshots.push(state);
+      },
+    });
+
+    await controller.refreshLogs();
+
+    expect(snapshots.at(-1)?.logsError).toContain("preload bridge is stale");
+    expect(renderApp(snapshots.at(-1)!)).toContain("Restart Jin Desktop");
   });
 
   test("conversation inspector can render as a collapsed side rail", () => {
@@ -190,6 +585,55 @@ describe("desktop renderer", () => {
   });
 });
 
+function extractSidebarRuntimeMetrics(html: string): string {
+  const match = html.match(
+    /<section class="sidebar-panel sidebar-runtime">[\s\S]*?<div class="sidebar-metrics">([\s\S]*?)\n        <\/div>\n      <\/section>/,
+  );
+  if (!match) {
+    throw new Error("expected sidebar runtime metrics");
+  }
+  return match[1] ?? "";
+}
+
+function extractMetricLabels(html: string): string[] {
+  return Array.from(
+    html.matchAll(/<span(?: class="sidebar-metric-label")?>\s*([^<\n]+?)\s*(?:<|<\/span>)/g),
+    (match) => (match[1] ?? "").trim(),
+  );
+}
+
+function extractTopbar(html: string): string {
+  const match = html.match(/<header class="topbar">[\s\S]*?<\/header>/);
+  if (!match) {
+    throw new Error("expected topbar");
+  }
+  return match[0];
+}
+
+function extractReactCostMetric(html: string): string {
+  const index = html.indexOf("sidebar-metric sidebar-metric-cost");
+  if (index < 0) {
+    throw new Error("expected react sidebar cost metric");
+  }
+  return html.slice(index, index + 4000);
+}
+
+function extractReactSidebar(html: string): string {
+  const match = html.match(/<aside class="sidebar [\s\S]*?<\/aside>/);
+  if (!match) {
+    throw new Error("expected react sidebar");
+  }
+  return match[0];
+}
+
+function extractRoutingWorkspace(html: string): string {
+  const match = html.match(/<section class="workspace-routing">[\s\S]*?\n      <\/main>/);
+  if (!match) {
+    throw new Error("expected routing workspace");
+  }
+  return match[0];
+}
+
 function makeState(overrides: Partial<RendererState> = {}): RendererState {
   return {
     activeView: "home",
@@ -206,6 +650,15 @@ function makeState(overrides: Partial<RendererState> = {}): RendererState {
     busyAction: null,
     message: null,
     snapshot: makeSnapshot("running"),
+    logsRequest: {
+      limit: 240,
+    },
+    logs: null,
+    logsLoading: false,
+    logsError: null,
+    routing: null,
+    routingLoading: false,
+    routingError: null,
     libraryRequest: {
       limit: 48,
     },
@@ -219,6 +672,95 @@ function makeState(overrides: Partial<RendererState> = {}): RendererState {
     trace: null,
     tree: null,
     ...overrides,
+  };
+}
+
+function makeLogsView(): DesktopLogsView {
+  return {
+    generatedAt: "2026-04-29T08:55:00.000Z",
+    path: "/tmp/jin/jin.log",
+    limit: 240,
+    totalLines: 3,
+    returnedLines: 3,
+    truncated: false,
+    lines: [
+      "Local daemon query socket ready.",
+      "WARN watcher restart delayed.",
+      "Pushed 2 conversations to sink team-postgres.",
+    ],
+  };
+}
+
+function makeRoutingView(): DesktopRoutingView {
+  return {
+    generatedAt: "2026-04-29T08:55:00.000Z",
+    sinks: [
+      {
+        id: "team-postgres",
+        type: "postgres",
+        enabled: true,
+        name: "team-postgres",
+        teamId: "jin-team",
+        userId: "eden-mbp",
+      },
+      {
+        id: "archive-s3",
+        type: "s3",
+        enabled: false,
+        name: "archive-s3",
+        teamId: "jin-team",
+        userId: "",
+      },
+    ],
+    routes: [
+      {
+        index: 0,
+        match: {
+          remote: "github.com/acme/*",
+        },
+        sinkIds: ["team-postgres"],
+      },
+    ],
+    projects: [
+      {
+        id: "github.com%2Facme%2Fjin",
+        name: "https://github.com/acme/jin.git",
+        gitRemote: "https://github.com/acme/jin.git",
+        conversationCount: 3,
+        routedConversations: 2,
+        unroutedConversations: 1,
+        totalTokens: 244,
+        totalCost: 1.32,
+        lastSeen: "2026-04-29T08:55:00.000Z",
+        adapters: ["claude-code", "codex"],
+        sinks: [
+          {
+            sinkId: "team-postgres",
+            routedConversations: 2,
+            active: true,
+          },
+        ],
+      },
+      {
+        id: "github.com%2Fmendeleden%2Fjin.git",
+        name: "https://github.com/mendeleden/jin.git",
+        gitRemote: "https://github.com/mendeleden/jin.git",
+        conversationCount: 4,
+        routedConversations: 4,
+        unroutedConversations: 0,
+        totalTokens: 1200,
+        totalCost: 2.4,
+        lastSeen: "2026-04-29T08:56:00.000Z",
+        adapters: ["codex"],
+        sinks: [
+          {
+            sinkId: "archive-s3",
+            routedConversations: 4,
+            active: false,
+          },
+        ],
+      },
+    ],
   };
 }
 

@@ -10,6 +10,9 @@ import type {
   DesktopConversationListRequest,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopLogsRequest,
+  DesktopLogsView,
+  DesktopRoutingView,
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
@@ -17,6 +20,8 @@ import type {
 export interface DesktopDaemonClient {
   getCompatibility(): Promise<DesktopCompatibilityInfo>;
   getHomeData(): Promise<DesktopHomeData>;
+  getLogs(request?: DesktopLogsRequest): Promise<DesktopLogsView>;
+  getRouting(): Promise<DesktopRoutingView>;
   listConversations(
     request?: DesktopConversationListRequest,
   ): Promise<DesktopConversationListView>;
@@ -70,6 +75,26 @@ export function createDesktopDaemonClient(
       return requestJson<DesktopHomeData>(
         request,
         "/api/desktop/home",
+        authToken,
+      );
+    },
+    async getLogs(filters = {}) {
+      const search = new URLSearchParams();
+      if (typeof filters.limit === "number") {
+        search.set("limit", String(filters.limit));
+      }
+
+      const pathname = `/api/desktop/logs${search.size > 0 ? `?${search.toString()}` : ""}`;
+      return requestJson<DesktopLogsView>(
+        request,
+        pathname,
+        authToken,
+      );
+    },
+    async getRouting() {
+      return requestJson<DesktopRoutingView>(
+        request,
+        "/api/desktop/routing",
         authToken,
       );
     },

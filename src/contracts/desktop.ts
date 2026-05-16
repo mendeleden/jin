@@ -4,6 +4,7 @@ import type {
   Message,
   ToolCall,
 } from "./conversations";
+import type { RouteMatch, SinkType } from "./config";
 import type {
   RuntimeIssue,
   RuntimeOwnershipRecord,
@@ -160,6 +161,10 @@ export interface DesktopConversationListRequest {
   limit?: number;
 }
 
+export interface DesktopLogsRequest {
+  limit?: number;
+}
+
 export interface DesktopConversationListFilters {
   adapterId: string | null;
   since: string | null;
@@ -191,6 +196,58 @@ export interface DesktopHomeSnapshot {
   compatibility: DesktopCompatibilityStatus | null;
   data: DesktopHomeData | null;
   transportError: string | null;
+}
+
+export interface DesktopLogsView {
+  generatedAt: string;
+  path: string;
+  limit: number;
+  totalLines: number;
+  returnedLines: number;
+  truncated: boolean;
+  lines: string[];
+}
+
+export interface DesktopRoutingSinkSummary {
+  id: string;
+  type: SinkType;
+  enabled: boolean;
+  name: string;
+  teamId: string;
+  userId: string;
+}
+
+export interface DesktopRoutingRouteSummary {
+  index: number;
+  match: RouteMatch;
+  sinkIds: string[];
+}
+
+export interface DesktopRoutingProjectSinkFlow {
+  sinkId: string;
+  routedConversations: number;
+  active: boolean;
+}
+
+export interface DesktopRoutingProjectFlow {
+  id: string;
+  name: string;
+  gitRemote: string;
+  conversationCount: number;
+  routedConversations: number;
+  unroutedConversations: number;
+  totalTokens: number;
+  totalCost: number;
+  lastSeen: string;
+  adapters: string[];
+  sinks: DesktopRoutingProjectSinkFlow[];
+}
+
+export interface DesktopRoutingView {
+  generatedAt: string;
+  projects: DesktopRoutingProjectFlow[];
+  sinks: DesktopRoutingSinkSummary[];
+  routes: DesktopRoutingRouteSummary[];
 }
 
 export interface DesktopConversationDetailView {

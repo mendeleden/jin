@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { configDir } from "../src/config";
@@ -6,11 +6,25 @@ import { configDir } from "../src/config";
 const PORT = Number(process.env.PORT) || 3333;
 const HTML_PATH = join(import.meta.dir, "diagnostic-viewer.html");
 const DEBUG_LOG = resolveDiagnosticLogPath();
+const MB = 1024 * 1024;
+const DEFAULT_DEBUG_TAIL_BYTES = parsePositiveInt(
+  process.env.JIN_DIAGNOSTIC_TAIL_BYTES,
+  8 * MB,
+);
+const MAX_DEBUG_TAIL_BYTES = 64 * MB;
 
 type Candidate = {
   path: string;
   source: string;
 };
+
+function parsePositiveInt(value: string | null | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function resolveDiagnosticLogPath(): Candidate {
   const candidates = diagnosticLogCandidates();
@@ -118,13 +132,7 @@ Bun.serve({
           },
         });
       }
-      return new Response(Bun.file(DEBUG_LOG.path), {
-        headers: {
-          "content-type": "application/x-ndjson",
-          "access-control-allow-origin": "*",
-          "cache-control": "no-store",
-        },
-      });
+      return debugLogResponse(DEBUG_LOG.path, url);
     }
 
     return new Response("Not found", { status: 404 });
@@ -134,3 +142,67 @@ Bun.serve({
 console.log(`jin diagnostic viewer: http://localhost:${PORT}`);
 console.log(`reading: ${DEBUG_LOG.path}`);
 console.log(`source: ${DEBUG_LOG.source}`);
+console.log(
+  `serving latest ${Math.round(DEFAULT_DEBUG_TAIL_BYTES / MB)} MB by default; use /debug.jsonl?full=1 for the full log`,
+);
+
+function debugLogResponse(path: string, url: URL): Response {
+  const headers = {
+    "content-type": "application/x-ndjson",
+    "access-control-allow-origin": "*",
+    "cache-control": "no-store",
+  };
+
+  if (url.searchParams.get("full") === "1") {
+    return new Response(Bun.file(path), {
+      headers: {
+        ...headers,
+        "x-jin-diagnostic-partial": "false",
+      },
+    });
+  }
+
+  const stat = statSync(path);
+  const requestedTailBytes = parsePositiveInt(
+    url.searchParams.get("tailBytes"),
+    DEFAULT_DEBUG_TAIL_BYTES,
+  );
+  const tailBytes = Math.min(requestedTailBytes, MAX_DEBUG_TAIL_BYTES);
+
+  if (stat.size <= tailBytes) {
+    return new Response(Bun.file(path), {
+      headers: {
+        ...headers,
+        "x-jin-diagnostic-partial": "false",
+        "x-jin-diagnostic-log-size": String(stat.size),
+      },
+    });
+  }
+
+  const start = Math.max(0, stat.size - tailBytes);
+  const length = stat.size - start;
+  const buffer = Buffer.allocUnsafe(length);
+  const fd = openSync(path, "r");
+  try {
+    const bytesRead = readSync(fd, buffer, 0, length, start);
+    let body = buffer.subarray(0, bytesRead).toString("utf8");
+
+    if (start > 0) {
+      const firstNewline = body.indexOf("\n");
+      if (firstNewline >= 0) {
+        body = body.slice(firstNewline + 1);
+      }
+    }
+
+    return new Response(body, {
+      headers: {
+        ...headers,
+        "x-jin-diagnostic-partial": "true",
+        "x-jin-diagnostic-log-size": String(stat.size),
+        "x-jin-diagnostic-tail-bytes": String(tailBytes),
+      },
+    });
+  } finally {
+    closeSync(fd);
+  }
+}
