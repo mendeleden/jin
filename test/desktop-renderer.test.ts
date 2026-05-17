@@ -386,24 +386,20 @@ describe("desktop renderer", () => {
     expect(costMetric).toContain("Cost (estimated)");
     expect(costMetric).toContain("$1,234,567.89");
     expect(costMetric).toContain('data-cost-popover-trigger="estimated-cost"');
-    expect(costMetric).toContain('aria-haspopup="dialog"');
-    expect(costMetric).toContain('aria-expanded="false"');
     expect(costMetric).toContain(ESTIMATED_COST_HELP);
-    expect(html).not.toContain("sidebar-cost-popover-content");
+    expect(html).not.toContain("sidebar-cost-tooltip-content");
     const css = readFileSync(
       new URL("../desktop/styles.css", import.meta.url),
       "utf8",
     );
-    expect(css).toContain(".sidebar-cost-popover-content");
-    expect(css).toContain("position: fixed;");
-    expect(css).toContain("bottom: 30px;");
-    expect(css).toContain("left: 226px;");
+    expect(css).toContain(".sidebar-cost-tooltip-content");
+    expect(css).toContain(".sidebar-cost-tooltip-arrow");
     const source = readFileSync(
       new URL("../desktop/components/app-shell.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("onMouseEnter");
-    expect(source).toContain("onMouseLeave");
+    expect(source).toContain("@radix-ui/react-tooltip");
+    expect(source).toContain("RadixTooltip.Content");
     expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
       costMetric.indexOf("$1,234,567.89"),
     );

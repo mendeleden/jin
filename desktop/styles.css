@@ -428,19 +428,16 @@ pre {
   outline: none;
 }
 
-.sidebar-cost-info[aria-expanded="true"] {
+.sidebar-cost-info[data-state="delayed-open"],
+.sidebar-cost-info[data-state="instant-open"] {
   border-color: rgba(137, 180, 255, 0.56);
   background: rgba(137, 180, 255, 0.16);
 }
 
-.sidebar-cost-popover-content {
-  position: fixed;
-  right: auto;
-  bottom: 30px;
-  left: 226px;
+.sidebar-cost-tooltip-content {
   z-index: 1000;
   width: 260px;
-  max-width: calc(100vw - 252px);
+  max-width: min(260px, calc(100vw - 36px));
   border: 1px solid rgba(210, 224, 255, 0.18);
   border-radius: 10px;
   background: rgba(8, 12, 19, 0.98);
@@ -451,17 +448,8 @@ pre {
   padding: 9px 10px;
 }
 
-.sidebar-cost-popover-content::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 9px;
-  height: 9px;
-  border-right: 1px solid rgba(210, 224, 255, 0.18);
-  border-bottom: 1px solid rgba(210, 224, 255, 0.18);
-  background: rgba(8, 12, 19, 0.98);
-  transform: rotate(45deg);
+.sidebar-cost-tooltip-arrow {
+  fill: rgba(8, 12, 19, 0.98);
 }
 
 .sidebar.collapsed .sidebar-runtime {
@@ -2316,16 +2304,8 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .sidebar-cost-popover-content {
-    left: 18px;
-    right: 18px;
-    bottom: auto;
-    top: 96px;
+  .sidebar-cost-tooltip-content {
     width: auto;
-    max-width: none;
-  }
-
-  .sidebar-cost-popover-content::before {
-    display: none;
+    max-width: calc(100vw - 36px);
   }
 }

@@ -1,5 +1,6 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   FileText,
   Home,
@@ -355,7 +356,6 @@ function SidebarMetric({
   preferCompact?: boolean;
   value: number | string;
 }) {
-  const [costInfoOpen, setCostInfoOpen] = useState(false);
   const formatted =
     typeof value === "number"
       ? preferCompact
@@ -367,66 +367,43 @@ function SidebarMetric({
     formatted.exact && formatted.exact !== formatted.display
       ? formatted.exact
       : "";
-  const popoverId = "sidebar-estimated-cost-popover";
 
   return (
     <div
       className={`sidebar-metric ${estimatedCost ? "sidebar-metric-cost" : ""}`}
-      onBlur={(event) => {
-        if (
-          estimatedCost &&
-          !event.currentTarget.contains(event.relatedTarget as HTMLElement | null)
-        ) {
-          setCostInfoOpen(false);
-        }
-      }}
-      onMouseEnter={() => {
-        if (estimatedCost) {
-          setCostInfoOpen(true);
-        }
-      }}
-      onMouseLeave={() => {
-        if (estimatedCost) {
-          setCostInfoOpen(false);
-        }
-      }}
       title={exact ? `${label}: ${exact}` : labelCopy}
     >
       <span className="sidebar-metric-label">
         {labelCopy}
         {estimatedCost ? (
-          <button
-            aria-controls={popoverId}
-            aria-expanded={costInfoOpen}
-            aria-haspopup="dialog"
-            aria-label={ESTIMATED_COST_HELP}
-            className="sidebar-cost-info"
-            data-cost-popover-trigger="estimated-cost"
-            onClick={() => setCostInfoOpen(true)}
-            onFocus={() => setCostInfoOpen(true)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setCostInfoOpen(false);
-                event.currentTarget.blur();
-              }
-            }}
-            type="button"
-          >
-            <Info aria-hidden="true" />
-          </button>
+          <RadixTooltip.Provider delayDuration={80} skipDelayDuration={0}>
+            <RadixTooltip.Root>
+              <RadixTooltip.Trigger asChild>
+                <button
+                  aria-label={ESTIMATED_COST_HELP}
+                  className="sidebar-cost-info"
+                  data-cost-popover-trigger="estimated-cost"
+                  type="button"
+                >
+                  <Info aria-hidden="true" />
+                </button>
+              </RadixTooltip.Trigger>
+              <RadixTooltip.Portal>
+                <RadixTooltip.Content
+                  className="sidebar-cost-tooltip-content"
+                  data-cost-popover="estimated-cost"
+                  side="right"
+                  sideOffset={8}
+                >
+                  {ESTIMATED_COST_HELP}
+                  <RadixTooltip.Arrow className="sidebar-cost-tooltip-arrow" />
+                </RadixTooltip.Content>
+              </RadixTooltip.Portal>
+            </RadixTooltip.Root>
+          </RadixTooltip.Provider>
         ) : null}
       </span>
       <strong>{formatted.display}</strong>
-      {estimatedCost && costInfoOpen ? (
-        <div
-          className="sidebar-cost-popover-content"
-          data-cost-popover="estimated-cost"
-          id={popoverId}
-          role="dialog"
-        >
-          {ESTIMATED_COST_HELP}
-        </div>
-      ) : null}
     </div>
   );
 }
