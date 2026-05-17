@@ -1,15 +1,16 @@
 # Jin Execution Program
 
-Updated: 2026-05-16
+Updated: 2026-05-17
 Branch: main
-Focus: Full Desktop React cutover and Home observability polish.
+Focus: Premium Desktop Home and Conversations visual overhaul.
 
 ## Current Thesis
 
 Desktop should remain a typed client of the daemon boundary while the UI moves
 fully out of ad hoc renderer strings into React components. Home should render
 useful local observability from the daemon view models even when a specific
-timeline series is absent.
+timeline series is absent. The next layer is a skinny, high-density,
+Stripe/Linear-like Desktop UI with Apple-style material polish.
 
 ## Active Packets
 
@@ -20,6 +21,7 @@ timeline series is absent.
 | W4-DESKTOP-04 | merged | codex-WORKER-desktop-routing-overflow, codex-WORKER-desktop-sidebar-chrome | Stabilize Home/Routing graph UI and Desktop chrome behind typed IPC |
 | W4-DESKTOP-05 | merged | codex-WORKER-desktop-react-cutover | Cut Desktop shell, Home, and Routing over to real React components |
 | W4-DESKTOP-06 | review_ready | codex-WORKER-desktop-full-react-cutover, codex-WORKER-desktop-visual-fix, codex-WORKER-desktop-snapshot-chart-fix | Remove remaining legacy HTML adapter and populate Home Token & Cost Observatory |
+| W4-DESKTOP-07 | review_ready | codex-BRAIN, UX/UI reviewer lanes complete | Skinny luxury overhaul for Home and Conversations, with screenshot-driven design review |
 
 ## Dependency Graph
 
@@ -37,6 +39,7 @@ flowchart TD
   W4D04[W4-DESKTOP-04 React UI foundation and graphs]
   W4D05[W4-DESKTOP-05 React component cutover]
   W4D06[W4-DESKTOP-06 Full React cutover and Home observatory]
+  W4D07[W4-DESKTOP-07 Skinny luxury Home and Conversations]
 
   BP07 --> W4C01
   BP08 --> W4C01
@@ -60,6 +63,8 @@ flowchart TD
   W4D05 --> W4D06
   BP11 --> W4D06
   BP08 --> W4D06
+  W4D06 --> W4D07
+  BP11 --> W4D07
 ```
 
 ## Coordination Rules
@@ -69,6 +74,9 @@ flowchart TD
 - W4-DESKTOP-04 owns Desktop renderer/UI graph stabilization only.
 - W4-DESKTOP-06 owns removing the remaining legacy Desktop HTML adapter and
   making Home charts resilient without daemon/API contract changes.
+- W4-DESKTOP-07 owns Home/Conversations visual-system iteration and screenshot
+  artifacts only. It must not change Desktop daemon API contracts or runtime
+  behavior.
 - Do not change Desktop renderer code in config packets.
 - Do not change runtime, pipeline, sink, DB, or route matching behavior in W4-DESKTOP-04.
 - Do not change runtime, pipeline, sink, DB, API contract, or route matching
@@ -93,6 +101,18 @@ flowchart TD
   `git diff --check`. Live Electron visual verification is still pending because
   Computer Use returned `codex app-server exited before returning a response`
   and reviewer Electron smoke exited with `SIGABRT`.
+- 2026-05-17 checkpoint commit `3c24a09` saved current screenshot/reference
+  artifacts before the W4-DESKTOP-07 visual revamp. Computer Use can now inspect
+  the Electron window, with occasional stale accessibility-tree snapshots after
+  HMR.
+- W4-DESKTOP-07 is review-ready. UX/UI reviewers found clipped Conversations
+  rows, over-heavy Home cards, noisy project labels, and bulky detail/inspector
+  chrome. The folded iteration removes Home collapsed Stats bars, slims the
+  metric/action/chart surfaces, normalizes project/conversation labels, densifies
+  Conversations rows/messages/inspector, and saves Home/Conversations screenshots
+  through iteration 4 under `docs/execution/artifacts/W4-DESKTOP-07/`. Validation
+  passed `bun run desktop:typecheck`, focused Desktop tests, and
+  `bun run desktop:build`.
 
 ## Exit Criteria
 

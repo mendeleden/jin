@@ -160,9 +160,8 @@ describe("desktop renderer", () => {
     expect(html).toContain("6.3B");
     expect(html).toContain("6,296,053,708");
     expect(html).toContain("$10,019.88");
-    expect(html).toContain("Usage by harness");
-    expect(html).toContain("Usage by model");
-    expect(html).toContain("claude-opus");
+    expect(html).not.toContain("Usage by harness");
+    expect(html).not.toContain("Usage by model");
     expect(html).toContain("Token &amp; Cost Observatory");
     expect(html).toContain("Daily burn chart");
     expect(html).toContain("usage-area-chart");
@@ -247,15 +246,15 @@ describe("desktop renderer", () => {
     );
 
     expect(css).toContain(".mission-control-panel");
-    expect(css).toContain("grid-column: span 6;");
-    expect(css).toContain("min-height: 410px;");
+    expect(css).toContain("grid-column: span 7;");
+    expect(css).toContain("min-height: 382px;");
     expect(css).toContain(".home-flow-svg");
-    expect(css).toContain("height: 320px;");
+    expect(css).toContain("height: 322px;");
     expect(css).toContain(".usage-observatory-panel");
     expect(css).toContain(".usage-area-chart-shell");
     expect(css).toContain(".usage-area-chart");
     expect(css).toContain(".usage-area-static-chart");
-    expect(css).toContain("height: 270px;");
+    expect(css).toContain("height: 246px;");
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
@@ -632,7 +631,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("Expand metadata inspector");
   });
 
-  test("home stats panels render explicit collapsed state", () => {
+  test("home omits legacy collapsible stats bars from the primary dashboard", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "home",
@@ -644,10 +643,11 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("Usage by harness");
+    expect(html).not.toContain("Usage by harness");
+    expect(html).not.toContain("Usage by model");
     expect(html).not.toContain("Billed");
-    expect(html).toContain("Usage by model");
+    expect(html).toContain("Latest conversations");
+    expect(html).toContain("Projects");
   });
 
   test("trace subview keeps trace relationships visible as a first-class surface", () => {

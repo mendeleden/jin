@@ -620,14 +620,17 @@ function renderConversationSubtitle(currentState: RendererState): string {
     return "Loading the daemon-backed conversation library.";
   }
 
-  const selectedTitle =
-    currentState.detail?.conversation.name ??
-    library.conversations.find(
-      (conversation) => conversation.id === currentState.selectedConversationId,
-    )?.name ??
-    "No conversation selected";
+  const selected = currentState.detail?.conversation;
+  if (!selected) {
+    return `${formatNumber(library.conversations.length)} conversations indexed`;
+  }
 
-  return `${formatNumber(library.conversations.length)} rows loaded. ${selectedTitle}`;
+  const tokens =
+    selected.inputTokens +
+    selected.outputTokens +
+    selected.cacheRead +
+    selected.cacheWrite;
+  return `${formatNumber(library.conversations.length)} conversations indexed - ${selected.adapterId} - ${formatMetricNumber(tokens).display} tokens`;
 }
 
 function renderLogsSubtitle(currentState: RendererState): string {

@@ -437,6 +437,7 @@ export function HomeMissionControlGraph({
             const y = projectYs[index] ?? 80;
             return (
               <g key={project.id} className="home-flow-node">
+                <title>{project.name}</title>
                 <circle
                   className={`routing-svg-node-${index % GRAPH_COLOR_COUNT}`}
                   cx={projectX}
@@ -445,7 +446,7 @@ export function HomeMissionControlGraph({
                   filter="url(#home-flow-glow)"
                 />
                 <text className="home-flow-title" x={projectX + 36} y={y - 8}>
-                  {truncateMiddle(project.name, 34)}
+                  {truncateMiddle(compactRemoteLabel(project.name), 32)}
                 </text>
                 <text className="home-flow-meta" x={projectX + 36} y={y + 13}>
                   {`${formatNumber(project.conversationCount)} conv - ${formatMetricNumber(project.totalTokens).display} tokens`}

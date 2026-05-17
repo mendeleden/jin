@@ -425,9 +425,6 @@ function Topbar({
   return (
     <header className="topbar">
       <div className="topbar-copy">
-        {state.activeView === "home" ? null : (
-          <div className="eyebrow">Native shell</div>
-        )}
         <h1>{title}</h1>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
@@ -663,26 +660,6 @@ function HomeWorkspace({
       <HomeMissionControlGraph data={data} />
       <TokenUsageObservatory data={data} />
 
-      <HomeStatsPanel
-        collapsed={state.collapsedHomePanels.harness}
-        eyebrow="Stats"
-        id="harness"
-        onToggle={actions.toggleHomePanel}
-        title="Usage by harness"
-      >
-        <HarnessStatsRows adapters={data.topAdapters} />
-      </HomeStatsPanel>
-
-      <HomeStatsPanel
-        collapsed={state.collapsedHomePanels.models}
-        eyebrow="Stats"
-        id="models"
-        onToggle={actions.toggleHomePanel}
-        title="Usage by model"
-      >
-        <ModelStatsRows models={data.topModels ?? []} />
-      </HomeStatsPanel>
-
       <section className="compact-panel compact-panel-span">
         <div className="panel-header">
           <div>
@@ -720,7 +697,7 @@ function HomeWorkspace({
           {data.topProjects.length > 0 ? (
             data.topProjects.map((project) => (
               <div className="key-value-row" key={project.id}>
-                <span>{project.name}</span>
+                <span>{formatProjectReference(project.name)}</span>
                 <strong>{formatNumber(project.conversationCount)} conv</strong>
               </div>
             ))
@@ -955,25 +932,23 @@ function ConversationRow({
       type="button"
     >
       <div className="conversation-row-top">
-        <div className="conversation-row-title">{conversation.name}</div>
+        <div className="conversation-row-title" title={conversation.name}>
+          {formatConversationTitle(conversation.name)}
+        </div>
         <span className={`relationship-chip ${conversation.relationship}`}>
           {conversation.relationship}
         </span>
       </div>
       <div className="conversation-row-meta">
         <span>{conversation.adapterId}</span>
-        <span>{conversation.model || "unknown model"}</span>
         <span>{formatDate(conversation.endedAt || conversation.startedAt)}</span>
-      </div>
-      <div className="conversation-row-meta">
         <span>{formatNumber(conversation.messageCount)} msg</span>
-        <span>{formatNumber(conversation.toolCount)} tools</span>
         <span>{formatMetricNumber(totalTokens(conversation)).display} tok</span>
       </div>
       <div className="conversation-row-foot">
         <span className="mono">{shortId(conversation.id)}</span>
         <span className="truncate">
-          {conversation.gitRemote || conversation.cwd || "local / unlinked"}
+          {formatProjectReference(conversation.gitRemote || conversation.cwd)}
         </span>
       </div>
     </button>
@@ -1032,7 +1007,7 @@ function ConversationDetailSurface({
             </span>
             <span className="mono">{shortId(conversation.id)}</span>
           </div>
-          <h2>{conversation.name}</h2>
+          <h2 title={conversation.name}>{formatConversationTitle(conversation.name)}</h2>
           <p>{renderConversationHeaderSummary(state.detail)}</p>
         </div>
         <div
@@ -1161,15 +1136,19 @@ function TimelineSubview({
 }
 
 function MessageCard({ message }: { message: Message }) {
+  const metadata = messageMetadata(message);
+
   return (
     <article className="message-card">
       <div className="message-header">
         <div className={`message-role ${message.role}`}>{message.role}</div>
-        <div className="message-meta">
-          <span>Turn {message.turn}</span>
-          <span>{formatDate(message.timestamp)}</span>
-          <span>{message.model || "unknown model"}</span>
-        </div>
+        {metadata.length > 0 ? (
+          <div className="message-meta">
+            {metadata.map((entry) => (
+              <span key={entry}>{entry}</span>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="message-content">
         <PreformattedText value={message.content} />
@@ -1275,7 +1254,9 @@ function TraceSubview({
             type="button"
           >
             <div className="trace-row-top">
-              <div className="trace-row-title">{conversation.name}</div>
+              <div className="trace-row-title" title={conversation.name}>
+                {formatConversationTitle(conversation.name)}
+              </div>
               <span className={`relationship-chip ${conversation.relationship}`}>
                 {conversation.relationship}
               </span>
@@ -1351,7 +1332,9 @@ function TreeNode({
         type="button"
       >
         <div className="tree-node-main">
-          <span className="tree-node-title">{node.conversation.name}</span>
+          <span className="tree-node-title" title={node.conversation.name}>
+            {formatConversationTitle(node.conversation.name)}
+          </span>
           <span className={`relationship-chip ${node.conversation.relationship}`}>
             {node.conversation.relationship}
           </span>
@@ -2032,123 +2015,6 @@ function SummaryMetric({
   );
 }
 
-function HomeStatsPanel({
-  children,
-  collapsed,
-  eyebrow,
-  id,
-  onToggle,
-  title,
-}: {
-  children: ReactNode;
-  collapsed: boolean;
-  eyebrow: string;
-  id: DesktopHomePanel;
-  onToggle(panel: DesktopHomePanel): void;
-  title: string;
-}) {
-  return (
-    <section className={`compact-panel stats-panel ${collapsed ? "collapsed" : ""}`}>
-      <button
-        aria-expanded={!collapsed}
-        className="stats-panel-summary"
-        onClick={() => onToggle(id)}
-        type="button"
-      >
-        <span>
-          <span className="eyebrow">{eyebrow}</span>
-          <strong>{title}</strong>
-        </span>
-        <span className="stats-panel-toggle">{collapsed ? "+" : "-"}</span>
-      </button>
-      {collapsed ? null : <div className="stats-panel-body">{children}</div>}
-    </section>
-  );
-}
-
-function HarnessStatsRows({
-  adapters,
-}: {
-  adapters: DesktopHomeData["topAdapters"];
-}) {
-  if (adapters.length === 0) {
-    return <div className="empty-row">No harness usage recorded yet.</div>;
-  }
-
-  return (
-    <div className="stats-row-list">
-      {adapters.map((adapter) => (
-        <article className="stats-row" key={adapter.adapterId}>
-          <div className="stats-row-heading">
-            <strong>{adapter.adapterId}</strong>
-            <span>{formatCost(adapter.cost)}</span>
-          </div>
-          <div className="stats-row-metrics">
-            <StatCell
-              label="Sessions"
-              value={formatMetricNumber(adapter.conversations)}
-            />
-            <StatCell label="Messages" value={formatMetricNumber(adapter.messages)} />
-            <StatCell label="Billed" value={formatMetricNumber(adapter.tokens)} />
-            <StatCell
-              label="Display"
-              value={formatMetricNumber(adapter.displayTokens)}
-            />
-            <StatCell
-              label="Cache"
-              value={formatMetricNumber(adapter.cacheTokens)}
-            />
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function ModelStatsRows({
-  models,
-}: {
-  models: DesktopHomeData["topModels"];
-}) {
-  if (models.length === 0) {
-    return <div className="empty-row">No model usage recorded yet.</div>;
-  }
-
-  return (
-    <div className="stats-row-list">
-      {models.map((model) => {
-        const totalTokens = model.inputTokens + model.outputTokens;
-        return (
-          <article className="stats-row" key={model.model}>
-            <div className="stats-row-heading">
-              <strong title={model.model}>{model.model}</strong>
-              <span>{formatMetricNumber(totalTokens).display} total</span>
-            </div>
-            <div className="stats-row-metrics">
-              <StatCell label="Messages" value={formatMetricNumber(model.messages)} />
-              <StatCell label="Input" value={formatMetricNumber(model.inputTokens)} />
-              <StatCell
-                label="Output"
-                value={formatMetricNumber(model.outputTokens)}
-              />
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function StatCell({ label, value }: { label: string; value: FormattedMetric }) {
-  const exact = value.exact && value.exact !== value.display ? value.exact : "";
-  return (
-    <span className="stats-cell" title={exact ? `${label}: ${exact}` : undefined}>
-      <span>{label}</span>
-      <strong>{value.display}</strong>
-    </span>
-  );
-}
-
 function RecentConversationRow({
   conversation,
   onOpen,
@@ -2163,7 +2029,9 @@ function RecentConversationRow({
       type="button"
     >
       <div>
-        <div className="mini-row-title">{conversation.name}</div>
+        <div className="mini-row-title" title={conversation.name}>
+          {formatConversationTitle(conversation.name)}
+        </div>
         <div className="mini-row-meta">
           <span>{conversation.adapterId}</span>
           <span>{formatDate(conversation.endedAt || conversation.startedAt)}</span>
@@ -2542,6 +2410,54 @@ function RuntimeField({ label, value }: { label: string; value: string }) {
 
 function PreformattedText({ value }: { value: string }) {
   return <pre>{value.length > 0 ? value : " "}</pre>;
+}
+
+function formatConversationTitle(value: string): string {
+  const compact = value
+    .replace(/\s+/g, " ")
+    .replace(/^#+\s*/, "")
+    .replace(/\s+#+\s+/g, " - ")
+    .trim();
+
+  return compact || "Untitled conversation";
+}
+
+function messageMetadata(message: Message): string[] {
+  const metadata: string[] = [];
+
+  if (Number.isFinite(message.turn) && message.turn >= 0) {
+    metadata.push(`Turn ${message.turn}`);
+  }
+
+  metadata.push(formatDate(message.timestamp));
+
+  const model = message.model?.trim() ?? "";
+  if (model.length > 0) {
+    metadata.push(model);
+  }
+
+  return metadata;
+}
+
+function formatProjectReference(value?: string | null): string {
+  const trimmed = (value ?? "").trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return "local / unlinked";
+  }
+
+  const githubSshMatch = /^git@github\.com:(.+)$/i.exec(trimmed);
+  if (githubSshMatch?.[1]) {
+    return githubSshMatch[1];
+  }
+
+  const githubSshUrlMatch = /^ssh:\/\/git@github\.com\/(.+)$/i.exec(trimmed);
+  if (githubSshUrlMatch?.[1]) {
+    return githubSshUrlMatch[1];
+  }
+
+  return trimmed
+    .replace(/^https?:\/\/(?:www\.)?github\.com\//i, "")
+    .replace(/^(?:www\.)?github\.com\//i, "");
 }
 
 function renderConversationHeaderSummary(
