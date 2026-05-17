@@ -1,5 +1,4 @@
 import { linkHorizontal } from "d3-shape";
-import { renderToStaticMarkup } from "react-dom/server";
 import type {
   DesktopHomeData,
   DesktopRoutingSinkSummary,
@@ -44,14 +43,6 @@ type FlowLink = {
 const horizontalFlow = linkHorizontal<FlowLink, Point>()
   .x((point) => point[0])
   .y((point) => point[1]);
-
-export function renderRoutingFlowGraph(routing: DesktopRoutingView): string {
-  return renderToStaticMarkup(<RoutingFlowGraph routing={routing} />);
-}
-
-export function renderHomeMissionControlGraph(data: DesktopHomeData): string {
-  return renderToStaticMarkup(<HomeMissionControlGraph data={data} />);
-}
 
 export function RoutingFlowGraph({
   routing,

@@ -1,6 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import * as Tooltip from "@radix-ui/react-tooltip";
 import {
   FileText,
   Home,
@@ -9,6 +8,8 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   RefreshCw,
   RotateCw,
@@ -16,17 +17,27 @@ import {
   Settings,
   Square,
 } from "lucide-react";
-import type { Conversation } from "../../src/contracts/conversations";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import type { Conversation, Message } from "../../src/contracts/conversations";
 import type {
-  DesktopControlAction,
+  DesktopConversationDetailView,
+  DesktopConversationListView,
   DesktopControlStatus,
+  DesktopControlAction,
   DesktopHomeData,
   DesktopRoutingView,
+  DesktopTreeView,
 } from "../../src/contracts/desktop";
 import { HomeMissionControlGraph, RoutingFlowGraph } from "../graph-components";
 import {
   ESTIMATED_COST_HELP,
-  bindDesktopRendererEvents,
   capitalize,
   formatCost,
   formatDate,
@@ -36,16 +47,15 @@ import {
   formatRouteMatch,
   getIncompatibleCompatibility,
   isTransitionalRuntimeState,
-  renderDesktopViewSubtitle,
-  renderDesktopViewTitle,
-  renderLegacyWorkspace,
   renderRuntimeHeading,
   type DesktopHomePanel,
   type DesktopNavigationView,
-  type DesktopRendererController,
+  type DesktopConversationSubview,
   type FormattedMetric,
-  type LegacyDesktopNavigationView,
   type RendererState,
+  shortId,
+  renderDesktopViewSubtitle,
+  renderDesktopViewTitle,
 } from "../renderer";
 
 type MaybePromise = void | Promise<void>;
@@ -54,8 +64,12 @@ export interface DesktopShellActions {
   openConversation(conversationId: string): MaybePromise;
   refreshShell(): MaybePromise;
   runControlAction(action: DesktopControlAction): MaybePromise;
+  selectSubview(subview: DesktopConversationSubview): void;
+  setAdapterFilter(value: string): MaybePromise;
+  setSinceFilter(value: string): MaybePromise;
   switchView(view: DesktopNavigationView): MaybePromise;
   toggleHomePanel(panel: DesktopHomePanel): void;
+  toggleInspector(): void;
   toggleSidebar(): void;
 }
 
@@ -63,8 +77,12 @@ const noopActions: DesktopShellActions = {
   openConversation() {},
   refreshShell() {},
   runControlAction() {},
+  selectSubview() {},
+  setAdapterFilter() {},
+  setSinceFilter() {},
   switchView() {},
   toggleHomePanel() {},
+  toggleInspector() {},
   toggleSidebar() {},
 };
 
@@ -80,21 +98,52 @@ const NAV_ITEMS: Array<{
   { view: "settings", label: "Settings", Icon: Settings },
 ];
 
+const TIME_FILTERS: Array<{ label: string; value: string }> = [
+  { label: "All time", value: "" },
+  { label: "24h", value: "24h" },
+  { label: "7d", value: "7d" },
+  { label: "30d", value: "30d" },
+];
 const USAGE_COLOR_COUNT = 6;
 const USAGE_CHART_WIDTH = 960;
-const USAGE_CHART_HEIGHT = 360;
-const USAGE_CHART_PLOT = {
+const USAGE_CHART_HEIGHT = 270;
+const USAGE_STATIC_CHART_PLOT = {
   x: 64,
-  y: 26,
+  y: 24,
   width: 780,
-  height: 230,
+  height: 178,
 } as const;
+const TREE_DEPTH_CLASS_MAX = 12;
 
 type UsageDayBucket = {
   day: string;
   totalTokens: number;
   totalCost: number;
   entries: Array<{ adapterId: string; tokens: number; cost: number }>;
+};
+
+type UsageDisplayBucket = UsageDayBucket & {
+  label?: string;
+};
+
+type UsageChartModel = {
+  days: UsageDayBucket[];
+  adapters: string[];
+  source: "timeline" | "snapshot" | "empty";
+};
+
+type UsageChartDatum = {
+  day: string;
+  label: string;
+  totalCost: number;
+  totalTokens: number;
+  [adapterKey: string]: string | number;
+};
+
+type UsageChartSeries = {
+  adapterId: string;
+  color: string;
+  key: string;
 };
 
 export function renderDesktopReactShellToStaticMarkup(
@@ -105,89 +154,77 @@ export function renderDesktopReactShellToStaticMarkup(
 
 export function AppShell({
   actions,
-  legacyController = null,
   state,
 }: {
   actions: DesktopShellActions;
-  legacyController?: DesktopRendererController | null;
   state: RendererState;
 }) {
   if (state.loading && !state.snapshot) {
     return (
-      <Tooltip.Provider delayDuration={120}>
-        <ShellFrame
-          actions={actions}
-          state={state}
-          subtitle="Restoring the typed daemon-backed shell"
-          title="Booting Desktop"
-        >
-          <section className="state-panel">
-            <span className="eyebrow">Transport</span>
-            <h2>Loading the desktop workbench.</h2>
-            <p>
-              The renderer is reconnecting through the preload bridge before
-              loading the conversation library.
-            </p>
-          </section>
-        </ShellFrame>
-      </Tooltip.Provider>
+      <ShellFrame
+        actions={actions}
+        state={state}
+        subtitle="Restoring the typed daemon-backed shell"
+        title="Booting Desktop"
+      >
+        <section className="state-panel">
+          <span className="eyebrow">Transport</span>
+          <h2>Loading the desktop workbench.</h2>
+          <p>
+            The renderer is reconnecting through the preload bridge before
+            loading the conversation library.
+          </p>
+        </section>
+      </ShellFrame>
     );
   }
 
   if (!state.snapshot) {
     return (
-      <Tooltip.Provider delayDuration={120}>
-        <ShellFrame
-          actions={actions}
-          state={state}
-          subtitle="Renderer bridge did not return a snapshot"
-          title="Desktop unavailable"
-        >
-          <NoticeStack state={state} />
-          <section className="state-panel">
-            <span className="eyebrow">Bridge</span>
-            <h2>Desktop could not reach its typed preload bridge.</h2>
-            <p>
-              {state.message ??
-                "Refresh after the Electron main process is available."}
-            </p>
-            <div className="action-row">
-              <button
-                className="toolbar-button primary"
-                onClick={() => void actions.refreshShell()}
-                type="button"
-              >
-                <RefreshCw aria-hidden="true" />
-                Retry
-              </button>
-            </div>
-          </section>
-        </ShellFrame>
-      </Tooltip.Provider>
+      <ShellFrame
+        actions={actions}
+        state={state}
+        subtitle="Renderer bridge did not return a snapshot"
+        title="Desktop unavailable"
+      >
+        <NoticeStack state={state} />
+        <section className="state-panel">
+          <span className="eyebrow">Bridge</span>
+          <h2>Desktop could not reach its typed preload bridge.</h2>
+          <p>
+            {state.message ??
+              "Refresh after the Electron main process is available."}
+          </p>
+          <div className="action-row">
+            <button
+              className="toolbar-button primary"
+              onClick={() => void actions.refreshShell()}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" />
+              Retry
+            </button>
+          </div>
+        </section>
+      </ShellFrame>
     );
   }
 
   const compatibility = getIncompatibleCompatibility(state);
   return (
-    <Tooltip.Provider delayDuration={120}>
-      <ShellFrame
-        actions={actions}
-        state={state}
-        subtitle={renderDesktopViewSubtitle(state)}
-        title={renderDesktopViewTitle(state.activeView)}
-      >
-        <NoticeStack state={state} />
-        {compatibility ? (
-          <CompatibilityView state={state} />
-        ) : (
-          <ActiveWorkspace
-            actions={actions}
-            legacyController={legacyController}
-            state={state}
-          />
-        )}
-      </ShellFrame>
-    </Tooltip.Provider>
+    <ShellFrame
+      actions={actions}
+      state={state}
+      subtitle={renderDesktopViewSubtitle(state)}
+      title={renderDesktopViewTitle(state.activeView)}
+    >
+      <NoticeStack state={state} />
+      {compatibility ? (
+        <CompatibilityView state={state} />
+      ) : (
+        <ActiveWorkspace actions={actions} state={state} />
+      )}
+    </ShellFrame>
   );
 }
 
@@ -318,6 +355,7 @@ function SidebarMetric({
   preferCompact?: boolean;
   value: number | string;
 }) {
+  const [costInfoOpen, setCostInfoOpen] = useState(false);
   const formatted =
     typeof value === "number"
       ? preferCompact
@@ -329,43 +367,68 @@ function SidebarMetric({
     formatted.exact && formatted.exact !== formatted.display
       ? formatted.exact
       : "";
+  const popoverId = "sidebar-estimated-cost-popover";
 
-  const metric = (
+  return (
     <div
       className={`sidebar-metric ${estimatedCost ? "sidebar-metric-cost" : ""}`}
+      onBlur={(event) => {
+        if (
+          estimatedCost &&
+          !event.currentTarget.contains(event.relatedTarget as HTMLElement | null)
+        ) {
+          setCostInfoOpen(false);
+        }
+      }}
+      onMouseEnter={() => {
+        if (estimatedCost) {
+          setCostInfoOpen(true);
+        }
+      }}
+      onMouseLeave={() => {
+        if (estimatedCost) {
+          setCostInfoOpen(false);
+        }
+      }}
       title={exact ? `${label}: ${exact}` : labelCopy}
     >
       <span className="sidebar-metric-label">
         {labelCopy}
         {estimatedCost ? (
-          <Tooltip.Trigger asChild>
-            <button
-              aria-label={ESTIMATED_COST_HELP}
-              className="sidebar-cost-info"
-              data-cost-tooltip-trigger="estimated-cost"
-              type="button"
-            >
-              <Info aria-hidden="true" />
-            </button>
-          </Tooltip.Trigger>
+          <button
+            aria-controls={popoverId}
+            aria-expanded={costInfoOpen}
+            aria-haspopup="dialog"
+            aria-label={ESTIMATED_COST_HELP}
+            className="sidebar-cost-info"
+            data-cost-popover-trigger="estimated-cost"
+            onClick={() => setCostInfoOpen(true)}
+            onFocus={() => setCostInfoOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setCostInfoOpen(false);
+                event.currentTarget.blur();
+              }
+            }}
+            type="button"
+          >
+            <Info aria-hidden="true" />
+          </button>
         ) : null}
       </span>
       <strong>{formatted.display}</strong>
-      {estimatedCost ? (
-        <Tooltip.Content
-          className="sidebar-cost-tooltip-content"
-          forceMount
-          side="right"
-          sideOffset={8}
+      {estimatedCost && costInfoOpen ? (
+        <div
+          className="sidebar-cost-popover-content"
+          data-cost-popover="estimated-cost"
+          id={popoverId}
+          role="dialog"
         >
           {ESTIMATED_COST_HELP}
-          <Tooltip.Arrow className="sidebar-cost-tooltip-arrow" />
-        </Tooltip.Content>
+        </div>
       ) : null}
     </div>
   );
-
-  return estimatedCost ? <Tooltip.Root>{metric}</Tooltip.Root> : metric;
 }
 
 function Topbar({
@@ -512,57 +575,28 @@ function NoticeStack({ state }: { state: RendererState }) {
 
 function ActiveWorkspace({
   actions,
-  legacyController,
   state,
 }: {
   actions: DesktopShellActions;
-  legacyController: DesktopRendererController | null;
   state: RendererState;
 }) {
   if (state.activeView === "home") {
     return <HomeWorkspace actions={actions} state={state} />;
   }
 
+  if (state.activeView === "conversations") {
+    return <ConversationsWorkspace actions={actions} state={state} />;
+  }
+
   if (state.activeView === "routing") {
     return <RoutingWorkspace actions={actions} state={state} />;
   }
 
-  return (
-    <LegacyHtmlView
-      controller={legacyController}
-      state={state}
-      view={state.activeView as LegacyDesktopNavigationView}
-    />
-  );
-}
+  if (state.activeView === "logs") {
+    return <LogsWorkspace actions={actions} state={state} />;
+  }
 
-function LegacyHtmlView({
-  controller,
-  state,
-  view,
-}: {
-  controller: DesktopRendererController | null;
-  state: RendererState;
-  view: LegacyDesktopNavigationView;
-}) {
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!rootRef.current || !controller) {
-      return undefined;
-    }
-
-    return bindDesktopRendererEvents(rootRef.current, controller);
-  }, [controller, view]);
-
-  return (
-    <div
-      ref={rootRef}
-      className="legacy-html-view"
-      data-legacy-html-view={view}
-      dangerouslySetInnerHTML={{ __html: renderLegacyWorkspace(state, view) }}
-    />
-  );
+  return <SettingsWorkspace state={state} />;
 }
 
 function HomeWorkspace({
@@ -719,6 +753,1042 @@ function HomeWorkspace({
         </div>
       </section>
     </section>
+  );
+}
+
+function ConversationsWorkspace({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  if (snapshot.status.runtime.state === "stopped") {
+    return (
+      <LifecycleState
+        actions={actions}
+        description="Start the daemon to load the library, selected conversation timeline, trace, and tree views."
+        label="Conversations"
+        state={state}
+        title="Conversation browsing is paused while Jin is stopped."
+      />
+    );
+  }
+
+  if (isTransitionalRuntimeState(snapshot.status.runtime.state)) {
+    return (
+      <LifecycleState
+        actions={actions}
+        description={
+          snapshot.status.runtime.state === "starting"
+            ? "The library will populate once the daemon is queryable."
+            : "The library is paused until shutdown completes."
+        }
+        label="Conversations"
+        state={state}
+        title={
+          snapshot.status.runtime.state === "starting"
+            ? "Jin is starting up."
+            : "Jin is shutting down."
+        }
+      />
+    );
+  }
+
+  return (
+    <section
+      className={`workspace-conversations ${
+        state.inspectorCollapsed ? "inspector-collapsed" : ""
+      }`}
+    >
+      <aside className="library-panel">
+        <div className="panel-header panel-header-tight">
+          <div>
+            <span className="eyebrow">Library</span>
+            <h2>Conversation index</h2>
+          </div>
+          <span className="panel-meta">
+            {state.library
+              ? `${formatNumber(state.library.conversations.length)} shown`
+              : state.libraryLoading
+                ? "Loading..."
+                : "Waiting"}
+          </span>
+        </div>
+        <ConversationFilters actions={actions} state={state} />
+        <RelationshipMix library={state.library} />
+        <ConversationLibrary actions={actions} state={state} />
+      </aside>
+
+      <section className="detail-panel">
+        <ConversationDetailSurface actions={actions} state={state} />
+      </section>
+
+      {state.inspectorCollapsed ? (
+        <InspectorRail actions={actions} />
+      ) : (
+        <aside className="inspector-panel">
+          <ConversationInspector actions={actions} state={state} />
+        </aside>
+      )}
+    </section>
+  );
+}
+
+function ConversationFilters({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const adapterOptions = state.library?.availableAdapters ?? [];
+  const adapterValue = state.libraryRequest.adapterId ?? "";
+  const sinceValue = state.libraryRequest.since ?? "";
+
+  return (
+    <div className="filter-bar">
+      <label className="filter-field">
+        <span>Adapter</span>
+        <select
+          className="select-field"
+          onChange={(event) => void actions.setAdapterFilter(event.currentTarget.value)}
+          value={adapterValue}
+        >
+          <option value="">All adapters</option>
+          {adapterOptions.map((adapter) => (
+            <option key={adapter} value={adapter}>
+              {adapter}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="filter-field">
+        <span>Range</span>
+        <select
+          className="select-field"
+          onChange={(event) => void actions.setSinceFilter(event.currentTarget.value)}
+          value={sinceValue}
+        >
+          {TIME_FILTERS.map((option) => (
+            <option key={option.label} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function RelationshipMix({
+  library,
+}: {
+  library: DesktopConversationListView | null;
+}) {
+  const relationships = library?.relationshipMix ?? [];
+  if (relationships.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="relationship-strip">
+      {relationships.map((entry) => (
+        <span className="relationship-pill" key={entry.relationship}>
+          <span>{entry.relationship}</span>
+          <strong>{formatNumber(entry.conversations)}</strong>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ConversationLibrary({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  if (state.libraryLoading && !state.library) {
+    return <ListPlaceholder />;
+  }
+
+  if (state.libraryError && !state.library) {
+    return (
+      <div className="empty-state">
+        <h3>Conversation library unavailable</h3>
+        <p>{state.libraryError}</p>
+        <button
+          className="toolbar-button"
+          onClick={() => void actions.refreshShell()}
+          type="button"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const conversations = state.library?.conversations ?? [];
+  if (conversations.length === 0) {
+    return (
+      <div className="empty-state">
+        <h3>No conversations match the current filters.</h3>
+        <p>
+          Desktop is connected, but the library is empty for this adapter/range
+          combination.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="conversation-list">
+      {conversations.map((conversation) => (
+        <ConversationRow
+          conversation={conversation}
+          key={conversation.id}
+          onOpen={actions.openConversation}
+          selected={conversation.id === state.selectedConversationId}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ConversationRow({
+  conversation,
+  onOpen,
+  selected,
+}: {
+  conversation: Conversation;
+  onOpen(conversationId: string): MaybePromise;
+  selected: boolean;
+}) {
+  return (
+    <button
+      className={`conversation-row ${selected ? "selected" : ""}`}
+      onClick={() => void onOpen(conversation.id)}
+      type="button"
+    >
+      <div className="conversation-row-top">
+        <div className="conversation-row-title">{conversation.name}</div>
+        <span className={`relationship-chip ${conversation.relationship}`}>
+          {conversation.relationship}
+        </span>
+      </div>
+      <div className="conversation-row-meta">
+        <span>{conversation.adapterId}</span>
+        <span>{conversation.model || "unknown model"}</span>
+        <span>{formatDate(conversation.endedAt || conversation.startedAt)}</span>
+      </div>
+      <div className="conversation-row-meta">
+        <span>{formatNumber(conversation.messageCount)} msg</span>
+        <span>{formatNumber(conversation.toolCount)} tools</span>
+        <span>{formatMetricNumber(totalTokens(conversation)).display} tok</span>
+      </div>
+      <div className="conversation-row-foot">
+        <span className="mono">{shortId(conversation.id)}</span>
+        <span className="truncate">
+          {conversation.gitRemote || conversation.cwd || "local / unlinked"}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function ConversationDetailSurface({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  if (state.selectedConversationLoading && !state.detail) {
+    return (
+      <div className="detail-empty detail-loading">
+        <h3>Loading selected conversation</h3>
+        <p>
+          Fetching detail, trace, and tree views through the typed daemon
+          boundary.
+        </p>
+      </div>
+    );
+  }
+
+  if (state.selectedConversationError && !state.detail) {
+    return (
+      <div className="detail-empty">
+        <h3>Conversation detail unavailable</h3>
+        <p>{state.selectedConversationError}</p>
+      </div>
+    );
+  }
+
+  if (!state.detail) {
+    return (
+      <div className="detail-empty">
+        <h3>Select a conversation</h3>
+        <p>
+          The detail pane will show timeline, trace, and tree views for the
+          selected conversation.
+        </p>
+      </div>
+    );
+  }
+
+  const conversation = state.detail.conversation;
+
+  return (
+    <div className="detail-surface">
+      <div className="detail-header">
+        <div>
+          <div className="detail-kicker">
+            <span className={`relationship-chip ${conversation.relationship}`}>
+              {conversation.relationship}
+            </span>
+            <span className="mono">{shortId(conversation.id)}</span>
+          </div>
+          <h2>{conversation.name}</h2>
+          <p>{renderConversationHeaderSummary(state.detail)}</p>
+        </div>
+        <div
+          aria-label="Conversation views"
+          className="subview-tabs"
+          role="tablist"
+        >
+          <SubviewTab
+            actions={actions}
+            label="Timeline"
+            selectedSubview={state.selectedSubview}
+            value="timeline"
+          />
+          <SubviewTab
+            actions={actions}
+            label="Trace"
+            selectedSubview={state.selectedSubview}
+            value="trace"
+          />
+          <SubviewTab
+            actions={actions}
+            label="Tree"
+            selectedSubview={state.selectedSubview}
+            value="tree"
+          />
+        </div>
+      </div>
+
+      <div className="detail-summary">
+        <span className="metric-chip">
+          {formatNumber(conversation.messageCount)} messages
+        </span>
+        <span className="metric-chip">
+          {formatNumber(conversation.toolCount)} tools
+        </span>
+        <span
+          className="metric-chip"
+          title={`${formatNumber(totalTokens(conversation))} tokens`}
+        >
+          {formatMetricNumber(totalTokens(conversation)).display} tokens
+        </span>
+        <span className="metric-chip">{formatCost(conversation.estCost)}</span>
+        <span className="metric-chip">
+          Trace {shortId(state.detail.trace.traceId)}
+        </span>
+      </div>
+
+      {state.selectedConversationLoading ? (
+        <div className="detail-refreshing">Refreshing selected conversation...</div>
+      ) : null}
+
+      <div className="detail-body">
+        <SelectedSubview actions={actions} state={state} />
+      </div>
+    </div>
+  );
+}
+
+function SubviewTab({
+  actions,
+  label,
+  selectedSubview,
+  value,
+}: {
+  actions: DesktopShellActions;
+  label: string;
+  selectedSubview: DesktopConversationSubview;
+  value: DesktopConversationSubview;
+}) {
+  const selected = selectedSubview === value;
+  return (
+    <button
+      aria-selected={selected}
+      className={`subview-tab ${selected ? "active" : ""}`}
+      onClick={() => actions.selectSubview(value)}
+      role="tab"
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function SelectedSubview({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  if (state.selectedSubview === "trace") {
+    return <TraceSubview actions={actions} state={state} />;
+  }
+
+  if (state.selectedSubview === "tree") {
+    return <TreeSubview actions={actions} state={state} />;
+  }
+
+  return <TimelineSubview detail={state.detail!} />;
+}
+
+function TimelineSubview({
+  detail,
+}: {
+  detail: DesktopConversationDetailView;
+}) {
+  if (detail.messages.length === 0) {
+    return (
+      <div className="detail-empty">
+        <h3>No messages recorded</h3>
+        <p>
+          This conversation exists in the trace graph but currently has no
+          stored message timeline.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="timeline-list">
+      {detail.messages.map((message) => (
+        <MessageCard key={message.id} message={message} />
+      ))}
+    </div>
+  );
+}
+
+function MessageCard({ message }: { message: Message }) {
+  return (
+    <article className="message-card">
+      <div className="message-header">
+        <div className={`message-role ${message.role}`}>{message.role}</div>
+        <div className="message-meta">
+          <span>Turn {message.turn}</span>
+          <span>{formatDate(message.timestamp)}</span>
+          <span>{message.model || "unknown model"}</span>
+        </div>
+      </div>
+      <div className="message-content">
+        <PreformattedText value={message.content} />
+      </div>
+      {message.thinkingContent ? <ThinkingBlock message={message} /> : null}
+      {message.toolUses.length > 0 ? (
+        <div className="tool-stack">
+          {message.toolUses.map((tool) => (
+            <ToolCallBlock
+              input={tool.input}
+              isError={tool.isError}
+              key={tool.id}
+              name={tool.name}
+              output={tool.output}
+            />
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ThinkingBlock({ message }: { message: Message }) {
+  return (
+    <details className="trace-detail-block">
+      <summary>
+        Thinking {message.thinkingTokens > 0 ? `(${formatNumber(message.thinkingTokens)} tok)` : ""}
+      </summary>
+      <div className="detail-block-body">
+        <PreformattedText value={message.thinkingContent} />
+      </div>
+    </details>
+  );
+}
+
+function ToolCallBlock({
+  input,
+  isError,
+  name,
+  output,
+}: {
+  input: string;
+  isError: boolean;
+  name: string;
+  output: string;
+}) {
+  return (
+    <details className={`trace-detail-block ${isError ? "error" : ""}`}>
+      <summary>
+        {name}
+        {isError ? " - error" : ""}
+      </summary>
+      {input ? (
+        <>
+          <div className="detail-block-label">Input</div>
+          <div className="detail-block-body">
+            <PreformattedText value={input} />
+          </div>
+        </>
+      ) : null}
+      {output ? (
+        <>
+          <div className="detail-block-label">Output</div>
+          <div className="detail-block-body">
+            <PreformattedText value={output} />
+          </div>
+        </>
+      ) : null}
+    </details>
+  );
+}
+
+function TraceSubview({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const trace = state.trace;
+  if (!trace || trace.conversations.length === 0) {
+    return (
+      <div className="detail-empty">
+        <h3>No trace graph available</h3>
+        <p>
+          The selected conversation has no related trace conversations to
+          display.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="trace-list">
+      {trace.conversations.map((entry) => {
+        const conversation = entry.conversation;
+        const selected = conversation.id === state.selectedConversationId;
+        return (
+          <button
+            className={`trace-row ${selected ? "selected" : ""}`}
+            key={conversation.id}
+            onClick={() => void actions.openConversation(conversation.id)}
+            type="button"
+          >
+            <div className="trace-row-top">
+              <div className="trace-row-title">{conversation.name}</div>
+              <span className={`relationship-chip ${conversation.relationship}`}>
+                {conversation.relationship}
+              </span>
+            </div>
+            <div className="trace-row-meta">
+              <span>{conversation.adapterId}</span>
+              <span>{formatNumber(conversation.messageCount)} msg</span>
+              <span>{formatNumber(conversation.toolCount)} tools</span>
+              <span>{formatDate(conversation.startedAt)}</span>
+            </div>
+            <div className="trace-row-foot">
+              <span className="mono">{shortId(conversation.id)}</span>
+              <span>{conversation.model || "unknown model"}</span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TreeSubview({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const tree = state.tree?.tree ?? null;
+  if (!tree) {
+    return (
+      <div className="detail-empty">
+        <h3>No tree view available</h3>
+        <p>
+          The selected conversation trace does not currently resolve to a rooted
+          tree.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tree-view">
+      <TreeNode
+        onOpen={actions.openConversation}
+        node={tree}
+        selectedConversationId={state.selectedConversationId}
+      />
+    </div>
+  );
+}
+
+function TreeNode({
+  depth = 0,
+  node,
+  onOpen,
+  selectedConversationId,
+}: {
+  depth?: number;
+  node: NonNullable<DesktopTreeView["tree"]>;
+  onOpen(conversationId: string): MaybePromise;
+  selectedConversationId: string | null;
+}) {
+  const selected = node.conversation.id === selectedConversationId;
+
+  return (
+    <div className="tree-node-wrap">
+      <button
+        className={`tree-node tree-depth-${treeDepthClass(depth)} ${
+          selected ? "selected" : ""
+        }`}
+        onClick={() => void onOpen(node.conversation.id)}
+        type="button"
+      >
+        <div className="tree-node-main">
+          <span className="tree-node-title">{node.conversation.name}</span>
+          <span className={`relationship-chip ${node.conversation.relationship}`}>
+            {node.conversation.relationship}
+          </span>
+        </div>
+        <div className="tree-node-meta">
+          <span>{node.conversation.adapterId}</span>
+          <span>{formatNumber(node.conversation.messageCount)} msg</span>
+          <span>{formatDate(node.conversation.startedAt)}</span>
+        </div>
+      </button>
+      {node.children.length > 0 ? (
+        <div className="tree-children">
+          {node.children.map((child) => (
+            <TreeNode
+              depth={depth + 1}
+              key={child.conversation.id}
+              onOpen={onOpen}
+              node={child}
+              selectedConversationId={selectedConversationId}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ConversationInspector({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const detail = state.detail;
+  if (!detail) {
+    return (
+      <div className="detail-empty inspector-empty">
+        <button
+          aria-label="Collapse metadata inspector"
+          className="inspector-toggle"
+          onClick={() => actions.toggleInspector()}
+          title="Collapse metadata inspector"
+          type="button"
+        >
+          <PanelRightClose aria-hidden="true" />
+        </button>
+        <h3>Metadata inspector</h3>
+        <p>
+          Select a conversation to inspect identity, trace linkage, tokens,
+          cost, and project metadata.
+        </p>
+      </div>
+    );
+  }
+
+  const { conversation } = detail;
+
+  return (
+    <div className="inspector-surface">
+      <div className="panel-header panel-header-tight">
+        <div>
+          <span className="eyebrow">Inspector</span>
+          <h2>Metadata</h2>
+        </div>
+        <div className="panel-actions">
+          <span className="panel-meta">{conversation.adapterId}</span>
+          <button
+            aria-label="Collapse metadata inspector"
+            className="inspector-toggle"
+            onClick={() => actions.toggleInspector()}
+            title="Collapse metadata inspector"
+            type="button"
+          >
+            <PanelRightClose aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <InspectorSection title="Identity">
+        <InspectorRow label="Conversation ID" mono value={shortId(conversation.id)} />
+        <InspectorRow label="Trace ID" mono value={shortId(detail.trace.traceId)} />
+        <InspectorRow label="Root ID" mono value={shortId(detail.trace.rootId)} />
+        <InspectorRow label="Relationship" value={conversation.relationship} />
+      </InspectorSection>
+
+      <InspectorSection title="Runtime">
+        <InspectorRow label="Model" value={conversation.model || "unknown"} />
+        <InspectorRow label="Started" value={formatDate(conversation.startedAt)} />
+        <InspectorRow
+          label="Ended"
+          value={formatDate(conversation.endedAt || conversation.startedAt)}
+        />
+        <InspectorRow
+          label="Duration"
+          value={formatDuration(conversation.durationMs)}
+        />
+      </InspectorSection>
+
+      <InspectorSection title="Usage">
+        <InspectorRow
+          label="Messages"
+          value={formatNumber(conversation.messageCount)}
+        />
+        <InspectorRow
+          label="Tool calls"
+          value={formatNumber(conversation.toolCount)}
+        />
+        <InspectorRow
+          label="Display tokens"
+          value={formatMetricNumber(conversation.inputTokens + conversation.outputTokens).display}
+        />
+        <InspectorRow
+          label="Cache tokens"
+          value={formatMetricNumber(conversation.cacheRead + conversation.cacheWrite).display}
+        />
+        <InspectorRow
+          label="Estimated cost"
+          value={formatCost(conversation.estCost)}
+        />
+      </InspectorSection>
+
+      <InspectorSection title="Lineage">
+        <InspectorRow
+          label="Parent"
+          value={detail.parent ? detail.parent.name : "None"}
+        />
+        <InspectorRow
+          label="Children"
+          value={
+            detail.children.length === 0
+              ? "None"
+              : detail.children.map((child) => child.name).join(", ")
+          }
+        />
+        <InspectorRow
+          label="Trace size"
+          value={`${formatNumber(detail.trace.conversationCount)} conversations`}
+        />
+      </InspectorSection>
+
+      <InspectorSection title="Project">
+        <InspectorRow
+          label="Remote"
+          value={conversation.gitRemote || "local / unlinked"}
+        />
+        <InspectorRow label="Branch" value={conversation.branch || "unknown"} />
+        <InspectorRow
+          label="Path"
+          value={conversation.cwd || conversation.sourcePath}
+        />
+        <InspectorRow label="Source format" value={conversation.sourceFormat} />
+      </InspectorSection>
+    </div>
+  );
+}
+
+function InspectorRail({ actions }: { actions: DesktopShellActions }) {
+  return (
+    <aside className="inspector-rail">
+      <button
+        aria-label="Expand metadata inspector"
+        className="inspector-rail-button"
+        onClick={() => actions.toggleInspector()}
+        title="Expand metadata inspector"
+        type="button"
+      >
+        <PanelRightOpen aria-hidden="true" />
+      </button>
+    </aside>
+  );
+}
+
+function InspectorSection({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <section className="inspector-section">
+      <h3>{title}</h3>
+      <div className="inspector-grid">{children}</div>
+    </section>
+  );
+}
+
+function InspectorRow({
+  label,
+  mono = false,
+  value,
+}: {
+  label: string;
+  mono?: boolean;
+  value: string;
+}) {
+  return (
+    <div className="inspector-row">
+      <span>{label}</span>
+      <strong className={mono ? "mono" : ""}>{value}</strong>
+    </div>
+  );
+}
+
+function LogsWorkspace({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  if (snapshot.status.runtime.state === "stopped") {
+    return (
+      <LifecycleState
+        actions={actions}
+        description="Start the daemon to stream the current runtime log tail through the Desktop API."
+        label="Logs"
+        state={state}
+        title="Daemon logs are paused while Jin is stopped."
+      />
+    );
+  }
+
+  if (isTransitionalRuntimeState(snapshot.status.runtime.state)) {
+    return (
+      <LifecycleState
+        actions={actions}
+        description={
+          snapshot.status.runtime.state === "starting"
+            ? "The log tail will load once the daemon is queryable."
+            : "The log tail is paused until shutdown completes."
+        }
+        label="Logs"
+        state={state}
+        title={
+          snapshot.status.runtime.state === "starting"
+            ? "Jin is starting up."
+            : "Jin is shutting down."
+        }
+      />
+    );
+  }
+
+  const logs = state.logs;
+  const logPath = logs?.path ?? snapshot.status.paths.log;
+
+  return (
+    <section className="workspace-logs">
+      <section className="compact-panel compact-panel-wide logs-panel">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Runtime log</span>
+            <h2>Daemon log tail</h2>
+          </div>
+          <button
+            className="toolbar-button subtle"
+            onClick={() => void actions.refreshShell()}
+            type="button"
+          >
+            {state.logsLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+        <div className="runtime-grid runtime-grid-paths logs-meta-grid">
+          <RuntimeField label="Path" value={logPath} />
+          <RuntimeField
+            label="Lines"
+            value={
+              logs
+                ? `${formatNumber(logs.returnedLines)} shown / ${formatNumber(
+                    logs.totalLines,
+                  )} total`
+                : `Waiting for ${formatNumber(state.logsRequest.limit ?? 240)} lines`
+            }
+          />
+        </div>
+        <LogsBody actions={actions} state={state} />
+      </section>
+    </section>
+  );
+}
+
+function LogsBody({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const logs = state.logs;
+
+  if (state.logsLoading && !logs) {
+    return <ListPlaceholder className="logs-placeholder" />;
+  }
+
+  if (state.logsError && !logs) {
+    return (
+      <div className="empty-state logs-empty">
+        <h3>Daemon logs unavailable</h3>
+        <p>{state.logsError}</p>
+        <button
+          className="toolbar-button"
+          onClick={() => void actions.refreshShell()}
+          type="button"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!logs || logs.lines.length === 0) {
+    return (
+      <div className="empty-state logs-empty">
+        <h3>No log lines available.</h3>
+        <p>
+          The daemon log file exists, but the current tail did not return any
+          lines.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div aria-label="Daemon log tail" className="log-viewer" role="log">
+      {logs.truncated ? (
+        <div className="log-truncation">
+          Showing the latest {formatNumber(logs.returnedLines)} lines.
+        </div>
+      ) : null}
+      {logs.lines.map((line, index) => (
+        <LogLine index={index} key={`${line}-${index}`} line={line} />
+      ))}
+    </div>
+  );
+}
+
+function LogLine({ index, line }: { index: number; line: string }) {
+  const severityClass = /\b(error|failed|failure|exception)\b/i.test(line)
+    ? "error"
+    : /\b(warn|warning|degraded)\b/i.test(line)
+      ? "warning"
+      : "";
+
+  return (
+    <pre className={`log-line ${severityClass}`}>
+      <span className="log-line-number">{formatNumber(index + 1)}</span>
+      <span className="log-line-copy">{line.length > 0 ? line : " "}</span>
+    </pre>
+  );
+}
+
+function SettingsWorkspace({ state }: { state: RendererState }) {
+  const snapshot = state.snapshot;
+  if (!snapshot) {
+    return null;
+  }
+
+  const { status } = snapshot;
+
+  return (
+    <section className="workspace-settings">
+      <section className="compact-panel compact-panel-span">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Runtime</span>
+            <h2>Daemon status</h2>
+          </div>
+          <span className={`status-badge ${status.runtime.state}`}>
+            {status.runtime.state}
+          </span>
+        </div>
+        <div className="runtime-grid">
+          <RuntimeField
+            label="Runtime owner"
+            value={status.runtime.owner?.mode ?? "none"}
+          />
+          <RuntimeField label="Health" value={status.health.status} />
+          <RuntimeField label="Ingest" value={status.health.ingest} />
+          <RuntimeField label="Push" value={status.health.push} />
+        </div>
+      </section>
+
+      <section className="compact-panel compact-panel-span">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Paths</span>
+            <h2>Local files</h2>
+          </div>
+        </div>
+        <div className="runtime-grid runtime-grid-paths">
+          <RuntimeField label="Config" value={status.paths.config} />
+          <RuntimeField label="Store" value={status.paths.store} />
+          <RuntimeField label="Socket" value={status.paths.socket} />
+          <RuntimeField label="Log" value={status.paths.log} />
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function ListPlaceholder({ className = "" }: { className?: string }) {
+  return (
+    <div className={`list-placeholder ${className}`.trim()}>
+      <div className="placeholder-line wide" />
+      <div className="placeholder-line" />
+      <div className="placeholder-line" />
+      <div className="placeholder-line short" />
+    </div>
   );
 }
 
@@ -1131,6 +2201,10 @@ function RecentConversationRow({
 }
 
 function TokenUsageObservatory({ data }: { data: DesktopHomeData }) {
+  const chart = buildUsageChartModel(data);
+  const panelMeta =
+    chart.source === "snapshot" ? "Snapshot-derived" : "Last 30 days";
+
   return (
     <section className="compact-panel compact-panel-wide usage-panel usage-observatory-panel">
       <div className="panel-header">
@@ -1138,183 +2212,163 @@ function TokenUsageObservatory({ data }: { data: DesktopHomeData }) {
           <span className="eyebrow">Tokens</span>
           <h2>Token &amp; Cost Observatory</h2>
         </div>
-        <span className="panel-meta">Last 30 days</span>
+        <span className="panel-meta">{panelMeta}</span>
       </div>
-      <TokenUsageChart entries={data.tokenUsageByDay ?? []} />
+      <TokenUsageChart chart={chart} data={data} />
     </section>
   );
 }
 
 function TokenUsageChart({
-  entries,
+  chart,
+  data,
 }: {
-  entries: DesktopHomeData["tokenUsageByDay"];
+  chart: UsageChartModel;
+  data: DesktopHomeData;
 }) {
-  if (entries.length === 0) {
-    return <div className="empty-row">No token usage timeline is available yet.</div>;
+  if (chart.source === "empty" || chart.days.length === 0) {
+    return <div className="empty-row">No token usage has been recorded yet.</div>;
   }
 
-  const dayMap = new Map<string, UsageDayBucket>();
-  const adapterTotals = new Map<string, number>();
-
-  for (const entry of entries) {
-    const adapterId = entry.adapterId || "unknown";
-    const day = dayMap.get(entry.day) ?? {
-      day: entry.day,
-      entries: [],
-      totalCost: 0,
-      totalTokens: 0,
-    };
-    day.totalTokens += entry.tokens;
-    day.totalCost += entry.cost;
-    day.entries.push({ adapterId, cost: entry.cost, tokens: entry.tokens });
-    dayMap.set(entry.day, day);
-    adapterTotals.set(adapterId, (adapterTotals.get(adapterId) ?? 0) + entry.tokens);
-  }
-
-  const adapters = Array.from(adapterTotals.entries())
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .map(([adapterId]) => adapterId);
-  const adapterIndex = new Map(
-    adapters.map((adapterId, index) => [adapterId, index]),
-  );
-  const days = Array.from(dayMap.values())
-    .sort((left, right) => left.day.localeCompare(right.day))
-    .slice(-30);
-  const maxDailyTokens = Math.max(...days.map((day) => day.totalTokens), 1);
-  const areaLayers = buildUsageAreaLayers(days, adapters);
-  const yTicks = buildUsageTicks(maxDailyTokens);
+  const { adapters, days } = chart;
+  const displayDays = buildUsageDisplayBuckets(chart);
+  const { chartData, series } = buildUsageRechartsData(displayDays, adapters);
   const latestDay = days.at(-1)!;
   const latestEntries = [...latestDay.entries].sort(
     (left, right) =>
       right.tokens - left.tokens || left.adapterId.localeCompare(right.adapterId),
   );
-  const latestX = usageX(days.length - 1, days.length);
+  const totalTokens = days.reduce((sum, day) => sum + day.totalTokens, 0);
+  const totalCost = days.reduce((sum, day) => sum + day.totalCost, 0);
+  const currentTokens = data.overview.tokens || totalTokens;
+  const currentCost = data.overview.cost || totalCost;
+  const title =
+    chart.source === "snapshot"
+      ? "Snapshot-derived burn chart"
+      : "Daily burn chart";
+  const description =
+    chart.source === "snapshot"
+      ? "Timeline rows are empty, so this chart is derived from current aggregate adapter totals."
+      : "Stacked token volume by adapter from the local SQLite store.";
+  const ariaLabel =
+    chart.source === "snapshot"
+      ? "Snapshot-derived token usage by adapter"
+      : "Daily token usage by adapter";
 
   return (
-    <div className="usage-chart">
+    <div className="usage-chart" data-usage-chart-source={chart.source}>
       <div className="usage-chart-heading">
         <div>
-          <h3>Daily burn chart</h3>
-          <p>Stacked token volume by adapter from the local SQLite store.</p>
+          <h3>{title}</h3>
+          <p>{description}</p>
         </div>
         <div className="usage-chart-total">
-          <span>{formatChartDay(latestDay.day)}</span>
-          <strong>{formatMetricNumber(latestDay.totalTokens).display} tok</strong>
-          <small>{formatCost(latestDay.totalCost)}</small>
+          <span>Current total</span>
+          <strong>{formatMetricNumber(currentTokens).display} tok</strong>
+          <small>{formatCost(currentCost)}</small>
         </div>
       </div>
+      <div className="usage-chart-kpis">
+        <span>
+          <strong>{formatMetricNumber(totalTokens).display}</strong>
+          {chart.source === "snapshot" ? " snapshot tokens" : " chart tokens"}
+        </span>
+        <span>
+          <strong>{formatCost(totalCost)}</strong>
+          {chart.source === "snapshot" ? " snapshot cost" : " chart cost"}
+        </span>
+        <span>
+          <strong>{formatNumber(adapters.length)}</strong>
+          adapters
+        </span>
+      </div>
       <div className="usage-chart-frame">
-        <svg
-          aria-label="Daily token usage by adapter"
-          className="usage-area-svg"
+        <div
+          aria-label={ariaLabel}
+          className="usage-area-chart-shell"
           role="img"
-          viewBox={`0 0 ${USAGE_CHART_WIDTH} ${USAGE_CHART_HEIGHT}`}
         >
-          <defs>
-            {adapters.map((adapterId, index) => (
-              <linearGradient
-                id={`usage-fill-${index}`}
-                key={adapterId}
-                x1="0"
-                x2="0"
-                y1="0"
-                y2="1"
-              >
-                <stop
-                  offset="0%"
-                  stopColor={usageColorHex(index)}
-                  stopOpacity="0.78"
-                />
-                <stop
-                  offset="100%"
-                  stopColor={usageColorHex(index)}
-                  stopOpacity="0.32"
-                />
-              </linearGradient>
-            ))}
-          </defs>
-          <rect
-            className="usage-plot-bg"
-            height={USAGE_CHART_PLOT.height}
-            width={USAGE_CHART_PLOT.width}
-            x={USAGE_CHART_PLOT.x}
-            y={USAGE_CHART_PLOT.y}
-          />
-          {yTicks.map((tick) => {
-            const y = usageY(tick, maxDailyTokens);
-            return (
-              <g key={tick}>
-                <line
-                  className="usage-grid-line"
-                  x1={USAGE_CHART_PLOT.x}
-                  x2={USAGE_CHART_PLOT.x + USAGE_CHART_PLOT.width}
-                  y1={y}
-                  y2={y}
-                />
-                <text
-                  className="usage-axis-label"
-                  textAnchor="end"
-                  x={USAGE_CHART_PLOT.x - 14}
-                  y={y + 4}
+          <StaticUsageAreaChart adapters={adapters} days={displayDays} />
+          <AreaChart
+            accessibilityLayer
+            className="usage-area-chart"
+            data={chartData}
+            height={USAGE_CHART_HEIGHT}
+            margin={{ bottom: 24, left: 2, right: 24, top: 18 }}
+            width={USAGE_CHART_WIDTH}
+          >
+            <defs>
+              {series.map((adapter) => (
+                <linearGradient
+                  id={`usage-fill-${adapter.key}`}
+                  key={adapter.key}
+                  x1="0"
+                  x2="0"
+                  y1="0"
+                  y2="1"
                 >
-                  {formatMetricNumber(tick).display}
-                </text>
-              </g>
-            );
-          })}
-          {areaLayers.map((layer, index) => (
-            <path
-              className="usage-area-layer"
-              d={layer.path}
-              fill={`url(#usage-fill-${index})`}
-              key={layer.adapterId}
-              stroke={usageColorHex(index)}
+                  <stop
+                    offset="0%"
+                    stopColor={adapter.color}
+                    stopOpacity="0.78"
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={adapter.color}
+                    stopOpacity="0.32"
+                  />
+                </linearGradient>
+              ))}
+            </defs>
+            <CartesianGrid
+              horizontal
+              stroke="rgba(210, 224, 255, 0.11)"
+              strokeDasharray="4 7"
+              vertical={false}
             />
-          ))}
-          {days.map((day, index) => {
-            if (!shouldRenderUsageDayLabel(index, days.length)) {
-              return null;
-            }
-            const x = usageX(index, days.length);
-            return (
-              <g key={day.day}>
-                <line
-                  className="usage-day-marker"
-                  x1={x}
-                  x2={x}
-                  y1={USAGE_CHART_PLOT.y}
-                  y2={USAGE_CHART_PLOT.y + USAGE_CHART_PLOT.height}
-                />
-                <text
-                  className="usage-axis-label"
-                  textAnchor="middle"
-                  x={x}
-                  y={USAGE_CHART_PLOT.y + USAGE_CHART_PLOT.height + 28}
-                >
-                  {formatChartDay(day.day)}
-                </text>
-              </g>
-            );
-          })}
-          <line
-            className="usage-focus-line"
-            x1={latestX}
-            x2={latestX}
-            y1={USAGE_CHART_PLOT.y}
-            y2={USAGE_CHART_PLOT.y + USAGE_CHART_PLOT.height}
-          />
-          <circle
-            className="usage-focus-dot"
-            cx={latestX}
-            cy={usageY(latestDay.totalTokens, maxDailyTokens)}
-            r="5"
-          />
-        </svg>
+            <XAxis
+              axisLine={false}
+              dataKey="label"
+              interval={displayDays.length <= 8 ? 0 : "preserveStartEnd"}
+              tick={{ fill: "var(--text-dim)", fontSize: 12 }}
+              tickLine={false}
+            />
+            <YAxis
+              axisLine={false}
+              tick={{ fill: "var(--text-dim)", fontSize: 12 }}
+              tickFormatter={(value) => formatMetricNumber(Number(value)).display}
+              tickLine={false}
+              width={56}
+            />
+            <RechartsTooltip
+              content={<UsageChartTooltip />}
+              cursor={{ stroke: "rgba(246, 248, 253, 0.5)", strokeDasharray: "6 6" }}
+              wrapperStyle={{ outline: "none" }}
+            />
+            {series.map((adapter) => (
+              <Area
+                dataKey={adapter.key}
+                dot={false}
+                fill={`url(#usage-fill-${adapter.key})`}
+                isAnimationActive={false}
+                key={adapter.key}
+                name={adapter.adapterId}
+                stackId="tokens"
+                stroke={adapter.color}
+                strokeWidth={1.6}
+                type="monotone"
+              />
+            ))}
+          </AreaChart>
+        </div>
         <div className="usage-callout">
-          <strong>{formatChartDay(latestDay.day)}</strong>
+          <strong>
+            {chart.source === "snapshot"
+              ? "Current snapshot"
+              : formatChartDay(latestDay.day)}
+          </strong>
           {latestEntries.slice(0, 6).map((entry) => {
-            const colorIndex = adapterIndex.get(entry.adapterId) ?? 0;
+            const colorIndex = Math.max(0, adapters.indexOf(entry.adapterId));
             return (
               <span key={entry.adapterId}>
                 <i className={usageColorClass(colorIndex)} />
@@ -1326,14 +2380,107 @@ function TokenUsageChart({
         </div>
       </div>
       <div className="usage-legend">
-        {adapters.map((adapterId) => (
-          <span key={adapterId}>
-            <i className={usageColorClass(adapterIndex.get(adapterId) ?? 0)} />
-            {adapterId}
+        {series.map((adapter, index) => (
+          <span key={adapter.key}>
+            <i className={usageColorClass(index)} />
+            {adapter.adapterId}
           </span>
         ))}
       </div>
     </div>
+  );
+}
+
+function UsageChartTooltip({
+  active,
+  label,
+  payload,
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{
+    color?: string;
+    name?: string;
+    payload?: UsageChartDatum;
+    value?: number | string;
+  }>;
+}) {
+  if (!active || !payload || payload.length === 0) {
+    return null;
+  }
+
+  const rows = payload
+    .filter((entry) => Number(entry.value) > 0)
+    .sort((left, right) => Number(right.value) - Number(left.value));
+
+  return (
+    <div className="usage-callout usage-callout-tooltip">
+      <strong>{label}</strong>
+      {rows.slice(0, 6).map((entry) => (
+        <span key={entry.name}>
+          <i style={{ background: entry.color ?? "#89d4a1" }} />
+          {entry.name}
+          <b>{formatMetricNumber(Number(entry.value)).display}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function StaticUsageAreaChart({
+  adapters,
+  days,
+}: {
+  adapters: string[];
+  days: UsageDisplayBucket[];
+}) {
+  if (days.length === 0 || adapters.length === 0) {
+    return null;
+  }
+
+  const layers = buildStaticUsageAreaLayers(days, adapters);
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="usage-area-static-chart"
+      data-usage-static-chart="true"
+      viewBox={`0 0 ${USAGE_CHART_WIDTH} ${USAGE_CHART_HEIGHT}`}
+    >
+      <rect
+        className="usage-static-plot-bg"
+        height={USAGE_STATIC_CHART_PLOT.height}
+        width={USAGE_STATIC_CHART_PLOT.width}
+        x={USAGE_STATIC_CHART_PLOT.x}
+        y={USAGE_STATIC_CHART_PLOT.y}
+      />
+      {layers.map((layer, index) => (
+        <path
+          className="usage-area-static-fill usage-area-static-layer"
+          d={layer.path}
+          data-adapter-id={layer.adapterId}
+          fill={usageColorHex(index)}
+          key={layer.adapterId}
+        />
+      ))}
+      {days.map((day, index) => {
+        if (!shouldRenderUsageDayLabel(index, days.length)) {
+          return null;
+        }
+        const x = usageStaticX(index, days.length);
+        return (
+          <text
+            className="usage-area-static-label"
+            key={`${day.day}-${index}`}
+            textAnchor="middle"
+            x={x}
+            y={USAGE_STATIC_CHART_PLOT.y + USAGE_STATIC_CHART_PLOT.height + 32}
+          >
+            {formatUsageDisplayDay(day)}
+          </text>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -1416,8 +2563,194 @@ function RuntimeField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function buildUsageAreaLayers(
-  days: UsageDayBucket[],
+function PreformattedText({ value }: { value: string }) {
+  return <pre>{value.length > 0 ? value : " "}</pre>;
+}
+
+function renderConversationHeaderSummary(
+  detail: DesktopConversationDetailView,
+): string {
+  const parentSummary = detail.parent
+    ? `Parent ${shortId(detail.parent.id)}`
+    : "Root conversation";
+  const childSummary =
+    detail.children.length > 0
+      ? `${formatNumber(detail.children.length)} child conversation${
+          detail.children.length === 1 ? "" : "s"
+        }`
+      : "No child conversations";
+
+  return `${parentSummary} - ${childSummary} - ${formatNumber(
+    detail.trace.conversationCount,
+  )} conversations in trace`;
+}
+
+function totalTokens(conversation: Conversation): number {
+  return (
+    conversation.inputTokens +
+    conversation.outputTokens +
+    conversation.cacheRead +
+    conversation.cacheWrite
+  );
+}
+
+function treeDepthClass(depth: number): number {
+  if (!Number.isFinite(depth) || depth <= 0) {
+    return 0;
+  }
+
+  return Math.min(TREE_DEPTH_CLASS_MAX, Math.floor(depth));
+}
+
+function buildUsageChartModel(data: DesktopHomeData): UsageChartModel {
+  const timelineEntries = (data.tokenUsageByDay ?? []).filter(
+    (entry) => entry.tokens > 0 || entry.cost > 0,
+  );
+
+  if (timelineEntries.length > 0) {
+    return buildUsageChartModelFromEntries(timelineEntries, "timeline");
+  }
+
+  const snapshotDay = normalizeUsageSnapshotDay(data.generatedAt);
+  const adapterEntries = data.topAdapters
+    .filter((adapter) => adapter.tokens > 0 || adapter.cost > 0)
+    .map((adapter) => ({
+      adapterId: adapter.adapterId || "unknown",
+      cost: adapter.cost,
+      day: snapshotDay,
+      sessions: adapter.conversations,
+      tokens: adapter.tokens,
+    }));
+
+  if (adapterEntries.length > 0) {
+    return buildUsageChartModelFromEntries(adapterEntries, "snapshot");
+  }
+
+  if (data.overview.tokens > 0 || data.overview.cost > 0) {
+    return buildUsageChartModelFromEntries(
+      [
+        {
+          adapterId: "all adapters",
+          cost: data.overview.cost,
+          day: snapshotDay,
+          sessions: data.overview.conversations,
+          tokens: data.overview.tokens,
+        },
+      ],
+      "snapshot",
+    );
+  }
+
+  return {
+    adapters: [],
+    days: [],
+    source: "empty",
+  };
+}
+
+function buildUsageChartModelFromEntries(
+  entries: Array<{
+    adapterId: string;
+    cost: number;
+    day: string;
+    sessions: number;
+    tokens: number;
+  }>,
+  source: UsageChartModel["source"],
+): UsageChartModel {
+  const dayMap = new Map<string, UsageDayBucket>();
+  const adapterTotals = new Map<string, number>();
+
+  for (const entry of entries) {
+    const adapterId = entry.adapterId || "unknown";
+    const day = dayMap.get(entry.day) ?? {
+      day: entry.day,
+      entries: [],
+      totalCost: 0,
+      totalTokens: 0,
+    };
+    day.totalTokens += entry.tokens;
+    day.totalCost += entry.cost;
+    day.entries.push({ adapterId, cost: entry.cost, tokens: entry.tokens });
+    dayMap.set(entry.day, day);
+    adapterTotals.set(adapterId, (adapterTotals.get(adapterId) ?? 0) + entry.tokens);
+  }
+
+  const adapters = Array.from(adapterTotals.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([adapterId]) => adapterId);
+  const days = Array.from(dayMap.values())
+    .sort((left, right) => left.day.localeCompare(right.day))
+    .slice(-30);
+
+  return {
+    adapters,
+    days,
+    source,
+  };
+}
+
+function normalizeUsageSnapshotDay(value: string): string {
+  if (!value) {
+    return "snapshot";
+  }
+
+  const [day] = value.split("T");
+  return day && day.length > 0 ? day : value;
+}
+
+function buildUsageDisplayBuckets(chart: UsageChartModel): UsageDisplayBucket[] {
+  if (chart.source !== "snapshot" || chart.days.length !== 1) {
+    return chart.days;
+  }
+
+  const snapshotDay = chart.days[0]!;
+  return [
+    {
+      ...snapshotDay,
+      day: `${snapshotDay.day}:snapshot`,
+      label: "Snapshot",
+    },
+    {
+      ...snapshotDay,
+      day: `${snapshotDay.day}:current`,
+      label: "Current",
+    },
+  ];
+}
+
+function buildUsageRechartsData(
+  days: UsageDisplayBucket[],
+  adapters: string[],
+): { chartData: UsageChartDatum[]; series: UsageChartSeries[] } {
+  const series = adapters.map((adapterId, index) => ({
+    adapterId,
+    color: usageColorHex(index),
+    key: `adapter_${index}`,
+  }));
+
+  const chartData = days.map((day) => {
+    const datum: UsageChartDatum = {
+      day: day.day,
+      label: formatUsageDisplayDay(day),
+      totalCost: day.totalCost,
+      totalTokens: day.totalTokens,
+    };
+
+    for (const [index, adapterId] of adapters.entries()) {
+      datum[`adapter_${index}`] = day.entries
+        .filter((entry) => entry.adapterId === adapterId)
+        .reduce((sum, entry) => sum + entry.tokens, 0);
+    }
+
+    return datum;
+  });
+
+  return { chartData, series };
+}
+
+function buildStaticUsageAreaLayers(
+  days: UsageDisplayBucket[],
   adapters: string[],
 ): Array<{ adapterId: string; path: string }> {
   const maxDailyTokens = Math.max(...days.map((day) => day.totalTokens), 1);
@@ -1428,15 +2761,17 @@ function buildUsageAreaLayers(
     const lowerPoints: string[] = [];
 
     days.forEach((day, dayIndex) => {
-      const x = usageX(dayIndex, days.length);
+      const x = usageStaticX(dayIndex, days.length);
       const tokens = day.entries
         .filter((entry) => entry.adapterId === adapterId)
         .reduce((sum, entry) => sum + entry.tokens, 0);
       const lower = cumulative[dayIndex] ?? 0;
       const upper = lower + tokens;
-      upperPoints.push(`${x.toFixed(1)},${usageY(upper, maxDailyTokens).toFixed(1)}`);
+      upperPoints.push(
+        `${x.toFixed(1)},${usageStaticY(upper, maxDailyTokens).toFixed(1)}`,
+      );
       lowerPoints.unshift(
-        `${x.toFixed(1)},${usageY(lower, maxDailyTokens).toFixed(1)}`,
+        `${x.toFixed(1)},${usageStaticY(lower, maxDailyTokens).toFixed(1)}`,
       );
       cumulative[dayIndex] = upper;
     });
@@ -1448,27 +2783,23 @@ function buildUsageAreaLayers(
   });
 }
 
-function buildUsageTicks(maxDailyTokens: number): number[] {
-  const steps = 4;
-  return Array.from({ length: steps + 1 }, (_entry, index) => {
-    return Math.round((maxDailyTokens / steps) * index);
-  });
-}
-
-function usageX(index: number, count: number): number {
+function usageStaticX(index: number, count: number): number {
   if (count <= 1) {
-    return USAGE_CHART_PLOT.x + USAGE_CHART_PLOT.width / 2;
+    return USAGE_STATIC_CHART_PLOT.x + USAGE_STATIC_CHART_PLOT.width / 2;
   }
 
-  return USAGE_CHART_PLOT.x + (USAGE_CHART_PLOT.width * index) / (count - 1);
+  return (
+    USAGE_STATIC_CHART_PLOT.x +
+    (USAGE_STATIC_CHART_PLOT.width * index) / (count - 1)
+  );
 }
 
-function usageY(value: number, maxDailyTokens: number): number {
+function usageStaticY(value: number, maxDailyTokens: number): number {
   const clamped = Math.max(0, Math.min(value, maxDailyTokens));
   return (
-    USAGE_CHART_PLOT.y +
-    USAGE_CHART_PLOT.height -
-    (clamped / Math.max(maxDailyTokens, 1)) * USAGE_CHART_PLOT.height
+    USAGE_STATIC_CHART_PLOT.y +
+    USAGE_STATIC_CHART_PLOT.height -
+    (clamped / Math.max(maxDailyTokens, 1)) * USAGE_STATIC_CHART_PLOT.height
   );
 }
 
@@ -1488,6 +2819,10 @@ function usageColorClass(index: number): string {
 function usageColorHex(index: number): string {
   const colors = ["#89d4a1", "#89b4ff", "#f0c46d", "#ff8f84", "#a8d8ea", "#d6b3ff"];
   return colors[index % colors.length] ?? colors[0];
+}
+
+function formatUsageDisplayDay(day: UsageDisplayBucket): string {
+  return day.label ?? formatChartDay(day.day);
 }
 
 function formatChartDay(value: string): string {

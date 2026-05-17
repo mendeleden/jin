@@ -14,8 +14,6 @@ export function DesktopReactApp({
   bridge?: JinDesktopBridge;
 }) {
   const controllerRef = useRef<DesktopRendererController | null>(null);
-  const [controller, setController] =
-    useState<DesktopRendererController | null>(null);
   const [state, setState] = useState<RendererState>(() =>
     createInitialRendererState(),
   );
@@ -26,7 +24,6 @@ export function DesktopReactApp({
       onChange: setState,
     });
     controllerRef.current = controller;
-    setController(controller);
 
     setState(controller.getSnapshot());
 
@@ -34,7 +31,6 @@ export function DesktopReactApp({
 
     return () => {
       controllerRef.current = null;
-      setController(null);
     };
   }, [bridge]);
 
@@ -48,11 +44,23 @@ export function DesktopReactApp({
     runControlAction(action) {
       return controllerRef.current?.runControlAction(action);
     },
+    selectSubview(subview) {
+      controllerRef.current?.selectSubview(subview);
+    },
+    setAdapterFilter(value) {
+      return controllerRef.current?.setAdapterFilter(value);
+    },
+    setSinceFilter(value) {
+      return controllerRef.current?.setSinceFilter(value);
+    },
     switchView(view) {
       return controllerRef.current?.switchView(view);
     },
     toggleHomePanel(panel) {
       controllerRef.current?.toggleHomePanel(panel);
+    },
+    toggleInspector() {
+      controllerRef.current?.toggleInspector();
     },
     toggleSidebar() {
       controllerRef.current?.toggleSidebar();
@@ -61,7 +69,7 @@ export function DesktopReactApp({
 
   return (
     <div className="desktop-react-root">
-      <AppShell actions={actions} legacyController={controller} state={state} />
+      <AppShell actions={actions} state={state} />
     </div>
   );
 }

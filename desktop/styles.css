@@ -407,7 +407,7 @@ pre {
   border-radius: 999px;
   background: rgba(137, 180, 255, 0.08);
   color: var(--accent-strong);
-  cursor: help;
+  cursor: pointer;
   padding: 0;
 }
 
@@ -416,15 +416,31 @@ pre {
   height: 11px;
 }
 
+.inspector-toggle svg,
+.inspector-rail-button svg {
+  width: 15px;
+  height: 15px;
+}
+
 .sidebar-cost-info:hover,
 .sidebar-cost-info:focus-visible {
   border-color: rgba(137, 180, 255, 0.4);
   outline: none;
 }
 
-.sidebar-cost-tooltip-content {
-  z-index: 40;
-  max-width: 260px;
+.sidebar-cost-info[aria-expanded="true"] {
+  border-color: rgba(137, 180, 255, 0.56);
+  background: rgba(137, 180, 255, 0.16);
+}
+
+.sidebar-cost-popover-content {
+  position: fixed;
+  right: auto;
+  bottom: 30px;
+  left: 226px;
+  z-index: 1000;
+  width: 260px;
+  max-width: calc(100vw - 252px);
   border: 1px solid rgba(210, 224, 255, 0.18);
   border-radius: 10px;
   background: rgba(8, 12, 19, 0.98);
@@ -435,12 +451,17 @@ pre {
   padding: 9px 10px;
 }
 
-.sidebar-cost-tooltip-content[data-state="closed"] {
-  display: none;
-}
-
-.sidebar-cost-tooltip-arrow {
-  fill: rgba(8, 12, 19, 0.98);
+.sidebar-cost-popover-content::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid rgba(210, 224, 255, 0.18);
+  border-bottom: 1px solid rgba(210, 224, 255, 0.18);
+  background: rgba(8, 12, 19, 0.98);
+  transform: rotate(45deg);
 }
 
 .sidebar.collapsed .sidebar-runtime {
@@ -673,6 +694,8 @@ pre {
 .workspace-home {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-content: start;
+  flex: 1;
   gap: 14px;
   min-height: 0;
   overflow: auto;
@@ -917,6 +940,8 @@ pre {
 
 .routing-flow-canvas,
 .home-flow-canvas {
+  flex: 1;
+  min-height: 300px;
   min-width: 0;
   overflow: auto;
   border: 1px solid rgba(210, 224, 255, 0.09);
@@ -936,8 +961,9 @@ pre {
 .home-flow-svg {
   display: block;
   width: 100%;
-  min-width: 920px;
-  height: auto;
+  min-width: 100%;
+  height: 320px;
+  min-height: 320px;
 }
 
 .routing-canvas-bg,
@@ -1127,6 +1153,10 @@ pre {
 }
 
 .mission-control-panel {
+  display: flex;
+  flex-direction: column;
+  grid-column: span 6;
+  min-height: 410px;
   overflow: hidden;
   background:
     linear-gradient(180deg, rgba(18, 25, 38, 0.98), rgba(10, 15, 24, 0.96)),
@@ -1524,6 +1554,10 @@ pre {
 }
 
 .usage-observatory-panel {
+  display: flex;
+  flex-direction: column;
+  grid-column: span 6;
+  min-height: 410px;
   background:
     radial-gradient(circle at 80% 0%, rgba(137, 180, 255, 0.12), transparent 28%),
     linear-gradient(180deg, rgba(22, 29, 42, 0.98), rgba(11, 16, 24, 0.96));
@@ -1531,7 +1565,9 @@ pre {
 
 .usage-chart {
   display: grid;
+  flex: 1;
   gap: 14px;
+  min-height: 0;
 }
 
 .usage-chart-heading {
@@ -1576,9 +1612,32 @@ pre {
   font-size: 1.04rem;
 }
 
+.usage-chart-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usage-chart-kpis span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  padding: 10px 12px;
+}
+
+.usage-chart-kpis strong {
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
 .usage-chart-frame {
   position: relative;
-  min-height: 330px;
+  min-height: 270px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1587,50 +1646,61 @@ pre {
     radial-gradient(circle at 70% 18%, rgba(137, 180, 255, 0.1), transparent 32%);
 }
 
-.usage-area-svg {
+.usage-area-chart-shell {
+  position: relative;
+  width: 100%;
+  height: 270px;
+  min-height: 270px;
+}
+
+.usage-area-chart {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
-  height: auto;
-  min-height: 300px;
+  height: 270px;
+  min-height: 270px;
 }
 
-.usage-plot-bg {
-  fill: rgba(255, 255, 255, 0.018);
-  stroke: rgba(210, 224, 255, 0.06);
-}
-
-.usage-grid-line,
-.usage-day-marker {
-  stroke: rgba(210, 224, 255, 0.11);
-  stroke-width: 1;
-}
-
-.usage-day-marker {
-  stroke-dasharray: 4 7;
+.usage-area-static-chart {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 270px;
+  pointer-events: none;
   opacity: 0.48;
 }
 
-.usage-axis-label {
-  fill: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 13px;
+.usage-static-plot-bg {
+  fill: rgba(255, 255, 255, 0.025);
 }
 
-.usage-area-layer {
-  stroke-width: 1.6;
-  vector-effect: non-scaling-stroke;
-}
-
-.usage-focus-line {
-  stroke: rgba(246, 248, 253, 0.5);
-  stroke-dasharray: 6 6;
+.usage-area-static-fill,
+.usage-area-static-layer {
+  fill-opacity: 0.5;
+  stroke: rgba(255, 255, 255, 0.28);
   stroke-width: 1.2;
 }
 
-.usage-focus-dot {
-  fill: var(--text);
-  stroke: rgba(137, 180, 255, 0.7);
-  stroke-width: 2;
+.usage-area-static-label {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.usage-area-chart .recharts-surface {
+  overflow: visible;
+}
+
+.usage-chart-frame .recharts-cartesian-axis-tick-value {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+}
+
+.usage-chart-frame .recharts-tooltip-wrapper {
+  z-index: 4;
 }
 
 .usage-callout {
@@ -1651,6 +1721,12 @@ pre {
 .usage-callout strong {
   color: var(--text);
   font-size: 0.92rem;
+}
+
+.usage-callout-tooltip {
+  position: static;
+  min-width: 190px;
+  pointer-events: none;
 }
 
 .usage-callout span {
@@ -2238,5 +2314,18 @@ pre {
   .filter-bar,
   .runtime-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar-cost-popover-content {
+    left: 18px;
+    right: 18px;
+    bottom: auto;
+    top: 96px;
+    width: auto;
+    max-width: none;
+  }
+
+  .sidebar-cost-popover-content::before {
+    display: none;
   }
 }

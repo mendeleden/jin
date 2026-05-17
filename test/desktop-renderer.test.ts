@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   DesktopRendererController,
   ESTIMATED_COST_HELP,
-  renderApp,
   type RendererState,
 } from "../desktop/renderer";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
@@ -90,7 +90,7 @@ describe("desktop renderer", () => {
   });
 
   test("stopping runtime in conversations view renders a paused workbench state", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
         snapshot: {
@@ -108,7 +108,7 @@ describe("desktop renderer", () => {
   });
 
   test("conversation workbench renders library, tabs, and metadata inspector", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
         selectedSubview: "timeline",
@@ -147,7 +147,7 @@ describe("desktop renderer", () => {
       traces: 441,
     };
 
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "home",
         snapshot,
@@ -165,7 +165,10 @@ describe("desktop renderer", () => {
     expect(html).toContain("claude-opus");
     expect(html).toContain("Token &amp; Cost Observatory");
     expect(html).toContain("Daily burn chart");
-    expect(html).toContain("usage-area-svg");
+    expect(html).toContain("usage-area-chart");
+    expect(html).toContain("usage-area-static-chart");
+    expect(html).toContain("usage-area-static-fill");
+    expect(html).toContain("Daily token usage by adapter");
     expect(html).toContain("usage-chart");
     expect(html).toContain("Mission Control");
     expect(html).toContain("Conversation Flow");
@@ -179,8 +182,84 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Daemon status and boundary paths");
   });
 
+  test("home token observatory renders a snapshot-derived chart from aggregate data", () => {
+    const snapshot = makeSnapshot("running");
+    if (!snapshot.data) {
+      throw new Error("expected running snapshot data");
+    }
+    snapshot.data.tokenUsageByDay = [];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot,
+      }),
+    );
+
+    expect(html).toContain('data-usage-chart-source="snapshot"');
+    expect(html).toContain("Snapshot-derived burn chart");
+    expect(html).toContain("Current snapshot");
+    expect(html).toContain("claude-code");
+    expect(html).toContain("244");
+    expect(html).toContain("Snapshot-derived token usage by adapter");
+    expect(html).toContain("recharts-wrapper usage-area-chart");
+    expect(html).toContain(">Snapshot</text>");
+    expect(html).toContain(">Current</text>");
+    expect(
+      extractDistinctUsagePathXCoordinates(extractStaticUsageAreaPaths(html)[0]!)
+        .length,
+    ).toBeGreaterThan(1);
+    const kpis = extractUsageChartKpis(html);
+    expect(countText(kpis, "<strong>244</strong>")).toBe(1);
+    expect(kpis).toContain("<strong>244</strong> snapshot tokens");
+    expect(kpis).toContain("<strong>$1.32</strong> snapshot cost");
+    expect(kpis).not.toContain("<strong>488</strong>");
+    expect(kpis).not.toContain("$2.64");
+    expect(html).not.toContain("No token usage timeline is available yet.");
+    expect(html).not.toContain("No token usage has been recorded yet.");
+  });
+
+  test("home token observatory falls back to overview totals when adapter rows are absent", () => {
+    const snapshot = makeSnapshot("running");
+    if (!snapshot.data) {
+      throw new Error("expected running snapshot data");
+    }
+    snapshot.data.tokenUsageByDay = [];
+    snapshot.data.topAdapters = [];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot,
+      }),
+    );
+
+    expect(html).toContain('data-usage-chart-source="snapshot"');
+    expect(html).toContain("all adapters");
+    expect(html).toContain("Current total");
+    expect(html).not.toContain("No token usage has been recorded yet.");
+  });
+
+  test("desktop home CSS reserves visible graph panel height", () => {
+    const css = readFileSync(
+      new URL("../desktop/styles.css", import.meta.url),
+      "utf8",
+    );
+
+    expect(css).toContain(".mission-control-panel");
+    expect(css).toContain("grid-column: span 6;");
+    expect(css).toContain("min-height: 410px;");
+    expect(css).toContain(".home-flow-svg");
+    expect(css).toContain("height: 320px;");
+    expect(css).toContain(".usage-observatory-panel");
+    expect(css).toContain(".usage-area-chart-shell");
+    expect(css).toContain(".usage-area-chart");
+    expect(css).toContain(".usage-area-static-chart");
+    expect(css).toContain("height: 270px;");
+  });
+
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
-    const runningHtml = renderApp(
+    const runningHtml = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "home",
         snapshot: makeSnapshot("running"),
@@ -206,7 +285,7 @@ describe("desktop renderer", () => {
     expect(runningHtml).not.toContain("<span>Projects</span>");
     expect(runningHtml).not.toContain("<span>Health</span>");
 
-    const placeholderHtml = renderApp(
+    const placeholderHtml = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "home",
         snapshot: makeSnapshot("stopped"),
@@ -251,20 +330,42 @@ describe("desktop renderer", () => {
     expect(routingHtml).not.toContain("data-legacy-html-view");
   });
 
-  test("react shell keeps deferred views behind an explicit legacy adapter", () => {
-    const html = renderDesktopReactShellToStaticMarkup(
+  test("react shell renders Conversations, Logs, and Settings without a legacy adapter", () => {
+    const conversationsHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+        selectedConversationId: "desktop-child",
+        detail: makeConversationDetailView(),
+        trace: makeTraceView(),
+        tree: makeTreeView(),
+      }),
+    );
+    const logsHtml = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "logs",
         snapshot: makeSnapshot("running"),
         logs: makeLogsView(),
       }),
     );
+    const settingsHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "settings",
+        snapshot: makeSnapshot("running"),
+      }),
+    );
 
-    expect(html).toContain('data-legacy-html-view="logs"');
-    expect(html).toContain("Daemon log tail");
+    for (const html of [conversationsHtml, logsHtml, settingsHtml]) {
+      expect(html).not.toContain("data-legacy-html-view");
+    }
+    expect(conversationsHtml).toContain("Conversation index");
+    expect(conversationsHtml).toContain("Metadata");
+    expect(logsHtml).toContain("Daemon log tail");
+    expect(settingsHtml).toContain("Daemon status");
   });
 
-  test("react sidebar cost uses a Radix tooltip affordance with the full estimated amount", () => {
+  test("react sidebar cost uses a focusable popover affordance with the full estimated amount", () => {
     const snapshot = makeSnapshot("running");
     if (!snapshot.data) {
       throw new Error("expected running snapshot data");
@@ -284,9 +385,25 @@ describe("desktop renderer", () => {
 
     expect(costMetric).toContain("Cost (estimated)");
     expect(costMetric).toContain("$1,234,567.89");
-    expect(costMetric).toContain('data-cost-tooltip-trigger="estimated-cost"');
-    expect(costMetric).toContain("sidebar-cost-tooltip-content");
+    expect(costMetric).toContain('data-cost-popover-trigger="estimated-cost"');
+    expect(costMetric).toContain('aria-haspopup="dialog"');
+    expect(costMetric).toContain('aria-expanded="false"');
     expect(costMetric).toContain(ESTIMATED_COST_HELP);
+    expect(html).not.toContain("sidebar-cost-popover-content");
+    const css = readFileSync(
+      new URL("../desktop/styles.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).toContain(".sidebar-cost-popover-content");
+    expect(css).toContain("position: fixed;");
+    expect(css).toContain("bottom: 30px;");
+    expect(css).toContain("left: 226px;");
+    const source = readFileSync(
+      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("onMouseEnter");
+    expect(source).toContain("onMouseLeave");
     expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
       costMetric.indexOf("$1,234,567.89"),
     );
@@ -298,7 +415,7 @@ describe("desktop renderer", () => {
   });
 
   test("logs workspace renders the daemon log tail through desktop state", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "logs",
         snapshot: makeSnapshot("running"),
@@ -315,7 +432,7 @@ describe("desktop renderer", () => {
   });
 
   test("routing workspace renders project-to-sink graph state", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "routing",
         snapshot: makeSnapshot("running"),
@@ -323,7 +440,7 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("Projects &rarr; Sinks");
+    expect(html).toContain("Projects -&gt; Sinks");
     expect(html).toContain("Project to sink routing flow graph");
     expect(html).toContain(">acme/jin.git</div>");
     expect(html).toContain(">mendeleden/jin.git</div>");
@@ -348,9 +465,9 @@ describe("desktop renderer", () => {
     expect(html).toContain("Local-only conversations stay in project cards");
     expect(html).not.toContain("Dashed amber = unrouted conversations");
     expect(html).not.toContain("routing-flow-path muted");
-    expect(html.match(/data-refresh="shell"/g) ?? []).toHaveLength(1);
-    expect(extractTopbar(html)).toContain('data-refresh="shell"');
-    expect(extractRoutingWorkspace(html)).not.toContain('data-refresh="shell"');
+    expect(countText(html, "Refresh")).toBe(1);
+    expect(extractTopbar(html)).toContain("Refresh");
+    expect(extractRoutingWorkspace(html)).not.toContain("Refresh");
     const routingFlowStrokeWidths = Array.from(
       html.matchAll(
         /<path class="routing-flow-path(?: muted)?"[^>]*stroke-width="([^"]+)"/g,
@@ -396,7 +513,7 @@ describe("desktop renderer", () => {
       ],
     };
 
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "routing",
         snapshot: makeSnapshot("running"),
@@ -437,7 +554,7 @@ describe("desktop renderer", () => {
       sinks: [],
     });
 
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "routing",
         snapshot: makeSnapshot("running"),
@@ -497,11 +614,11 @@ describe("desktop renderer", () => {
     await controller.refreshLogs();
 
     expect(snapshots.at(-1)?.logsError).toContain("preload bridge is stale");
-    expect(renderApp(snapshots.at(-1)!)).toContain("Restart Jin Desktop");
+    expect(renderDesktopReactShellToStaticMarkup(snapshots.at(-1)!)).toContain("Restart Jin Desktop");
   });
 
   test("conversation inspector can render as a collapsed side rail", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
         inspectorCollapsed: true,
@@ -520,7 +637,7 @@ describe("desktop renderer", () => {
   });
 
   test("home stats panels render explicit collapsed state", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "home",
         collapsedHomePanels: {
@@ -531,14 +648,14 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain('data-home-panel="harness"');
     expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Usage by harness");
     expect(html).not.toContain("Billed");
     expect(html).toContain("Usage by model");
   });
 
   test("trace subview keeps trace relationships visible as a first-class surface", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
         selectedSubview: "trace",
@@ -558,7 +675,7 @@ describe("desktop renderer", () => {
   });
 
   test("incompatible desktop protocol renders an update-first state", () => {
-    const html = renderApp(
+    const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
         snapshot: {
@@ -586,18 +703,20 @@ describe("desktop renderer", () => {
 });
 
 function extractSidebarRuntimeMetrics(html: string): string {
-  const match = html.match(
-    /<section class="sidebar-panel sidebar-runtime">[\s\S]*?<div class="sidebar-metrics">([\s\S]*?)\n        <\/div>\n      <\/section>/,
-  );
-  if (!match) {
+  const start = html.indexOf('<div class="sidebar-metrics">');
+  if (start < 0) {
     throw new Error("expected sidebar runtime metrics");
   }
-  return match[1] ?? "";
+  const end = html.indexOf("</section>", start);
+  if (end < 0) {
+    throw new Error("expected sidebar runtime section end");
+  }
+  return html.slice(start, end);
 }
 
 function extractMetricLabels(html: string): string[] {
   return Array.from(
-    html.matchAll(/<span(?: class="sidebar-metric-label")?>\s*([^<\n]+?)\s*(?:<|<\/span>)/g),
+    html.matchAll(/<span class="sidebar-metric-label">([^<]+)(?:<|<\/span>)/g),
     (match) => (match[1] ?? "").trim(),
   );
 }
@@ -627,11 +746,47 @@ function extractReactSidebar(html: string): string {
 }
 
 function extractRoutingWorkspace(html: string): string {
-  const match = html.match(/<section class="workspace-routing">[\s\S]*?\n      <\/main>/);
+  const match = html.match(/<section class="workspace-routing">[\s\S]*?<\/main>/);
   if (!match) {
     throw new Error("expected routing workspace");
   }
   return match[0];
+}
+
+function extractUsageChartKpis(html: string): string {
+  const match = html.match(/<div class="usage-chart-kpis">([\s\S]*?)<\/div>/);
+  if (!match) {
+    throw new Error("expected usage chart KPIs");
+  }
+  return match[1] ?? "";
+}
+
+function extractStaticUsageAreaPaths(html: string): string[] {
+  const paths = Array.from(
+    html.matchAll(
+      /<path\b(?=[^>]*class="[^"]*usage-area-static-layer)[^>]*\bd="([^"]+)"/g,
+    ),
+    (match) => match[1] ?? "",
+  );
+  if (paths.length === 0) {
+    throw new Error("expected static usage area path");
+  }
+  return paths;
+}
+
+function extractDistinctUsagePathXCoordinates(path: string): number[] {
+  return Array.from(
+    new Set(
+      Array.from(
+        path.matchAll(/\b[ML]\s+(-?\d+(?:\.\d+)?),-?\d+(?:\.\d+)?/g),
+        (match) => Number(match[1] ?? 0),
+      ),
+    ),
+  );
+}
+
+function countText(html: string, text: string): number {
+  return html.split(text).length - 1;
 }
 
 function makeState(overrides: Partial<RendererState> = {}): RendererState {
