@@ -141,7 +141,7 @@ describe("desktop shell service", () => {
       })),
     ).toEqual([
       { method: "GET", path: "/api/desktop/compatibility" },
-      { method: "GET", path: "/api/desktop/home" },
+      { method: "GET", path: "/api/desktop/home?tokenUsageDays=365" },
       {
         method: "GET",
         path: "/api/desktop/conversations?adapter=claude-code&since=7d&limit=12",
@@ -331,7 +331,7 @@ function resolveRoutePayload(path: string): unknown {
     return makeCompatibilityInfo();
   }
 
-  if (path === "/api/desktop/home") {
+  if (path === "/api/desktop/home?tokenUsageDays=365") {
     return makeHomeData();
   }
 
@@ -412,6 +412,25 @@ function makeHomeData(): DesktopHomeData {
         adapters: ["claude-code"],
       },
     ],
+    projectUsageByHarness: [
+      {
+        id: "github.com%2Facme%2Fjin",
+        name: "github.com/acme/jin",
+        gitRemote: "github.com/acme/jin",
+        conversationCount: 3,
+        totalTokens: 244,
+        totalCost: 1.32,
+        lastSeen: "2026-04-29T08:55:00.000Z",
+        adapters: [
+          {
+            adapterId: "claude-code",
+            conversations: 3,
+            tokens: 244,
+            cost: 1.32,
+          },
+        ],
+      },
+    ],
     relationshipMix: [
       { relationship: "root", conversations: 1 },
       { relationship: "spawned", conversations: 1 },
@@ -431,6 +450,16 @@ function makeHomeData(): DesktopHomeData {
         sessions: 2,
         tokens: 144,
         cost: 0.8,
+      },
+    ],
+    tokenUsageByWeek: [
+      {
+        weekStart: "2026-04-27",
+        weekEnd: "2026-05-03",
+        adapterId: "claude-code",
+        sessions: 3,
+        tokens: 244,
+        cost: 1.32,
       },
     ],
   };

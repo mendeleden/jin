@@ -416,6 +416,58 @@ export function timelineByDay(
   );
 }
 
+export function timelineByWeek(
+  db: Database,
+  days = 30,
+): Array<{
+  week_start: string;
+  week_end: string;
+  adapter_id: string;
+  sessions: number;
+  tokens: number;
+  cost: number;
+}> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  return allRows<{
+    week_start: string;
+    week_end: string;
+    adapter_id: string;
+    sessions: number;
+    tokens: number;
+    cost: number;
+  }>(
+    db,
+    `WITH conversation_dates AS (
+       SELECT
+         date(
+           substr(COALESCE(NULLIF(ended_at, ''), started_at), 1, 10),
+           '-' || (
+             (CAST(strftime('%w', substr(COALESCE(NULLIF(ended_at, ''), started_at), 1, 10)) AS INTEGER) + 6) % 7
+           ) || ' days'
+         ) AS week_start,
+         adapter_id,
+         input_tokens,
+         output_tokens,
+         cache_read,
+         cache_write,
+         est_cost
+       FROM conversations
+       WHERE COALESCE(NULLIF(ended_at, ''), started_at) >= ?
+     )
+     SELECT
+       week_start,
+       date(week_start, '+6 days') AS week_end,
+       adapter_id,
+       COUNT(*) AS sessions,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS tokens,
+       COALESCE(SUM(est_cost), 0) AS cost
+     FROM conversation_dates
+     GROUP BY week_start, adapter_id
+     ORDER BY week_start ASC, adapter_id ASC`,
+    since,
+  );
+}
+
 export function listProjectsByRemote(
   db: Database,
 ): Array<{
@@ -460,6 +512,113 @@ export function listProjectsByRemote(
     lastSeen: row.last_seen ?? "",
     tools: row.tools ?? "",
   }));
+}
+
+export function listProjectUsageByHarness(
+  db: Database,
+  limit = 7,
+): Array<{
+  id: string;
+  name: string;
+  gitRemote: string;
+  conversationCount: number;
+  totalTokens: number;
+  totalCost: number;
+  lastSeen: string;
+  adapters: Array<{
+    adapterId: string;
+    conversations: number;
+    tokens: number;
+    cost: number;
+  }>;
+}> {
+  const rows = allRows<{
+    git_remote: string;
+    adapter_id: string;
+    conversations: number;
+    tokens: number;
+    cost: number;
+    last_seen: string;
+  }>(
+    db,
+    `SELECT
+       git_remote,
+       adapter_id,
+       COUNT(*) AS conversations,
+       COALESCE(SUM(input_tokens + output_tokens + cache_read + cache_write), 0) AS tokens,
+       COALESCE(SUM(est_cost), 0) AS cost,
+       MAX(COALESCE(NULLIF(ended_at, ''), started_at)) AS last_seen
+     FROM conversations
+     WHERE git_remote != ''
+     GROUP BY git_remote, adapter_id
+     ORDER BY last_seen DESC, git_remote ASC, adapter_id ASC`,
+  );
+  const projects = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      gitRemote: string;
+      conversationCount: number;
+      totalTokens: number;
+      totalCost: number;
+      lastSeen: string;
+      adapters: Array<{
+        adapterId: string;
+        conversations: number;
+        tokens: number;
+        cost: number;
+      }>;
+    }
+  >();
+
+  for (const row of rows) {
+    const project = projects.get(row.git_remote) ?? {
+      id: encodeURIComponent(row.git_remote),
+      name: row.git_remote,
+      gitRemote: row.git_remote,
+      conversationCount: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      lastSeen: "",
+      adapters: [],
+    };
+    const conversations = row.conversations ?? 0;
+    const tokens = row.tokens ?? 0;
+    const cost = row.cost ?? 0;
+    project.conversationCount += conversations;
+    project.totalTokens += tokens;
+    project.totalCost += cost;
+    project.lastSeen =
+      row.last_seen && row.last_seen > project.lastSeen
+        ? row.last_seen
+        : project.lastSeen;
+    project.adapters.push({
+      adapterId: row.adapter_id || "unknown",
+      conversations,
+      tokens,
+      cost,
+    });
+    projects.set(row.git_remote, project);
+  }
+
+  return Array.from(projects.values())
+    .sort(
+      (left, right) =>
+        right.lastSeen.localeCompare(left.lastSeen) ||
+        right.conversationCount - left.conversationCount ||
+        left.gitRemote.localeCompare(right.gitRemote),
+    )
+    .slice(0, limit)
+    .map((project) => ({
+      ...project,
+      adapters: project.adapters.sort(
+        (left, right) =>
+          right.tokens - left.tokens ||
+          right.conversations - left.conversations ||
+          left.adapterId.localeCompare(right.adapterId),
+      ),
+    }));
 }
 
 function buildConversationTreeNode(

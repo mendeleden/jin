@@ -142,6 +142,24 @@ export interface DesktopProjectSummary {
   adapters: string[];
 }
 
+export interface DesktopProjectHarnessSegment {
+  adapterId: string;
+  conversations: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface DesktopProjectHarnessSummary {
+  id: string;
+  name: string;
+  gitRemote: string;
+  conversationCount: number;
+  totalTokens: number;
+  totalCost: number;
+  lastSeen: string;
+  adapters: DesktopProjectHarnessSegment[];
+}
+
 export interface DesktopRelationshipSummary {
   relationship: ConversationRelationship;
   conversations: number;
@@ -153,6 +171,19 @@ export interface DesktopTokenUsageDay {
   sessions: number;
   tokens: number;
   cost: number;
+}
+
+export interface DesktopTokenUsageWeek {
+  weekStart: string;
+  weekEnd: string;
+  adapterId: string;
+  sessions: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface DesktopHomeRequest {
+  tokenUsageDays?: number;
 }
 
 export interface DesktopConversationListRequest {
@@ -187,8 +218,10 @@ export interface DesktopHomeData {
   topModels: DesktopModelSummary[];
   topTools: DesktopToolSummary[];
   topProjects: DesktopProjectSummary[];
+  projectUsageByHarness: DesktopProjectHarnessSummary[];
   relationshipMix: DesktopRelationshipSummary[];
   tokenUsageByDay: DesktopTokenUsageDay[];
+  tokenUsageByWeek: DesktopTokenUsageWeek[];
 }
 
 export interface DesktopHomeSnapshot {

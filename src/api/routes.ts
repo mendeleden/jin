@@ -8,14 +8,17 @@ import type {
   DesktopConversationListRequest,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopHomeRequest,
   DesktopLogsRequest,
   DesktopLogsView,
   DesktopModelSummary,
+  DesktopProjectHarnessSummary,
   DesktopProjectSummary,
   DesktopRoutingProjectFlow,
   DesktopRoutingSinkSummary,
   DesktopRoutingView,
   DesktopTokenUsageDay,
+  DesktopTokenUsageWeek,
   DesktopTraceView,
   DesktopTreeView,
   DesktopToolSummary,
@@ -36,10 +39,12 @@ import {
   getTraceConversations,
   listAvailableAdapters,
   listConversations,
+  listProjectUsageByHarness,
   listProjectsByRemote,
   parseSinceInput,
   summarizeRelationships,
   timelineByDay,
+  timelineByWeek,
   type ConversationTreeNode,
 } from "../db/query-surface";
 import { getStore } from "../db/store";
@@ -57,6 +62,7 @@ export const DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT = 48;
 export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
 export const DESKTOP_LOGS_DEFAULT_LIMIT = 240;
 export const DESKTOP_LOGS_MAX_LIMIT = 2_000;
+export const DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS = 2_000;
 const DESKTOP_LOGS_READ_CHUNK_BYTES = 64 * 1024;
 
 const json = (data: unknown, status = 200) =>
@@ -114,8 +120,8 @@ export function createRoutes(
     return json(buildDesktopCompatibilityInfo());
   });
 
-  routes.set("GET /api/desktop/home", () => {
-    return json(buildDesktopHomeData(queryStore));
+  routes.set("GET /api/desktop/home", (req) => {
+    return json(buildDesktopHomeData(queryStore, req));
   });
 
   routes.set("GET /api/desktop/conversations", (req) => {
@@ -489,8 +495,12 @@ export function matchRoute(
   return null;
 }
 
-export function buildDesktopHomeData(queryStore: QueryStore): DesktopHomeData {
+export function buildDesktopHomeData(
+  queryStore: QueryStore,
+  request: Request | DesktopHomeRequest = {},
+): DesktopHomeData {
   const overview = getOverviewSummary(queryStore.database);
+  const tokenUsageDays = normalizeDesktopHomeTokenUsageDays(request);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -510,8 +520,16 @@ export function buildDesktopHomeData(queryStore: QueryStore): DesktopHomeData {
     topModels: summarizeModels(queryStore.database),
     topTools: summarizeTools(queryStore.database),
     topProjects: summarizeProjects(queryStore.database),
+    projectUsageByHarness: summarizeProjectUsageByHarness(queryStore.database),
     relationshipMix: summarizeRelationships(queryStore.database),
-    tokenUsageByDay: summarizeTokenUsageByDay(queryStore.database),
+    tokenUsageByDay: summarizeTokenUsageByDay(
+      queryStore.database,
+      tokenUsageDays,
+    ),
+    tokenUsageByWeek: summarizeTokenUsageByWeek(
+      queryStore.database,
+      tokenUsageDays,
+    ),
   };
 }
 
@@ -776,16 +794,60 @@ function summarizeProjects(database: QueryStore["database"]): DesktopProjectSumm
   }));
 }
 
+function summarizeProjectUsageByHarness(
+  database: QueryStore["database"],
+): DesktopProjectHarnessSummary[] {
+  return listProjectUsageByHarness(database, 7);
+}
+
 function summarizeTokenUsageByDay(
   database: QueryStore["database"],
+  days: number,
 ): DesktopTokenUsageDay[] {
-  return timelineByDay(database, 30).map((entry) => ({
+  return timelineByDay(database, days).map((entry) => ({
     day: entry.day,
     adapterId: entry.adapter_id,
     sessions: entry.sessions,
     tokens: entry.tokens,
     cost: entry.cost,
   }));
+}
+
+function summarizeTokenUsageByWeek(
+  database: QueryStore["database"],
+  days: number,
+): DesktopTokenUsageWeek[] {
+  return timelineByWeek(database, days).map((entry) => ({
+    weekStart: entry.week_start,
+    weekEnd: entry.week_end,
+    adapterId: entry.adapter_id,
+    sessions: entry.sessions,
+    tokens: entry.tokens,
+    cost: entry.cost,
+  }));
+}
+
+function normalizeDesktopHomeTokenUsageDays(
+  request: Request | DesktopHomeRequest,
+): number {
+  const value =
+    request instanceof Request
+      ? new URL(request.url).searchParams.get("tokenUsageDays") ??
+        new URL(request.url).searchParams.get("days")
+      : request.tokenUsageDays;
+
+  const days =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS;
+
+  if (!Number.isFinite(days) || !Number.isInteger(days) || days <= 0) {
+    return DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS;
+  }
+
+  return Math.min(days, DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS);
 }
 
 function splitProjectAdapters(value: string): string[] {

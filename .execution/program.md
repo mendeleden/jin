@@ -2,7 +2,7 @@
 
 Updated: 2026-05-17
 Branch: main
-Focus: Premium Desktop Home and Conversations visual overhaul.
+Focus: Desktop Home graph cleanup ready for review after live visual inspection.
 
 ## Current Thesis
 
@@ -21,7 +21,7 @@ Stripe/Linear-like Desktop UI with Apple-style material polish.
 | W4-DESKTOP-04 | merged | codex-WORKER-desktop-routing-overflow, codex-WORKER-desktop-sidebar-chrome | Stabilize Home/Routing graph UI and Desktop chrome behind typed IPC |
 | W4-DESKTOP-05 | merged | codex-WORKER-desktop-react-cutover | Cut Desktop shell, Home, and Routing over to real React components |
 | W4-DESKTOP-06 | review_ready | codex-WORKER-desktop-full-react-cutover, codex-WORKER-desktop-visual-fix, codex-WORKER-desktop-snapshot-chart-fix | Remove remaining legacy HTML adapter and populate Home Token & Cost Observatory |
-| W4-DESKTOP-07 | review_ready | codex-BRAIN, UX/UI reviewer lanes complete | Skinny luxury overhaul for Home and Conversations, with screenshot-driven design review |
+| W4-DESKTOP-07 | review_ready | codex-BRAIN integration | Home graph simplified: Recharts-only chart, duplicate row aggregation, and monthly-ready history window |
 
 ## Dependency Graph
 
@@ -40,6 +40,9 @@ flowchart TD
   W4D05[W4-DESKTOP-05 React component cutover]
   W4D06[W4-DESKTOP-06 Full React cutover and Home observatory]
   W4D07[W4-DESKTOP-07 Skinny luxury Home and Conversations]
+  W4D07X[W4-DESKTOP-07 Reopened analytics experiment]
+  W4D07S[W4-DESKTOP-07 Home simplification cut]
+  W4D07G[W4-DESKTOP-07 Home graph cleanup cut]
 
   BP07 --> W4C01
   BP08 --> W4C01
@@ -65,6 +68,12 @@ flowchart TD
   BP08 --> W4D06
   W4D06 --> W4D07
   BP11 --> W4D07
+  W4D07 --> W4D07X
+  BP11 --> W4D07X
+  W4D07X --> W4D07S
+  BP11 --> W4D07S
+  W4D07S --> W4D07G
+  BP11 --> W4D07G
 ```
 
 ## Coordination Rules
@@ -76,7 +85,16 @@ flowchart TD
   making Home charts resilient without daemon/API contract changes.
 - W4-DESKTOP-07 owns Home/Conversations visual-system iteration and screenshot
   artifacts only. It must not change Desktop daemon API contracts or runtime
-  behavior.
+  behavior. Its reopened experiment must use existing Desktop view-model data
+  only: top-row Conversation filters, collapsible metadata, and richer Home
+  analytics are UI composition changes, not daemon/API changes.
+- The Home simplification cut must remove unclear Signals/Recents panels,
+  dedupe Home totals, and add graph period/window controls using existing
+  `DesktopHomeData` only. Workers/reviewers do not use Computer Use; main-thread
+  `codex-BRAIN` owns live Electron visual verification.
+- The Home graph cleanup cut may edit `src/api/routes.ts` only to increase the
+  existing Desktop Home `tokenUsageByDay` history window; it must not add new
+  endpoint shapes, IPC calls, contract fields, or daemon behavior.
 - Do not change Desktop renderer code in config packets.
 - Do not change runtime, pipeline, sink, DB, or route matching behavior in W4-DESKTOP-04.
 - Do not change runtime, pipeline, sink, DB, API contract, or route matching
@@ -105,14 +123,13 @@ flowchart TD
   artifacts before the W4-DESKTOP-07 visual revamp. Computer Use can now inspect
   the Electron window, with occasional stale accessibility-tree snapshots after
   HMR.
-- W4-DESKTOP-07 is review-ready. UX/UI reviewers found clipped Conversations
-  rows, over-heavy Home cards, noisy project labels, and bulky detail/inspector
-  chrome. The folded iteration removes Home collapsed Stats bars, slims the
-  metric/action/chart surfaces, normalizes project/conversation labels, densifies
-  Conversations rows/messages/inspector, and saves Home/Conversations screenshots
-  through iteration 4 under `docs/execution/artifacts/W4-DESKTOP-07/`. Validation
-  passed `bun run desktop:typecheck`, focused Desktop tests, and
-  `bun run desktop:build`.
+- W4-DESKTOP-07 Home simplification removed Signals/Recents and added period
+  controls. Main-thread Computer Use then found the graph still rendered the old
+  static SVG fallback under Recharts. `codex-BRAIN` stopped the slow cleanup
+  worker and integrated the cleanup directly: removed the static SVG fallback,
+  aggregated duplicate day/adapter rows, increased the existing Home token
+  history window to 365 days, and verified the live Home graph no longer shows
+  duplicate/clipped x-axis labels. Focused Desktop validation is green.
 
 ## Exit Criteria
 

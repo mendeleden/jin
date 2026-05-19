@@ -1,10 +1,12 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   FileText,
   Home,
   Info,
+  ChevronLeft,
+  ChevronRight,
   type LucideIcon,
   MessageSquare,
   PanelLeftClose,
@@ -20,8 +22,9 @@ import {
 } from "lucide-react";
 import {
   Area,
-  AreaChart,
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
@@ -36,7 +39,7 @@ import type {
   DesktopRoutingView,
   DesktopTreeView,
 } from "../../src/contracts/desktop";
-import { HomeMissionControlGraph, RoutingFlowGraph } from "../graph-components";
+import { RoutingFlowGraph } from "../graph-components";
 import {
   ESTIMATED_COST_HELP,
   capitalize,
@@ -52,7 +55,6 @@ import {
   type DesktopHomePanel,
   type DesktopNavigationView,
   type DesktopConversationSubview,
-  type FormattedMetric,
   type RendererState,
   shortId,
   renderDesktopViewSubtitle,
@@ -106,37 +108,55 @@ const TIME_FILTERS: Array<{ label: string; value: string }> = [
   { label: "30d", value: "30d" },
 ];
 const USAGE_COLOR_COUNT = 6;
-const USAGE_CHART_WIDTH = 960;
-const USAGE_CHART_HEIGHT = 270;
-const USAGE_STATIC_CHART_PLOT = {
-  x: 64,
-  y: 24,
-  width: 780,
-  height: 178,
-} as const;
+const USAGE_CHART_WIDTH = 1280;
+const USAGE_CHART_HEIGHT = 252;
+const USAGE_DAILY_WINDOW_SIZE = 14;
+const USAGE_MONTHLY_WINDOW_SIZE = 4;
+const USAGE_MAX_HISTORY_DAYS = 366;
 const TREE_DEPTH_CLASS_MAX = 12;
+
+type UsageChartPeriod = "daily" | "monthly";
+type HomeBreakdownMetric = "tokens" | "conversations" | "cost";
 
 type UsageDayBucket = {
   day: string;
+  totalSessions: number;
   totalTokens: number;
   totalCost: number;
-  entries: Array<{ adapterId: string; tokens: number; cost: number }>;
+  entries: Array<{
+    adapterId: string;
+    cost: number;
+    sessions: number;
+    tokens: number;
+  }>;
 };
 
 type UsageDisplayBucket = UsageDayBucket & {
   label?: string;
+  rangeEnd?: string;
 };
 
 type UsageChartModel = {
   days: UsageDayBucket[];
   adapters: string[];
   source: "timeline" | "snapshot" | "empty";
+  weeklyDays?: UsageDisplayBucket[];
+};
+
+type UsageWindowedChartModel = Omit<UsageChartModel, "days"> & {
+  canGoNext: boolean;
+  canGoPrevious: boolean;
+  days: UsageDisplayBucket[];
+  period: UsageChartPeriod;
+  rangeLabel: string;
+  windowLabel: string;
 };
 
 type UsageChartDatum = {
   day: string;
   label: string;
   totalCost: number;
+  totalSessions: number;
   totalTokens: number;
   [adapterKey: string]: string | number;
 };
@@ -636,76 +656,9 @@ function HomeWorkspace({
 
   return (
     <section className="workspace-home">
-      <section className="summary-strip">
-        <SummaryMetric
-          label="Conversations"
-          value={formatMetricNumber(data.overview.conversations)}
-        />
-        <SummaryMetric
-          label="Messages"
-          value={formatMetricNumber(data.overview.messages)}
-        />
-        <SummaryMetric
-          label="Tool calls"
-          value={formatMetricNumber(data.overview.toolCalls)}
-        />
-        <SummaryMetric
-          label="Tokens"
-          value={formatMetricNumber(data.overview.tokens)}
-        />
-        <SummaryMetric label="Cost" value={{ display: formatCost(data.overview.cost) }} />
-        <SummaryMetric label="Traces" value={formatMetricNumber(data.overview.traces)} />
-      </section>
-
-      <HomeMissionControlGraph data={data} />
-      <TokenUsageObservatory data={data} />
-
-      <section className="compact-panel compact-panel-span">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Recent</span>
-            <h2>Latest conversations</h2>
-          </div>
-          <button
-            className="toolbar-button subtle"
-            onClick={() => void actions.switchView("conversations")}
-            type="button"
-          >
-            Open library
-          </button>
-        </div>
-        <div className="mini-list">
-          {data.recentConversations.length > 0 ? (
-            data.recentConversations.map((conversation) => (
-              <RecentConversationRow
-                conversation={conversation}
-                key={conversation.id}
-                onOpen={actions.openConversation}
-              />
-            ))
-          ) : (
-            <div className="empty-row">No indexed conversations yet.</div>
-          )}
-        </div>
-      </section>
-
-      <section className="compact-panel">
-        <div className="panel-header">
-          <h2>Projects</h2>
-        </div>
-        <div className="mini-list">
-          {data.topProjects.length > 0 ? (
-            data.topProjects.map((project) => (
-              <div className="key-value-row" key={project.id}>
-                <span>{formatProjectReference(project.name)}</span>
-                <strong>{formatNumber(project.conversationCount)} conv</strong>
-              </div>
-            ))
-          ) : (
-            <div className="empty-row">No linked projects yet.</div>
-          )}
-        </div>
-      </section>
+      <HomePulsePanel data={data} />
+      <HomeProjectActivityPanel data={data} />
+      <HomeAdapterMixPanel data={data} />
     </section>
   );
 }
@@ -760,11 +713,12 @@ function ConversationsWorkspace({
         state.inspectorCollapsed ? "inspector-collapsed" : ""
       }`}
     >
+      <ConversationWorkspaceToolbar actions={actions} state={state} />
       <aside className="library-panel">
         <div className="panel-header panel-header-tight">
           <div>
             <span className="eyebrow">Library</span>
-            <h2>Conversation index</h2>
+            <h2>Index</h2>
           </div>
           <span className="panel-meta">
             {state.library
@@ -774,8 +728,6 @@ function ConversationsWorkspace({
                 : "Waiting"}
           </span>
         </div>
-        <ConversationFilters actions={actions} state={state} />
-        <RelationshipMix library={state.library} />
         <ConversationLibrary actions={actions} state={state} />
       </aside>
 
@@ -794,6 +746,33 @@ function ConversationsWorkspace({
   );
 }
 
+function ConversationWorkspaceToolbar({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  const shown = state.library?.conversations.length ?? 0;
+  const totalLabel = state.library
+    ? `${formatNumber(shown)} shown`
+    : state.libraryLoading
+      ? "Loading..."
+      : "Waiting";
+
+  return (
+    <div className="conversation-workspace-toolbar">
+      <div className="conversation-toolbar-summary">
+        <span className="eyebrow">Workspace</span>
+        <strong>Conversation index</strong>
+        <span>{totalLabel}</span>
+      </div>
+      <ConversationFilters actions={actions} state={state} />
+      <RelationshipMix library={state.library} />
+    </div>
+  );
+}
+
 function ConversationFilters({
   actions,
   state,
@@ -806,7 +785,7 @@ function ConversationFilters({
   const sinceValue = state.libraryRequest.since ?? "";
 
   return (
-    <div className="filter-bar">
+    <div className="filter-bar conversation-filter-row">
       <label className="filter-field">
         <span>Adapter</span>
         <select
@@ -1503,6 +1482,7 @@ function InspectorRail({ actions }: { actions: DesktopShellActions }) {
         type="button"
       >
         <PanelRightOpen aria-hidden="true" />
+        <span>Metadata</span>
       </button>
     </aside>
   );
@@ -1994,137 +1974,437 @@ function LifecycleState({
   );
 }
 
-function SummaryMetric({
-  label,
-  value,
-}: {
-  label: string;
-  value: FormattedMetric;
-}) {
-  const exact = value.exact && value.exact !== value.display ? value.exact : "";
-
-  return (
-    <article
-      className="summary-metric"
-      title={exact ? `${label}: ${exact}` : undefined}
-    >
-      <span>{label}</span>
-      <strong>{value.display}</strong>
-      {exact ? <small>{exact}</small> : null}
-    </article>
-  );
-}
-
-function RecentConversationRow({
-  conversation,
-  onOpen,
-}: {
-  conversation: Conversation;
-  onOpen(conversationId: string): MaybePromise;
-}) {
-  return (
-    <button
-      className="mini-row"
-      onClick={() => void onOpen(conversation.id)}
-      type="button"
-    >
-      <div>
-        <div className="mini-row-title" title={conversation.name}>
-          {formatConversationTitle(conversation.name)}
-        </div>
-        <div className="mini-row-meta">
-          <span>{conversation.adapterId}</span>
-          <span>{formatDate(conversation.endedAt || conversation.startedAt)}</span>
-          <span>{formatDuration(conversation.durationMs)}</span>
-        </div>
-      </div>
-      <span className={`relationship-chip ${conversation.relationship}`}>
-        {conversation.relationship}
-      </span>
-    </button>
-  );
-}
-
-function TokenUsageObservatory({ data }: { data: DesktopHomeData }) {
+function HomePulsePanel({ data }: { data: DesktopHomeData }) {
   const chart = buildUsageChartModel(data);
-  const panelMeta =
-    chart.source === "snapshot" ? "Snapshot-derived" : "Last 30 days";
+  const monthlyAvailable =
+    chart.source === "timeline" && (chart.weeklyDays?.length ?? 0) > 0;
+  const [period, setPeriod] = useState<UsageChartPeriod>("daily");
+  const [windowOffset, setWindowOffset] = useState(0);
+  const effectivePeriod =
+    period === "monthly" && !monthlyAvailable ? "daily" : period;
+  const windowedChart = buildWindowedUsageChart(
+    chart,
+    effectivePeriod,
+    windowOffset,
+  );
 
   return (
-    <section className="compact-panel compact-panel-wide usage-panel usage-observatory-panel">
-      <div className="panel-header">
-        <div>
-          <span className="eyebrow">Tokens</span>
-          <h2>Token &amp; Cost Observatory</h2>
-        </div>
-        <span className="panel-meta">{panelMeta}</span>
-      </div>
-      <TokenUsageChart chart={chart} data={data} />
+    <section className="compact-panel home-pulse-panel usage-panel">
+      <TokenUsageChart
+        chart={windowedChart}
+        monthlyAvailable={monthlyAvailable}
+        onNextWindow={() => setWindowOffset((current) => Math.max(0, current - 1))}
+        onPeriodChange={(nextPeriod) => {
+          setPeriod(nextPeriod);
+          setWindowOffset(0);
+        }}
+        onPreviousWindow={() => setWindowOffset((current) => current + 1)}
+      />
     </section>
   );
 }
 
+function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
+  const [metric, setMetric] = useState<HomeBreakdownMetric>("tokens");
+  const projects =
+    data.projectUsageByHarness && data.projectUsageByHarness.length > 0
+      ? data.projectUsageByHarness
+      : data.topProjects.map((project) => ({
+          ...project,
+          adapters: project.adapters.map((adapterId) => ({
+            adapterId,
+            conversations: project.conversationCount,
+            cost: project.totalCost,
+            tokens: project.totalTokens,
+          })),
+        }));
+  const maxValue = Math.max(
+    ...projects.map((project) => projectMetricValue(project, metric)),
+    1,
+  );
+
+  return (
+    <section className="compact-panel home-project-panel">
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Projects</span>
+          <h2>Project Stacks</h2>
+        </div>
+        <HomeMetricToggle metric={metric} onChange={setMetric} />
+      </div>
+      <div className="home-project-list home-stacked-project-list">
+        {projects.length > 0 ? (
+          projects.slice(0, 7).map((project) => {
+            const total = projectMetricValue(project, metric);
+            return (
+            <article className="home-project-row home-stacked-project-row" key={project.id}>
+              <div className="home-project-row-head">
+                <strong title={project.name}>{formatProjectReference(project.name)}</strong>
+                <span>{formatHomeMetricValue(total, metric)}</span>
+              </div>
+              <div
+                className="home-project-stack"
+                title={`${formatProjectReference(project.name)}: ${formatHomeMetricValue(
+                  total,
+                  metric,
+                )}`}
+              >
+                <div
+                  className="home-project-stack-scale"
+                  style={{
+                    width: `${Math.max(7, (total / maxValue) * 100).toFixed(1)}%`,
+                  }}
+                >
+                  {project.adapters.map((adapter, index) => {
+                    const value = adapterMetricValue(adapter, metric);
+                    if (value <= 0 || total <= 0) {
+                      return null;
+                    }
+                    return (
+                      <span
+                        className={usageColorClass(index)}
+                        key={adapter.adapterId}
+                        style={{
+                          width: `${Math.max(3, (value / total) * 100).toFixed(1)}%`,
+                        }}
+                        title={`${adapter.adapterId}: ${formatHomeMetricValue(
+                          value,
+                          metric,
+                        )}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="home-project-row-meta">
+                <span>Last seen {formatDate(project.lastSeen)}</span>
+                <span>
+                  {project.adapters.map((adapter) => adapter.adapterId).join(", ") ||
+                    "unknown adapter"}
+                </span>
+              </div>
+            </article>
+          );
+          })
+        ) : (
+          <div className="empty-row">No linked projects yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HomeAdapterMixPanel({ data }: { data: DesktopHomeData }) {
+  const [metric, setMetric] = useState<Extract<HomeBreakdownMetric, "tokens" | "conversations">>("tokens");
+  const chart = buildUsageChartModel(data);
+  const windowedChart = buildWindowedUsageChart(chart, "daily", 0);
+  const adapters = windowedChart.adapters.slice(0, 6);
+  const days = windowedChart.days;
+  const totals = adapters.map((adapterId) => ({
+    adapterId,
+    value: days.reduce(
+      (sum, day) =>
+        sum +
+        day.entries
+          .filter((entry) => entry.adapterId === adapterId)
+          .reduce(
+            (entrySum, entry) =>
+              entrySum +
+              (metric === "tokens" ? entry.tokens : entry.sessions),
+            0,
+          ),
+      0,
+    ),
+  }));
+  const maxValue = Math.max(...totals.map((entry) => entry.value), 1);
+
+  return (
+    <section className="compact-panel home-adapter-panel">
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Harnesses</span>
+          <h2>Harness Timeline</h2>
+        </div>
+        <HomeMetricToggle
+          metric={metric}
+          onChange={(nextMetric) => {
+            if (nextMetric !== "cost") {
+              setMetric(nextMetric);
+            }
+          }}
+          values={["tokens", "conversations"]}
+        />
+      </div>
+      <div className="home-adapter-list home-harness-timeline-list">
+        {adapters.length > 0 ? (
+          adapters.map((adapterId, index) => {
+            const total = totals.find((entry) => entry.adapterId === adapterId)?.value ?? 0;
+            return (
+            <article className="home-adapter-row home-harness-row" key={adapterId}>
+              <i className={usageColorClass(index)} />
+              <div>
+                <strong>{adapterId}</strong>
+                <span>
+                  {formatHomeMetricValue(total, metric)} over current window
+                </span>
+              </div>
+              <div className="home-harness-sparkline" aria-hidden="true">
+                {days.map((day) => {
+                  const dayValue = day.entries
+                    .filter((entry) => entry.adapterId === adapterId)
+                    .reduce(
+                      (sum, entry) =>
+                        sum + (metric === "tokens" ? entry.tokens : entry.sessions),
+                      0,
+                    );
+                  return (
+                    <span key={day.day}>
+                      <i
+                        className={usageColorClass(index)}
+                        style={{
+                          height: `${Math.max(
+                            dayValue > 0 ? 12 : 2,
+                            (dayValue / maxValue) * 100,
+                          ).toFixed(1)}%`,
+                        }}
+                        title={`${formatUsageDisplayDay(day)}: ${formatHomeMetricValue(
+                          dayValue,
+                          metric,
+                        )}`}
+                      />
+                    </span>
+                  );
+                })}
+              </div>
+            </article>
+          );
+          })
+        ) : (
+          <div className="empty-row">No adapter activity recorded yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HomeMetricToggle({
+  metric,
+  onChange,
+  values = ["tokens", "conversations", "cost"],
+}: {
+  metric: HomeBreakdownMetric;
+  onChange(metric: HomeBreakdownMetric): void;
+  values?: HomeBreakdownMetric[];
+}) {
+  return (
+    <div className="home-metric-toggle" role="group" aria-label="Breakdown metric">
+      {values.map((value) => (
+        <button
+          aria-pressed={metric === value}
+          className={metric === value ? "active" : ""}
+          key={value}
+          onClick={() => onChange(value)}
+          type="button"
+        >
+          {homeMetricLabel(value)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function projectMetricValue(
+  project: {
+    conversationCount: number;
+    totalCost: number;
+    totalTokens: number;
+  },
+  metric: HomeBreakdownMetric,
+): number {
+  if (metric === "conversations") {
+    return project.conversationCount;
+  }
+  if (metric === "cost") {
+    return project.totalCost;
+  }
+  return project.totalTokens;
+}
+
+function adapterMetricValue(
+  adapter: { conversations: number; cost: number; tokens: number },
+  metric: HomeBreakdownMetric,
+): number {
+  if (metric === "conversations") {
+    return adapter.conversations;
+  }
+  if (metric === "cost") {
+    return adapter.cost;
+  }
+  return adapter.tokens;
+}
+
+function homeMetricLabel(metric: HomeBreakdownMetric): string {
+  if (metric === "conversations") {
+    return "Convs";
+  }
+  if (metric === "cost") {
+    return "Cost";
+  }
+  return "Tokens";
+}
+
+function formatHomeMetricValue(value: number, metric: HomeBreakdownMetric): string {
+  if (metric === "cost") {
+    return formatCost(value);
+  }
+  if (metric === "conversations") {
+    return `${formatNumber(value)} conv`;
+  }
+  return `${formatMetricNumber(value).display} tok`;
+}
+
 function TokenUsageChart({
   chart,
-  data,
+  monthlyAvailable,
+  onNextWindow,
+  onPeriodChange,
+  onPreviousWindow,
 }: {
-  chart: UsageChartModel;
-  data: DesktopHomeData;
+  chart: UsageWindowedChartModel;
+  monthlyAvailable: boolean;
+  onNextWindow(): void;
+  onPeriodChange(period: UsageChartPeriod): void;
+  onPreviousWindow(): void;
 }) {
+  const [metric, setMetric] = useState<HomeBreakdownMetric>("tokens");
+
   if (chart.source === "empty" || chart.days.length === 0) {
     return <div className="empty-row">No token usage has been recorded yet.</div>;
   }
 
   const { adapters, days } = chart;
-  const displayDays = buildUsageDisplayBuckets(chart);
-  const { chartData, series } = buildUsageRechartsData(displayDays, adapters);
-  const latestDay = days.at(-1)!;
+  const displayDays = chart.days;
+  const { chartData, series } = buildUsageRechartsData(
+    displayDays,
+    adapters,
+    metric,
+  );
+  const summaryDays =
+    chart.source === "snapshot" && days.length > 1 ? [days.at(-1)!] : days;
+  const latestDay = summaryDays.at(-1)!;
   const latestEntries = [...latestDay.entries].sort(
     (left, right) =>
-      right.tokens - left.tokens || left.adapterId.localeCompare(right.adapterId),
+      usageEntryMetricValue(right, metric) -
+        usageEntryMetricValue(left, metric) ||
+      left.adapterId.localeCompare(right.adapterId),
   );
-  const totalTokens = days.reduce((sum, day) => sum + day.totalTokens, 0);
-  const totalCost = days.reduce((sum, day) => sum + day.totalCost, 0);
-  const currentTokens = data.overview.tokens || totalTokens;
-  const currentCost = data.overview.cost || totalCost;
+  const totalTokens = summaryDays.reduce((sum, day) => sum + day.totalTokens, 0);
+  const totalCost = summaryDays.reduce((sum, day) => sum + day.totalCost, 0);
+  const totalSessions = summaryDays.reduce(
+    (sum, day) => sum + day.totalSessions,
+    0,
+  );
+  const periodLabel = chart.period === "monthly" ? "Weekly" : "Daily";
+  const metricLabel = homeMetricLabel(metric).toLowerCase();
+  const metricUsageLabel = usageMetricUsageLabel(metric);
+  const useWeeklyBars = chart.period === "monthly" && chart.source === "timeline";
   const title =
     chart.source === "snapshot"
-      ? "Snapshot-derived burn chart"
-      : "Daily burn chart";
+      ? "Current activity snapshot"
+      : `${periodLabel} ${metricLabel} by adapter`;
   const description =
     chart.source === "snapshot"
-      ? "Timeline rows are empty, so this chart is derived from current aggregate adapter totals."
-      : "Stacked token volume by adapter from the local SQLite store.";
+      ? "Timeline rows are empty, so this pulse is derived from current aggregate adapter totals."
+      : `Stacked ${metricLabel} by adapter, with the conversation rail below.`;
   const ariaLabel =
     chart.source === "snapshot"
-      ? "Snapshot-derived token usage by adapter"
-      : "Daily token usage by adapter";
+      ? `Snapshot-derived ${metricUsageLabel} usage by adapter`
+      : chart.period === "monthly"
+        ? `Weekly ${metricUsageLabel} usage by adapter`
+        : `Daily ${metricUsageLabel} usage by adapter`;
+  const xAxisInterval =
+    displayDays.length <= 7
+      ? 0
+      : Math.max(1, Math.ceil(displayDays.length / 6) - 1);
 
   return (
-    <div className="usage-chart" data-usage-chart-source={chart.source}>
+    <div
+      className="usage-chart"
+      data-usage-chart-source={chart.source}
+      data-usage-period={chart.period}
+      data-usage-window={chart.windowLabel}
+    >
       <div className="usage-chart-heading">
         <div>
           <h3>{title}</h3>
           <p>{description}</p>
         </div>
-        <div className="usage-chart-total">
-          <span>Current total</span>
-          <strong>{formatMetricNumber(currentTokens).display} tok</strong>
-          <small>{formatCost(currentCost)}</small>
+        <div className="usage-chart-controls" aria-label="Usage chart controls">
+          <HomeMetricToggle
+            metric={metric}
+            onChange={setMetric}
+          />
+          <div className="usage-period-toggle" aria-label="Usage period" role="group">
+            <button
+              aria-pressed={chart.period === "daily"}
+              className={chart.period === "daily" ? "active" : ""}
+              onClick={() => onPeriodChange("daily")}
+              type="button"
+            >
+              Daily
+            </button>
+            <button
+              aria-pressed={chart.period === "monthly"}
+              className={chart.period === "monthly" ? "active" : ""}
+              disabled={!monthlyAvailable}
+              onClick={() => onPeriodChange("monthly")}
+              title={
+                monthlyAvailable
+                  ? "Monthly rollup"
+                  : "Monthly rollup requires weekly usage buckets"
+              }
+              type="button"
+            >
+              Monthly
+            </button>
+          </div>
+          <div className="usage-window-controls" aria-label={chart.rangeLabel}>
+            <button
+              aria-label="Previous usage window"
+              className="toolbar-button usage-window-button"
+              disabled={!chart.canGoPrevious}
+              onClick={onPreviousWindow}
+              title="Previous window"
+              type="button"
+            >
+              <ChevronLeft aria-hidden="true" />
+            </button>
+            <span title={chart.windowLabel}>{chart.rangeLabel}</span>
+            <button
+              aria-label="Next usage window"
+              className="toolbar-button usage-window-button"
+              disabled={!chart.canGoNext}
+              onClick={onNextWindow}
+              title="Next window"
+              type="button"
+            >
+              <ChevronRight aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
       <div className="usage-chart-kpis">
         <span>
           <strong>{formatMetricNumber(totalTokens).display}</strong>
-          {chart.source === "snapshot" ? " snapshot tokens" : " chart tokens"}
+          tokens
+        </span>
+        <span>
+          <strong>{formatNumber(totalSessions)}</strong>
+          conversations
         </span>
         <span>
           <strong>{formatCost(totalCost)}</strong>
-          {chart.source === "snapshot" ? " snapshot cost" : " chart cost"}
-        </span>
-        <span>
-          <strong>{formatNumber(adapters.length)}</strong>
-          adapters
+          est. cost
         </span>
       </div>
       <div className="usage-chart-frame">
@@ -2133,14 +2413,14 @@ function TokenUsageChart({
           className="usage-area-chart-shell"
           role="img"
         >
-          <StaticUsageAreaChart adapters={adapters} days={displayDays} />
-          <AreaChart
+          <ComposedChart
             accessibilityLayer
             className="usage-area-chart"
             data={chartData}
             height={USAGE_CHART_HEIGHT}
-            margin={{ bottom: 24, left: 2, right: 24, top: 18 }}
+            margin={{ bottom: 36, left: 12, right: 36, top: 18 }}
             width={USAGE_CHART_WIDTH}
+            barCategoryGap={useWeeklyBars ? "28%" : "10%"}
           >
             <defs>
               {series.map((adapter) => (
@@ -2174,56 +2454,96 @@ function TokenUsageChart({
             <XAxis
               axisLine={false}
               dataKey="label"
-              interval={displayDays.length <= 8 ? 0 : "preserveStartEnd"}
+              interval={xAxisInterval}
+              padding={{ left: 16, right: 36 }}
               tick={{ fill: "var(--text-dim)", fontSize: 12 }}
+              tickFormatter={(value, index) =>
+                displayDays.length > 6 && index === displayDays.length - 1
+                  ? ""
+                  : String(value)
+              }
+              tickMargin={10}
               tickLine={false}
             />
             <YAxis
               axisLine={false}
               tick={{ fill: "var(--text-dim)", fontSize: 12 }}
-              tickFormatter={(value) => formatMetricNumber(Number(value)).display}
+              tickFormatter={(value) =>
+                formatHomeMetricValue(Number(value), metric)
+                  .replace(" conv", "")
+                  .replace(" tok", "")
+              }
+              tickMargin={8}
               tickLine={false}
-              width={56}
+              width={64}
             />
             <RechartsTooltip
-              content={<UsageChartTooltip />}
+              content={<UsageChartTooltip metric={metric} />}
               cursor={{ stroke: "rgba(246, 248, 253, 0.5)", strokeDasharray: "6 6" }}
               wrapperStyle={{ outline: "none" }}
             />
-            {series.map((adapter) => (
-              <Area
-                dataKey={adapter.key}
-                dot={false}
-                fill={`url(#usage-fill-${adapter.key})`}
-                isAnimationActive={false}
-                key={adapter.key}
-                name={adapter.adapterId}
-                stackId="tokens"
-                stroke={adapter.color}
-                strokeWidth={1.6}
-                type="monotone"
-              />
-            ))}
-          </AreaChart>
-        </div>
-        <div className="usage-callout">
-          <strong>
-            {chart.source === "snapshot"
-              ? "Current snapshot"
-              : formatChartDay(latestDay.day)}
-          </strong>
-          {latestEntries.slice(0, 6).map((entry) => {
-            const colorIndex = Math.max(0, adapters.indexOf(entry.adapterId));
-            return (
-              <span key={entry.adapterId}>
-                <i className={usageColorClass(colorIndex)} />
-                {entry.adapterId}
-                <b>{formatMetricNumber(entry.tokens).display}</b>
-              </span>
-            );
-          })}
+            {series.map((adapter) =>
+              useWeeklyBars ? (
+                <Bar
+                  dataKey={adapter.key}
+                  fill={adapter.color}
+                  isAnimationActive={false}
+                  key={adapter.key}
+                  maxBarSize={44}
+                  name={adapter.adapterId}
+                  stackId={metric}
+                />
+              ) : (
+                <Area
+                  dataKey={adapter.key}
+                  dot={false}
+                  fill={`url(#usage-fill-${adapter.key})`}
+                  isAnimationActive={false}
+                  key={adapter.key}
+                  name={adapter.adapterId}
+                  stackId={metric}
+                  stroke={adapter.color}
+                  strokeWidth={1.6}
+                  type="monotone"
+                />
+              ),
+            )}
+          </ComposedChart>
         </div>
       </div>
+      <div className="usage-callout usage-latest-strip">
+        <strong>
+          {chart.source === "snapshot"
+            ? "Current snapshot"
+            : formatUsageDisplayDay(latestDay)}
+        </strong>
+        <span>
+          <i className="usage-session-dot" />
+          tokens
+          <b>{formatMetricNumber(latestDay.totalTokens).display}</b>
+        </span>
+        <span>
+          <i className="usage-session-dot" />
+          conversations
+          <b>{formatNumber(latestDay.totalSessions)}</b>
+        </span>
+        <span>
+          <i className="usage-session-dot" />
+          est. cost
+          <b>{formatCost(latestDay.totalCost)}</b>
+        </span>
+        {latestEntries.slice(0, 6).map((entry) => {
+          const colorIndex = Math.max(0, adapters.indexOf(entry.adapterId));
+          return (
+            <span key={entry.adapterId}>
+              <i className={usageColorClass(colorIndex)} />
+              {entry.adapterId}
+              <b>{formatHomeMetricValue(usageEntryMetricValue(entry, metric), metric)}</b>
+            </span>
+          );
+        })}
+      </div>
+      <UsageSessionRail days={displayDays} />
       <div className="usage-legend">
         {series.map((adapter, index) => (
           <span key={adapter.key}>
@@ -2239,10 +2559,12 @@ function TokenUsageChart({
 function UsageChartTooltip({
   active,
   label,
+  metric,
   payload,
 }: {
   active?: boolean;
   label?: string | number;
+  metric: HomeBreakdownMetric;
   payload?: Array<{
     color?: string;
     name?: string;
@@ -2261,71 +2583,62 @@ function UsageChartTooltip({
   return (
     <div className="usage-callout usage-callout-tooltip">
       <strong>{label}</strong>
+      {rows[0]?.payload ? (
+        <>
+          <span>
+            <i className="usage-session-dot" />
+            tokens
+            <b>{formatMetricNumber(rows[0].payload.totalTokens).display}</b>
+          </span>
+          <span>
+            <i className="usage-session-dot" />
+            conversations
+            <b>{formatNumber(rows[0].payload.totalSessions)}</b>
+          </span>
+          <span>
+            <i className="usage-session-dot" />
+            est. cost
+            <b>{formatCost(rows[0].payload.totalCost)}</b>
+          </span>
+        </>
+      ) : null}
       {rows.slice(0, 6).map((entry) => (
         <span key={entry.name}>
           <i style={{ background: entry.color ?? "#89d4a1" }} />
           {entry.name}
-          <b>{formatMetricNumber(Number(entry.value)).display}</b>
+          <b>{formatHomeMetricValue(Number(entry.value), metric)}</b>
         </span>
       ))}
     </div>
   );
 }
 
-function StaticUsageAreaChart({
-  adapters,
-  days,
-}: {
-  adapters: string[];
-  days: UsageDisplayBucket[];
-}) {
-  if (days.length === 0 || adapters.length === 0) {
+function UsageSessionRail({ days }: { days: UsageDisplayBucket[] }) {
+  if (days.length === 0) {
     return null;
   }
 
-  const layers = buildStaticUsageAreaLayers(days, adapters);
+  const maxSessions = Math.max(...days.map((day) => day.totalSessions), 1);
 
   return (
-    <svg
-      aria-hidden="true"
-      className="usage-area-static-chart"
-      data-usage-static-chart="true"
-      viewBox={`0 0 ${USAGE_CHART_WIDTH} ${USAGE_CHART_HEIGHT}`}
-    >
-      <rect
-        className="usage-static-plot-bg"
-        height={USAGE_STATIC_CHART_PLOT.height}
-        width={USAGE_STATIC_CHART_PLOT.width}
-        x={USAGE_STATIC_CHART_PLOT.x}
-        y={USAGE_STATIC_CHART_PLOT.y}
-      />
-      {layers.map((layer, index) => (
-        <path
-          className="usage-area-static-fill usage-area-static-layer"
-          d={layer.path}
-          data-adapter-id={layer.adapterId}
-          fill={usageColorHex(index)}
-          key={layer.adapterId}
-        />
+    <div className="usage-session-rail" aria-label="Conversation volume by day">
+      {days.map((day) => (
+        <span
+          key={day.day}
+          title={`${formatUsageDisplayDay(day)}: ${formatNumber(
+            day.totalSessions,
+          )} conversations`}
+        >
+          <i
+            style={{
+              height: `${Math.max(10, (day.totalSessions / maxSessions) * 100).toFixed(
+                1,
+              )}%`,
+            }}
+          />
+        </span>
       ))}
-      {days.map((day, index) => {
-        if (!shouldRenderUsageDayLabel(index, days.length)) {
-          return null;
-        }
-        const x = usageStaticX(index, days.length);
-        return (
-          <text
-            className="usage-area-static-label"
-            key={`${day.day}-${index}`}
-            textAnchor="middle"
-            x={x}
-            y={USAGE_STATIC_CHART_PLOT.y + USAGE_STATIC_CHART_PLOT.height + 32}
-          >
-            {formatUsageDisplayDay(day)}
-          </text>
-        );
-      })}
-    </svg>
+    </div>
   );
 }
 
@@ -2495,18 +2808,116 @@ function treeDepthClass(depth: number): number {
   return Math.min(TREE_DEPTH_CLASS_MAX, Math.floor(depth));
 }
 
+function buildWindowedUsageChart(
+  chart: UsageChartModel,
+  period: UsageChartPeriod,
+  windowOffset: number,
+): UsageWindowedChartModel {
+  const displayDays =
+    chart.source === "snapshot"
+      ? buildUsageDisplayBuckets(chart)
+      : period === "monthly"
+        ? chart.weeklyDays ?? []
+        : chart.days;
+
+  if (chart.source === "empty" || displayDays.length === 0) {
+    return {
+      ...chart,
+      canGoNext: false,
+      canGoPrevious: false,
+      days: [],
+      period,
+      rangeLabel: "No usage",
+      windowLabel: "No window",
+    };
+  }
+
+  const windowSize =
+    chart.source === "snapshot"
+      ? displayDays.length
+      : period === "monthly"
+        ? USAGE_MONTHLY_WINDOW_SIZE
+        : USAGE_DAILY_WINDOW_SIZE;
+  const windowCount = Math.max(1, Math.ceil(displayDays.length / windowSize));
+  const safeOffset = Math.min(Math.max(0, windowOffset), windowCount - 1);
+  const end = displayDays.length - safeOffset * windowSize;
+  const start = Math.max(0, end - windowSize);
+  const windowDays = displayDays.slice(start, end);
+  const windowNumber = windowCount - safeOffset;
+
+  return {
+    ...chart,
+    canGoNext: safeOffset > 0,
+    canGoPrevious: start > 0,
+    days: windowDays,
+    period,
+    rangeLabel: formatUsageWindowRange(windowDays),
+    windowLabel:
+      windowCount === 1 ? "Only window" : `Window ${windowNumber} of ${windowCount}`,
+  };
+}
+
+function formatUsageWindowRange(days: UsageDisplayBucket[]): string {
+  const first = days[0];
+  const last = days.at(-1);
+
+  if (!first || !last) {
+    return "No usage";
+  }
+
+  const firstLabel = formatUsageDisplayDay(first);
+  const lastLabel = formatUsageDisplayDay(last);
+
+  if (first.rangeEnd || last.rangeEnd) {
+    const rangeStart = formatChartDay(first.day);
+    const rangeEnd = formatChartDay(last.rangeEnd ?? last.day);
+    return rangeStart === rangeEnd ? rangeStart : `${rangeStart} - ${rangeEnd}`;
+  }
+
+  return firstLabel === lastLabel ? firstLabel : `${firstLabel} - ${lastLabel}`;
+}
+
 function buildUsageChartModel(data: DesktopHomeData): UsageChartModel {
   const timelineEntries = (data.tokenUsageByDay ?? []).filter(
-    (entry) => entry.tokens > 0 || entry.cost > 0,
+    (entry) => entry.sessions > 0 || entry.tokens > 0 || entry.cost > 0,
+  );
+  const weeklyEntries = (data.tokenUsageByWeek ?? []).filter(
+    (entry) => entry.sessions > 0 || entry.tokens > 0 || entry.cost > 0,
   );
 
   if (timelineEntries.length > 0) {
-    return buildUsageChartModelFromEntries(timelineEntries, "timeline");
+    const chart = buildUsageChartModelFromEntries(timelineEntries, "timeline");
+    return {
+      ...chart,
+      weeklyDays: buildUsageChartModelFromEntries(
+        weeklyEntries.map((entry) => ({
+          adapterId: entry.adapterId,
+          cost: entry.cost,
+          day: entry.weekStart,
+          sessions: entry.sessions,
+          tokens: entry.tokens,
+        })),
+        "timeline",
+      ).days.map((day) => ({
+        ...day,
+        label: formatUsageWeekRange(
+          day.day,
+          weeklyEntries.find((entry) => entry.weekStart === day.day)?.weekEnd ??
+            day.day,
+        ),
+        rangeEnd:
+          weeklyEntries.find((entry) => entry.weekStart === day.day)?.weekEnd ??
+          day.day,
+      })),
+    };
   }
 
   const snapshotDay = normalizeUsageSnapshotDay(data.generatedAt);
   const adapterEntries = data.topAdapters
-    .filter((adapter) => adapter.tokens > 0 || adapter.cost > 0)
+    .filter(
+      (adapter) =>
+        adapter.conversations > 0 || adapter.tokens > 0 || adapter.cost > 0,
+    )
     .map((adapter) => ({
       adapterId: adapter.adapterId || "unknown",
       cost: adapter.cost,
@@ -2519,7 +2930,11 @@ function buildUsageChartModel(data: DesktopHomeData): UsageChartModel {
     return buildUsageChartModelFromEntries(adapterEntries, "snapshot");
   }
 
-  if (data.overview.tokens > 0 || data.overview.cost > 0) {
+  if (
+    data.overview.conversations > 0 ||
+    data.overview.tokens > 0 ||
+    data.overview.cost > 0
+  ) {
     return buildUsageChartModelFromEntries(
       [
         {
@@ -2538,6 +2953,7 @@ function buildUsageChartModel(data: DesktopHomeData): UsageChartModel {
     adapters: [],
     days: [],
     source: "empty",
+    weeklyDays: [],
   };
 }
 
@@ -2560,13 +2976,32 @@ function buildUsageChartModelFromEntries(
       day: entry.day,
       entries: [],
       totalCost: 0,
+      totalSessions: 0,
       totalTokens: 0,
     };
     day.totalTokens += entry.tokens;
     day.totalCost += entry.cost;
-    day.entries.push({ adapterId, cost: entry.cost, tokens: entry.tokens });
+    day.totalSessions += entry.sessions;
+    const existingEntry = day.entries.find(
+      (dayEntry) => dayEntry.adapterId === adapterId,
+    );
+    if (existingEntry) {
+      existingEntry.cost += entry.cost;
+      existingEntry.sessions += entry.sessions;
+      existingEntry.tokens += entry.tokens;
+    } else {
+      day.entries.push({
+        adapterId,
+        cost: entry.cost,
+        sessions: entry.sessions,
+        tokens: entry.tokens,
+      });
+    }
     dayMap.set(entry.day, day);
-    adapterTotals.set(adapterId, (adapterTotals.get(adapterId) ?? 0) + entry.tokens);
+    adapterTotals.set(
+      adapterId,
+      (adapterTotals.get(adapterId) ?? 0) + entry.tokens + entry.sessions,
+    );
   }
 
   const adapters = Array.from(adapterTotals.entries())
@@ -2574,7 +3009,7 @@ function buildUsageChartModelFromEntries(
     .map(([adapterId]) => adapterId);
   const days = Array.from(dayMap.values())
     .sort((left, right) => left.day.localeCompare(right.day))
-    .slice(-30);
+    .slice(-USAGE_MAX_HISTORY_DAYS);
 
   return {
     adapters,
@@ -2615,8 +3050,31 @@ function buildUsageDisplayBuckets(chart: UsageChartModel): UsageDisplayBucket[] 
 function buildUsageRechartsData(
   days: UsageDisplayBucket[],
   adapters: string[],
+  metric: HomeBreakdownMetric,
 ): { chartData: UsageChartDatum[]; series: UsageChartSeries[] } {
-  const series = adapters.map((adapterId, index) => ({
+  const metricTotals = new Map<string, number>();
+  for (const adapterId of adapters) {
+    const total = days.reduce(
+      (sum, day) =>
+        sum +
+        day.entries
+          .filter((entry) => entry.adapterId === adapterId)
+          .reduce(
+            (entrySum, entry) =>
+              entrySum + usageEntryMetricValue(entry, metric),
+            0,
+          ),
+      0,
+    );
+    metricTotals.set(adapterId, total);
+  }
+  const orderedAdapters = [...adapters].sort(
+    (left, right) =>
+      (metricTotals.get(right) ?? 0) - (metricTotals.get(left) ?? 0) ||
+      left.localeCompare(right),
+  );
+
+  const series = orderedAdapters.map((adapterId, index) => ({
     adapterId,
     color: usageColorHex(index),
     key: `adapter_${index}`,
@@ -2627,13 +3085,17 @@ function buildUsageRechartsData(
       day: day.day,
       label: formatUsageDisplayDay(day),
       totalCost: day.totalCost,
+      totalSessions: day.totalSessions,
       totalTokens: day.totalTokens,
     };
 
-    for (const [index, adapterId] of adapters.entries()) {
+    for (const [index, adapterId] of orderedAdapters.entries()) {
       datum[`adapter_${index}`] = day.entries
         .filter((entry) => entry.adapterId === adapterId)
-        .reduce((sum, entry) => sum + entry.tokens, 0);
+        .reduce(
+          (sum, entry) => sum + usageEntryMetricValue(entry, metric),
+          0,
+        );
     }
 
     return datum;
@@ -2642,67 +3104,27 @@ function buildUsageRechartsData(
   return { chartData, series };
 }
 
-function buildStaticUsageAreaLayers(
-  days: UsageDisplayBucket[],
-  adapters: string[],
-): Array<{ adapterId: string; path: string }> {
-  const maxDailyTokens = Math.max(...days.map((day) => day.totalTokens), 1);
-  const cumulative = days.map(() => 0);
-
-  return adapters.map((adapterId) => {
-    const upperPoints: string[] = [];
-    const lowerPoints: string[] = [];
-
-    days.forEach((day, dayIndex) => {
-      const x = usageStaticX(dayIndex, days.length);
-      const tokens = day.entries
-        .filter((entry) => entry.adapterId === adapterId)
-        .reduce((sum, entry) => sum + entry.tokens, 0);
-      const lower = cumulative[dayIndex] ?? 0;
-      const upper = lower + tokens;
-      upperPoints.push(
-        `${x.toFixed(1)},${usageStaticY(upper, maxDailyTokens).toFixed(1)}`,
-      );
-      lowerPoints.unshift(
-        `${x.toFixed(1)},${usageStaticY(lower, maxDailyTokens).toFixed(1)}`,
-      );
-      cumulative[dayIndex] = upper;
-    });
-
-    return {
-      adapterId,
-      path: `M ${upperPoints.join(" L ")} L ${lowerPoints.join(" L ")} Z`,
-    };
-  });
-}
-
-function usageStaticX(index: number, count: number): number {
-  if (count <= 1) {
-    return USAGE_STATIC_CHART_PLOT.x + USAGE_STATIC_CHART_PLOT.width / 2;
+function usageEntryMetricValue(
+  entry: { cost: number; sessions: number; tokens: number },
+  metric: HomeBreakdownMetric,
+): number {
+  if (metric === "conversations") {
+    return entry.sessions;
   }
-
-  return (
-    USAGE_STATIC_CHART_PLOT.x +
-    (USAGE_STATIC_CHART_PLOT.width * index) / (count - 1)
-  );
-}
-
-function usageStaticY(value: number, maxDailyTokens: number): number {
-  const clamped = Math.max(0, Math.min(value, maxDailyTokens));
-  return (
-    USAGE_STATIC_CHART_PLOT.y +
-    USAGE_STATIC_CHART_PLOT.height -
-    (clamped / Math.max(maxDailyTokens, 1)) * USAGE_STATIC_CHART_PLOT.height
-  );
-}
-
-function shouldRenderUsageDayLabel(index: number, count: number): boolean {
-  if (count <= 8) {
-    return true;
+  if (metric === "cost") {
+    return entry.cost;
   }
+  return entry.tokens;
+}
 
-  const interval = Math.ceil(count / 6);
-  return index === 0 || index === count - 1 || index % interval === 0;
+function usageMetricUsageLabel(metric: HomeBreakdownMetric): string {
+  if (metric === "conversations") {
+    return "conversation";
+  }
+  if (metric === "cost") {
+    return "cost";
+  }
+  return "token";
 }
 
 function usageColorClass(index: number): string {
@@ -2732,4 +3154,28 @@ function formatChartDay(value: string): string {
     day: "numeric",
     month: "short",
   }).format(date);
+}
+
+function formatUsageWeekRange(weekStart: string, weekEnd: string): string {
+  const startDate = new Date(`${weekStart}T00:00:00`);
+  const endDate = new Date(`${weekEnd}T00:00:00`);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return formatChartDay(weekStart);
+  }
+
+  const sameMonth = startDate.getMonth() === endDate.getMonth();
+  const sameYear = startDate.getFullYear() === endDate.getFullYear();
+  const startLabel = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: sameYear ? undefined : "numeric",
+  }).format(startDate);
+  const endLabel = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: sameMonth ? undefined : "short",
+    year: sameYear ? undefined : "numeric",
+  }).format(endDate);
+
+  return `${startLabel} - ${endLabel}`;
 }

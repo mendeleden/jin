@@ -122,6 +122,11 @@ describe("desktop renderer", () => {
     );
 
     expect(html).toContain("Conversation index");
+    expect(html).toContain("conversation-workspace-toolbar");
+    expect(html.indexOf("conversation-workspace-toolbar")).toBeLessThan(
+      html.indexOf("library-panel"),
+    );
+    expect(html).toContain("conversation-filter-row");
     expect(html).toContain("Timeline");
     expect(html).toContain("Trace");
     expect(html).toContain("Tree");
@@ -162,19 +167,35 @@ describe("desktop renderer", () => {
     expect(html).toContain("$10,019.88");
     expect(html).not.toContain("Usage by harness");
     expect(html).not.toContain("Usage by model");
-    expect(html).toContain("Token &amp; Cost Observatory");
-    expect(html).toContain("Daily burn chart");
+    expect(html).not.toContain("Token Usage");
+    expect(html).toContain("Daily tokens by adapter");
+    expect(html).toContain('data-usage-period="daily"');
+    expect(html).toContain("Usage chart controls");
+    expect(html).toContain("Breakdown metric");
+    expect(html).toContain("Tokens");
+    expect(html).toContain("Convs");
+    expect(html).toContain("Cost");
+    expect(html).toContain("Daily");
+    expect(html).toContain("Monthly");
+    expect(html).toContain("Previous usage window");
+    expect(html).toContain("Next usage window");
     expect(html).toContain("usage-area-chart");
-    expect(html).toContain("usage-area-static-chart");
-    expect(html).toContain("usage-area-static-fill");
+    expect(html).not.toContain("usage-area-static-chart");
+    expect(html).not.toContain("usage-area-static-fill");
     expect(html).toContain("Daily token usage by adapter");
+    expect(html).not.toContain("Conversation Days");
+    expect(html).not.toContain("conversation-volume-bars");
+    expect(html).not.toContain("Estimated Cost");
+    expect(html).not.toContain("cost-bars");
+    expect(html).not.toContain("Recent Activity");
+    expect(html).not.toContain("home-signal-row");
+    expect(html).not.toContain("Latest conversations");
+    expect(html).not.toContain("Open library");
+    expect(html).not.toContain("Current total");
     expect(html).toContain("usage-chart");
-    expect(html).toContain("Mission Control");
-    expect(html).toContain("Conversation Flow");
-    expect(html).toContain('data-home-flow-graph="mission-control"');
-    expect(html).toContain(
-      "Conversation flow from git projects to adapters and trace relationships",
-    );
+    expect(html).toContain("Project Stacks");
+    expect(html).toContain("Harness Timeline");
+    expect(html).not.toContain('data-home-flow-graph="mission-control"');
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
@@ -196,22 +217,23 @@ describe("desktop renderer", () => {
     );
 
     expect(html).toContain('data-usage-chart-source="snapshot"');
-    expect(html).toContain("Snapshot-derived burn chart");
+    expect(html).toContain("Current activity snapshot");
     expect(html).toContain("Current snapshot");
     expect(html).toContain("claude-code");
     expect(html).toContain("244");
     expect(html).toContain("Snapshot-derived token usage by adapter");
     expect(html).toContain("recharts-wrapper usage-area-chart");
-    expect(html).toContain(">Snapshot</text>");
-    expect(html).toContain(">Current</text>");
-    expect(
-      extractDistinctUsagePathXCoordinates(extractStaticUsageAreaPaths(html)[0]!)
-        .length,
-    ).toBeGreaterThan(1);
+    expect(html).toContain('title="Snapshot: 3 conversations"');
+    expect(html).toContain('title="Current: 3 conversations"');
+    expect(html).not.toContain("usage-area-static-layer");
     const kpis = extractUsageChartKpis(html);
     expect(countText(kpis, "<strong>244</strong>")).toBe(1);
-    expect(kpis).toContain("<strong>244</strong> snapshot tokens");
-    expect(kpis).toContain("<strong>$1.32</strong> snapshot cost");
+    expect(kpis).toContain("<strong>244</strong>");
+    expect(kpis).toContain("tokens");
+    expect(kpis).toContain("<strong>3</strong>");
+    expect(kpis).toContain("conversations");
+    expect(kpis).toContain("<strong>$1.32</strong>");
+    expect(kpis).toContain("est. cost");
     expect(kpis).not.toContain("<strong>488</strong>");
     expect(kpis).not.toContain("$2.64");
     expect(html).not.toContain("No token usage timeline is available yet.");
@@ -235,26 +257,74 @@ describe("desktop renderer", () => {
 
     expect(html).toContain('data-usage-chart-source="snapshot"');
     expect(html).toContain("all adapters");
-    expect(html).toContain("Current total");
+    expect(html).toContain("Monthly rollup requires weekly usage buckets");
     expect(html).not.toContain("No token usage has been recorded yet.");
   });
 
-  test("desktop home CSS reserves visible graph panel height", () => {
+  test("home token usage aggregates duplicate adapter rows before display", () => {
+    const snapshot = makeSnapshot("running");
+    if (!snapshot.data) {
+      throw new Error("expected running snapshot data");
+    }
+    snapshot.data.tokenUsageByDay = [
+      {
+        day: "2026-04-29",
+        adapterId: "claude-code",
+        sessions: 1,
+        tokens: 100,
+        cost: 0.52,
+      },
+      {
+        day: "2026-04-29",
+        adapterId: "claude-code",
+        sessions: 2,
+        tokens: 144,
+        cost: 0.8,
+      },
+      {
+        day: "2026-04-29",
+        adapterId: "codex",
+        sessions: 1,
+        tokens: 25,
+        cost: 0.2,
+      },
+    ];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot,
+      }),
+    );
+
+    const callout = extractUsageCallout(html);
+    expect(extractUsageChartKpis(html)).toContain("<strong>269</strong>");
+    expect(callout).toContain("244");
+    expect(callout).toContain("25");
+    expect(countText(callout, "claude-code")).toBe(1);
+  });
+
+  test("desktop home CSS reserves visible pulse panel height", () => {
     const css = readFileSync(
       new URL("../desktop/styles.css", import.meta.url),
       "utf8",
     );
 
-    expect(css).toContain(".mission-control-panel");
-    expect(css).toContain("grid-column: span 7;");
-    expect(css).toContain("min-height: 382px;");
-    expect(css).toContain(".home-flow-svg");
-    expect(css).toContain("height: 322px;");
-    expect(css).toContain(".usage-observatory-panel");
+    expect(css).toContain(".home-pulse-panel");
+    expect(css).toContain(".workspace-home > .compact-panel.home-pulse-panel");
+    expect(css).toContain("grid-column: 1 / -1;");
+    expect(css).toContain("min-height: 448px;");
+    expect(css).toContain(".home-project-panel");
+    expect(css).toContain(".home-adapter-panel");
+    expect(css).toContain(".usage-chart-controls");
+    expect(css).toContain(".usage-period-toggle");
+    expect(css).toContain(".usage-window-controls");
     expect(css).toContain(".usage-area-chart-shell");
     expect(css).toContain(".usage-area-chart");
-    expect(css).toContain(".usage-area-static-chart");
-    expect(css).toContain("height: 246px;");
+    expect(css).not.toContain(".usage-area-static-chart");
+    expect(css).not.toContain(".usage-area-static-fill");
+    expect(css).toContain(".usage-session-rail");
+    expect(css).toContain("height: 252px;");
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
@@ -278,10 +348,10 @@ describe("desktop renderer", () => {
     expect(runningMetrics.indexOf("Cost (estimated)")).toBeGreaterThan(
       runningMetrics.indexOf("Tokens"),
     );
-    expect(runningHtml).toContain("<span>Traces</span>");
+    expect(runningHtml).not.toContain("<span>Traces</span>");
     expect(runningHtml).not.toContain("Next surfaces");
     expect(runningHtml).not.toContain("<span>Search</span>");
-    expect(runningHtml).not.toContain("<span>Projects</span>");
+    expect(runningMetrics).not.toContain("<span>Projects</span>");
     expect(runningHtml).not.toContain("<span>Health</span>");
 
     const placeholderHtml = renderDesktopReactShellToStaticMarkup(
@@ -310,9 +380,10 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(homeHtml).toContain('data-home-flow-graph="mission-control"');
-    expect(homeHtml).toContain("Mission Control");
-    expect(homeHtml).toContain("Conversation Flow");
+    expect(homeHtml).toContain("Daily tokens by adapter");
+    expect(homeHtml).toContain("Project Stacks");
+    expect(homeHtml).toContain("Harness Timeline");
+    expect(homeHtml).not.toContain('data-home-flow-graph="mission-control"');
     expect(homeHtml).not.toContain("data-legacy-html-view");
 
     const routingHtml = renderDesktopReactShellToStaticMarkup(
@@ -629,6 +700,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("inspector-collapsed");
     expect(html).toContain("inspector-rail");
     expect(html).toContain("Expand metadata inspector");
+    expect(html).toContain("Metadata");
   });
 
   test("home omits legacy collapsible stats bars from the primary dashboard", () => {
@@ -646,7 +718,9 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Usage by harness");
     expect(html).not.toContain("Usage by model");
     expect(html).not.toContain("Billed");
-    expect(html).toContain("Latest conversations");
+    expect(html).not.toContain("Latest conversations");
+    expect(html).not.toContain("Open library");
+    expect(html).not.toContain("Recent Activity");
     expect(html).toContain("Projects");
   });
 
@@ -757,28 +831,14 @@ function extractUsageChartKpis(html: string): string {
   return match[1] ?? "";
 }
 
-function extractStaticUsageAreaPaths(html: string): string[] {
-  const paths = Array.from(
-    html.matchAll(
-      /<path\b(?=[^>]*class="[^"]*usage-area-static-layer)[^>]*\bd="([^"]+)"/g,
-    ),
-    (match) => match[1] ?? "",
+function extractUsageCallout(html: string): string {
+  const match = html.match(
+    /<div class="[^"]*\busage-callout\b[^"]*">([\s\S]*?)<\/div>/,
   );
-  if (paths.length === 0) {
-    throw new Error("expected static usage area path");
+  if (!match) {
+    throw new Error("expected usage callout");
   }
-  return paths;
-}
-
-function extractDistinctUsagePathXCoordinates(path: string): number[] {
-  return Array.from(
-    new Set(
-      Array.from(
-        path.matchAll(/\b[ML]\s+(-?\d+(?:\.\d+)?),-?\d+(?:\.\d+)?/g),
-        (match) => Number(match[1] ?? 0),
-      ),
-    ),
-  );
+  return match[1] ?? "";
 }
 
 function countText(html: string, text: string): number {
@@ -970,6 +1030,25 @@ function makeSnapshot(
                 adapters: ["claude-code"],
               },
             ],
+            projectUsageByHarness: [
+              {
+                id: "github.com%2Facme%2Fjin",
+                name: "github.com/acme/jin",
+                gitRemote: "github.com/acme/jin",
+                conversationCount: 3,
+                totalTokens: 244,
+                totalCost: 1.32,
+                lastSeen: "2026-04-29T08:55:00.000Z",
+                adapters: [
+                  {
+                    adapterId: "claude-code",
+                    conversations: 3,
+                    tokens: 244,
+                    cost: 1.32,
+                  },
+                ],
+              },
+            ],
             relationshipMix: [
               { relationship: "root", conversations: 1 },
               { relationship: "spawned", conversations: 1 },
@@ -989,6 +1068,16 @@ function makeSnapshot(
                 sessions: 2,
                 tokens: 144,
                 cost: 0.8,
+              },
+            ],
+            tokenUsageByWeek: [
+              {
+                weekStart: "2026-04-27",
+                weekEnd: "2026-05-03",
+                adapterId: "claude-code",
+                sessions: 3,
+                tokens: 244,
+                cost: 1.32,
               },
             ],
           }

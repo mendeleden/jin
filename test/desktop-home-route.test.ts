@@ -120,11 +120,45 @@ describe("desktop viewer routes", () => {
         cost: payload.tokenUsageByDay[1].cost,
       },
     ]);
+    expect(payload.tokenUsageByWeek).toEqual([
+      {
+        weekStart: "2026-04-27",
+        weekEnd: "2026-05-03",
+        adapterId: "claude-code",
+        sessions: 2,
+        tokens: 75,
+        cost: payload.tokenUsageByWeek[0].cost,
+      },
+      {
+        weekStart: "2026-04-27",
+        weekEnd: "2026-05-03",
+        adapterId: "codex",
+        sessions: 1,
+        tokens: 25,
+        cost: payload.tokenUsageByWeek[1].cost,
+      },
+    ]);
     expect(payload.topTools.map((tool: { name: string }) => tool.name).sort()).toEqual([
       "Grep",
       "Read",
     ]);
     expect(payload.topProjects[0].gitRemote).toBe("github.com/acme/jin");
+    expect(payload.projectUsageByHarness[0]).toMatchObject({
+      gitRemote: "github.com/acme/jin",
+      conversationCount: 3,
+      adapters: [
+        {
+          adapterId: "claude-code",
+          conversations: 2,
+          tokens: 75,
+        },
+        {
+          adapterId: "codex",
+          conversations: 1,
+          tokens: 25,
+        },
+      ],
+    });
     expect(
       payload.relationshipMix.toSorted(
         (left: { relationship: string }, right: { relationship: string }) =>
@@ -135,6 +169,68 @@ describe("desktop viewer routes", () => {
       { relationship: "root", conversations: 1 },
       { relationship: "spawned", conversations: 1 },
     ]);
+  });
+
+  test("serves enough token history for monthly home rollups", async () => {
+    const { store } = createQueryEnv();
+    const historyAgeDays = 120;
+    const historyAt = isoDaysAgo(historyAgeDays);
+    const historyDay = historyAt.slice(0, 10);
+
+    store.writeBundle(
+      makeBundle("desktop-history-window", {
+        conversation: {
+          startedAt: historyAt,
+          endedAt: historyAt,
+        },
+      }),
+    );
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=365"),
+    );
+    const payload = await readJson(response);
+
+    expect(historyAgeDays).toBeGreaterThan(30);
+    expect(
+      payload.tokenUsageByDay.some(
+        (entry: { day: string }) => entry.day === historyDay,
+      ),
+    ).toBe(true);
+  });
+
+  test("bounds desktop home token history from request parameters", async () => {
+    const { store } = createQueryEnv();
+    const recentAt = isoDaysAgo(5);
+    const olderAt = isoDaysAgo(45);
+
+    store.writeBundle(
+      makeBundle("desktop-history-recent", {
+        conversation: {
+          startedAt: recentAt,
+          endedAt: recentAt,
+        },
+      }),
+    );
+    store.writeBundle(
+      makeBundle("desktop-history-older", {
+        conversation: {
+          startedAt: olderAt,
+          endedAt: olderAt,
+        },
+      }),
+    );
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=30"),
+    );
+    const payload = await readJson(response);
+    const days = payload.tokenUsageByDay.map((entry: { day: string }) => entry.day);
+
+    expect(days).toContain(recentAt.slice(0, 10));
+    expect(days).not.toContain(olderAt.slice(0, 10));
   });
 
   test("serves conversation list/detail/trace/tree routes without v1 aliases", async () => {
@@ -421,6 +517,10 @@ function makeToolCall(
     durationMs: overrides.durationMs ?? 1,
     timestamp: overrides.timestamp ?? "2026-04-01T10:00:00.000Z",
   };
+}
+
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
 async function readJson(response: Response): Promise<any> {

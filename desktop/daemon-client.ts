@@ -10,6 +10,7 @@ import type {
   DesktopConversationListRequest,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopHomeRequest,
   DesktopLogsRequest,
   DesktopLogsView,
   DesktopRoutingView,
@@ -19,7 +20,7 @@ import type {
 
 export interface DesktopDaemonClient {
   getCompatibility(): Promise<DesktopCompatibilityInfo>;
-  getHomeData(): Promise<DesktopHomeData>;
+  getHomeData(request?: DesktopHomeRequest): Promise<DesktopHomeData>;
   getLogs(request?: DesktopLogsRequest): Promise<DesktopLogsView>;
   getRouting(): Promise<DesktopRoutingView>;
   listConversations(
@@ -54,6 +55,8 @@ export interface DesktopDaemonClientOptions {
   request?: DesktopUnixRequest;
 }
 
+export const DESKTOP_CLIENT_HOME_TOKEN_USAGE_DAYS = 365;
+
 export function createDesktopDaemonClient(
   options: DesktopDaemonClientOptions = {},
 ): DesktopDaemonClient {
@@ -71,10 +74,19 @@ export function createDesktopDaemonClient(
         authToken,
       );
     },
-    async getHomeData() {
+    async getHomeData(filters = {}) {
+      const tokenUsageDays =
+        filters.tokenUsageDays ?? DESKTOP_CLIENT_HOME_TOKEN_USAGE_DAYS;
+      const search = new URLSearchParams();
+      if (Number.isFinite(tokenUsageDays) && tokenUsageDays > 0) {
+        search.set("tokenUsageDays", String(Math.floor(tokenUsageDays)));
+      }
+      const pathname = `/api/desktop/home${
+        search.size > 0 ? `?${search.toString()}` : ""
+      }`;
       return requestJson<DesktopHomeData>(
         request,
-        "/api/desktop/home",
+        pathname,
         authToken,
       );
     },

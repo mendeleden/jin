@@ -1,4 +1,4 @@
-:root {
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><style>:root {
   color-scheme: dark;
   --bg: #06080d;
   --bg-elevated: #0a0f17;
@@ -699,7 +699,7 @@ pre {
   display: flex;
   flex-direction: column;
   grid-column: 1 / -1;
-  min-height: 448px;
+  min-height: 454px;
   overflow: hidden;
   background:
     radial-gradient(circle at 18% 4%, rgba(137, 180, 255, 0.16), transparent 30%),
@@ -707,9 +707,20 @@ pre {
     linear-gradient(180deg, rgba(14, 20, 31, 0.95), rgba(7, 10, 16, 0.95));
 }
 
+.home-analytics-panel {
+  min-height: 218px;
+  overflow: hidden;
+}
+
+.home-volume-panel,
+.home-cost-panel,
+.home-signals-panel {
+  grid-column: span 4;
+}
+
 .home-project-panel {
-  grid-column: span 7;
-  min-height: 320px;
+  grid-column: span 5;
+  min-height: 360px;
   overflow: hidden;
   background:
     radial-gradient(circle at 18% 0%, rgba(240, 196, 109, 0.1), transparent 30%),
@@ -717,9 +728,49 @@ pre {
 }
 
 .home-adapter-panel {
-  grid-column: span 5;
-  min-height: 320px;
+  grid-column: span 3;
+}
+
+.home-recent-panel {
+  grid-column: span 4;
+}
+
+.home-metric-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.home-metric-tile {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid rgba(210, 224, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+  padding: 6px 8px;
+}
+
+.home-metric-tile span {
   overflow: hidden;
+  color: var(--text-dim);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.home-metric-tile strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.94rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-settings {
@@ -849,12 +900,22 @@ pre {
   grid-column: 1 / -1;
 }
 
+.workspace-home > .compact-panel.home-volume-panel,
+.workspace-home > .compact-panel.home-cost-panel,
+.workspace-home > .compact-panel.home-signals-panel {
+  grid-column: span 4;
+}
+
 .workspace-home > .compact-panel.home-project-panel {
-  grid-column: span 7;
+  grid-column: span 5;
 }
 
 .workspace-home > .compact-panel.home-adapter-panel {
-  grid-column: span 5;
+  grid-column: span 3;
+}
+
+.workspace-home > .compact-panel.home-recent-panel {
+  grid-column: span 4;
 }
 
 .runtime-grid {
@@ -1571,95 +1632,139 @@ pre {
   grid-column: 2;
 }
 
-.home-metric-toggle {
-  display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: rgba(255, 255, 255, 0.028);
-}
-
-.home-metric-toggle button {
-  border: 0;
-  border-left: 1px solid rgba(210, 224, 255, 0.08);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 0.68rem;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  padding: 5px 8px;
-  text-transform: uppercase;
-}
-
-.home-metric-toggle button:first-child {
-  border-left: 0;
-}
-
-.home-metric-toggle button.active {
-  background: rgba(137, 180, 255, 0.15);
-  color: var(--text);
-}
-
-.home-stacked-project-list,
-.home-harness-timeline-list {
-  gap: 8px;
-}
-
-.home-stacked-project-row {
-  padding: 9px 10px 10px;
-}
-
-.home-project-stack {
-  height: 10px;
-  margin: 8px 0 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(210, 224, 255, 0.075);
-}
-
-.home-project-stack-scale {
-  display: flex;
-  height: 100%;
-  overflow: hidden;
-  border-radius: inherit;
-}
-
-.home-project-stack-scale span {
-  display: block;
-  height: 100%;
-  min-width: 3px;
-}
-
-.home-harness-row {
-  grid-template-columns: 10px minmax(0, 1fr);
-}
-
-.home-harness-sparkline {
-  grid-column: 2;
+.home-mini-bars {
   display: grid;
-  grid-auto-columns: minmax(5px, 1fr);
+  grid-auto-columns: minmax(8px, 1fr);
   grid-auto-flow: column;
   align-items: end;
-  gap: 3px;
-  height: 34px;
-  border-radius: 10px;
-  background: rgba(210, 224, 255, 0.045);
-  padding: 5px;
+  gap: 4px;
+  height: 120px;
+  border: 1px solid rgba(210, 224, 255, 0.08);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.012)),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 29px,
+      rgba(210, 224, 255, 0.06) 30px
+    );
+  padding: 10px 10px 20px;
 }
 
-.home-harness-sparkline span {
+.home-mini-bars span {
+  position: relative;
   display: flex;
   align-items: flex-end;
   height: 100%;
   min-width: 0;
 }
 
-.home-harness-sparkline i {
+.home-mini-bars i {
   display: block;
   width: 100%;
-  min-height: 2px;
-  border-radius: 999px 999px 2px 2px;
+  min-height: 8px;
+  border-radius: 999px 999px 3px 3px;
+  background: linear-gradient(180deg, rgba(137, 180, 255, 0.9), rgba(137, 180, 255, 0.28));
+}
+
+.home-mini-bars b {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cost-bars i {
+  background: linear-gradient(180deg, rgba(240, 196, 109, 0.9), rgba(255, 143, 132, 0.26));
+}
+
+.home-token-mix {
+  display: flex;
+  height: 7px;
+  overflow: hidden;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: rgba(210, 224, 255, 0.08);
+}
+
+.home-token-mix span,
+.home-token-mix i {
+  display: block;
+  min-width: 0;
+}
+
+.home-token-mix span {
+  background: rgba(137, 180, 255, 0.72);
+}
+
+.home-token-mix i {
+  background: rgba(137, 212, 161, 0.72);
+}
+
+.home-token-mix-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
+
+.home-signal-list {
+  display: grid;
+  gap: 7px;
+}
+
+.home-signal-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid rgba(210, 224, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.024);
+  padding: 8px 9px;
+}
+
+.home-signal-row span {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.home-signal-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-signal-row div {
+  display: grid;
+  gap: 2px;
+  min-width: 86px;
+  text-align: right;
+}
+
+.home-signal-row b {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.home-signal-row small {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .usage-panel {
@@ -1688,7 +1793,6 @@ pre {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  min-width: 0;
 }
 
 .usage-chart-heading h3 {
@@ -1704,89 +1808,26 @@ pre {
   font-size: 0.76rem;
 }
 
-.usage-chart-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-}
-
-.usage-period-toggle {
-  display: inline-flex;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: rgba(255, 255, 255, 0.028);
-}
-
-.usage-period-toggle button {
-  min-width: 72px;
-  border: 0;
-  border-left: 1px solid rgba(210, 224, 255, 0.08);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 0.76rem;
-  padding: 5px 10px;
-}
-
-.usage-period-toggle button:first-child {
-  border-left: 0;
-}
-
-.usage-period-toggle button.active {
-  background: rgba(137, 180, 255, 0.16);
-  color: var(--text);
-}
-
-.usage-window-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: 0.76rem;
-}
-
-.usage-window-controls > span {
+.usage-chart-total {
+  display: grid;
+  gap: 3px;
   min-width: 118px;
-  max-width: 178px;
-  border: 1px solid rgba(210, 224, 255, 0.1);
-  border-radius: 999px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.035);
-  overflow: hidden;
-  padding: 7px 10px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 10px 12px;
+  text-align: right;
 }
 
-.usage-window-button {
-  border-color: rgba(137, 180, 255, 0.3);
-  background:
-    linear-gradient(180deg, rgba(137, 180, 255, 0.18), rgba(137, 180, 255, 0.08));
+.usage-chart-total span,
+.usage-chart-total small {
+  color: var(--text-dim);
+  font-size: 0.74rem;
+}
+
+.usage-chart-total strong {
   color: var(--text);
-  width: 30px;
-  height: 30px;
-  padding: 0;
-}
-
-.usage-window-button:not(:disabled):hover {
-  border-color: rgba(137, 180, 255, 0.55);
-  background:
-    linear-gradient(180deg, rgba(137, 180, 255, 0.28), rgba(137, 180, 255, 0.12));
-  box-shadow: 0 0 0 3px rgba(137, 180, 255, 0.08);
-}
-
-.usage-window-button:disabled {
-  border-color: rgba(210, 224, 255, 0.07);
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(164, 175, 196, 0.32);
-  cursor: default;
-  opacity: 1;
+  font-size: 1.04rem;
 }
 
 .usage-chart-kpis {
@@ -1839,6 +1880,34 @@ pre {
   min-height: 252px;
 }
 
+.usage-area-static-chart {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 252px;
+  pointer-events: none;
+  opacity: 0.48;
+}
+
+.usage-static-plot-bg {
+  fill: rgba(255, 255, 255, 0.025);
+}
+
+.usage-area-static-fill,
+.usage-area-static-layer {
+  fill-opacity: 0.5;
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1.2;
+}
+
+.usage-area-static-label {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .usage-area-chart .recharts-surface {
   overflow: visible;
 }
@@ -1853,6 +1922,9 @@ pre {
 }
 
 .usage-callout {
+  position: absolute;
+  top: 66px;
+  right: 7%;
   display: grid;
   gap: 8px;
   min-width: 190px;
@@ -1862,13 +1934,6 @@ pre {
   box-shadow: 0 18px 38px rgba(0, 0, 0, 0.28);
   padding: 12px;
   backdrop-filter: blur(14px);
-}
-
-.usage-latest-strip {
-  grid-template-columns: minmax(110px, 0.8fr) repeat(auto-fit, minmax(120px, 1fr));
-  align-items: center;
-  min-width: 0;
-  padding: 8px 10px;
 }
 
 .usage-callout strong {
@@ -2543,8 +2608,12 @@ pre {
   .compact-panel:not(.compact-panel-span):not(.compact-panel-wide),
   .routing-side-panel,
   .home-pulse-panel,
+  .home-volume-panel,
+  .home-cost-panel,
+  .home-signals-panel,
   .home-project-panel,
-  .home-adapter-panel {
+  .home-adapter-panel,
+  .home-recent-panel {
     grid-column: 1 / -1;
   }
 
@@ -2649,3 +2718,4 @@ pre {
     max-width: calc(100vw - 36px);
   }
 }
+</style></head><body><div id="app"><div class="shell "><aside class="sidebar "><div class="sidebar-top"><button aria-label="Collapse sidebar" class="sidebar-toggle " title="Collapse sidebar" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-panel-left-close" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="m16 15-3-3 3-3"></path></svg><span class="sidebar-toggle-copy">Collapse</span></button></div><nav aria-label="Primary" class="nav-list"><button class="nav-item active" title="Home" type="button"><span aria-hidden="true" class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-house" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"></path><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></span><span class="nav-label">Home</span></button><button class="nav-item " title="Conversations" type="button"><span aria-hidden="true" class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-message-square" aria-hidden="true"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg></span><span class="nav-label">Conversations</span></button><button class="nav-item " title="Routing" type="button"><span aria-hidden="true" class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-route" aria-hidden="true"><circle cx="6" cy="19" r="3"></circle><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"></path><circle cx="18" cy="5" r="3"></circle></svg></span><span class="nav-label">Routing</span></button><button class="nav-item " title="Logs" type="button"><span aria-hidden="true" class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-text" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg></span><span class="nav-label">Logs</span></button><button class="nav-item " title="Settings" type="button"><span aria-hidden="true" class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg></span><span class="nav-label">Settings</span></button></nav><div class="sidebar-spacer"></div><section class="sidebar-panel sidebar-runtime"><div class="sidebar-panel-title">Runtime</div><div class="sidebar-status"><span class="status-badge running">running</span><span class="sidebar-status-copy">Daemon running</span></div><div class="sidebar-metrics"><div class="sidebar-metric " title="Conversations"><span class="sidebar-metric-label">Conversations</span><strong>1,878</strong></div><div class="sidebar-metric " title="Messages: 143,495"><span class="sidebar-metric-label">Messages</span><strong>143.5K</strong></div><div class="sidebar-metric " title="Tool calls: 66,965"><span class="sidebar-metric-label">Tool calls</span><strong>67K</strong></div><div class="sidebar-metric " title="Tokens: 7,325,448,148"><span class="sidebar-metric-label">Tokens</span><strong>7.3B</strong></div><div class="sidebar-metric sidebar-metric-cost" title="Cost (estimated)"><span class="sidebar-metric-label">Cost (estimated)<button aria-label="Calculated from API pricing estimates; not subscription usage or billing-plan spend." class="sidebar-cost-info" data-cost-popover-trigger="estimated-cost" type="button" data-state="closed"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-info" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg></button></span><strong>$11,814.10</strong></div></div></section></aside><main class="main-shell"><header class="topbar"><div class="topbar-copy"><h1>Home</h1></div><div class="topbar-actions"><span class="status-badge running">running</span><button class="toolbar-button" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-rotate-cw" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>Restart</button><button class="toolbar-button" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg>Stop</button><button class="toolbar-button" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>Refresh</button></div></header><section class="workspace-home"><section class="compact-panel home-pulse-panel usage-panel"><div class="panel-header"><div><span class="eyebrow">Pulse</span><h2>Daily Activity</h2></div><span class="panel-meta">Last 30 days</span></div><div class="home-metric-rail"><span class="home-metric-tile"><span>Conversations</span><strong>1,878</strong></span><span class="home-metric-tile" title="Tokens: 7,325,448,148"><span>Tokens</span><strong>7.3B</strong></span><span class="home-metric-tile"><span>Cost</span><strong>$11,814.10</strong></span><span class="home-metric-tile"><span>Projects</span><strong>6</strong></span></div><div class="usage-chart" data-usage-chart-source="timeline"><div class="usage-chart-heading"><div><h3>Day-over-day tokens and conversations</h3><p>Stacked token volume by adapter, with the conversation rail below.</p></div><div class="usage-chart-total"><span>Current total</span><strong>7.3B tok</strong><small>$11,814.10</small></div></div><div class="usage-chart-kpis"><span><strong>2.8B</strong>tokens in view</span><span><strong>515</strong>conversations in view</span><span><strong>$4,883.06</strong>estimated cost</span></div><div class="usage-chart-frame"><div aria-label="Daily token usage by adapter" class="usage-area-chart-shell" role="img"><svg aria-hidden="true" class="usage-area-static-chart" data-usage-static-chart="true" viewBox="0 0 1280 252"><rect class="usage-static-plot-bg" height="160" width="1094" x="64" y="24"></rect><path class="usage-area-static-fill usage-area-static-layer" d="M 64.0,171.0 L 118.7,182.5 L 173.4,181.5 L 228.1,180.4 L 282.8,178.5 L 337.5,171.6 L 392.2,24.1 L 446.9,170.3 L 501.6,176.9 L 556.3,183.8 L 611.0,179.5 L 665.7,182.7 L 720.4,176.0 L 775.1,174.5 L 829.8,171.7 L 884.5,180.0 L 939.2,176.0 L 993.9,145.5 L 1048.6,174.3 L 1103.3,155.6 L 1158.0,176.0 L 1158.0,184.0 L 1103.3,184.0 L 1048.6,184.0 L 993.9,184.0 L 939.2,184.0 L 884.5,184.0 L 829.8,184.0 L 775.1,184.0 L 720.4,184.0 L 665.7,184.0 L 611.0,184.0 L 556.3,184.0 L 501.6,184.0 L 446.9,184.0 L 392.2,184.0 L 337.5,184.0 L 282.8,184.0 L 228.1,184.0 L 173.4,184.0 L 118.7,184.0 L 64.0,184.0 Z" data-adapter-id="codex" fill="#89d4a1"></path><path class="usage-area-static-fill usage-area-static-layer" d="M 64.0,169.9 L 118.7,182.1 L 173.4,181.1 L 228.1,179.3 L 282.8,178.0 L 337.5,171.6 L 392.2,24.0 L 446.9,170.3 L 501.6,176.9 L 556.3,183.8 L 611.0,179.4 L 665.7,182.7 L 720.4,176.0 L 775.1,174.5 L 829.8,171.7 L 884.5,179.7 L 939.2,176.0 L 993.9,145.5 L 1048.6,174.3 L 1103.3,155.6 L 1158.0,176.0 L 1158.0,176.0 L 1103.3,155.6 L 1048.6,174.3 L 993.9,145.5 L 939.2,176.0 L 884.5,180.0 L 829.8,171.7 L 775.1,174.5 L 720.4,176.0 L 665.7,182.7 L 611.0,179.5 L 556.3,183.8 L 501.6,176.9 L 446.9,170.3 L 392.2,24.1 L 337.5,171.6 L 282.8,178.5 L 228.1,180.4 L 173.4,181.5 L 118.7,182.5 L 64.0,171.0 Z" data-adapter-id="claude-code" fill="#89b4ff"></path><text class="usage-area-static-label" text-anchor="middle" x="64" y="216">Apr 17</text><text class="usage-area-static-label" text-anchor="middle" x="282.8" y="216">Apr 27</text><text class="usage-area-static-label" text-anchor="middle" x="501.6" y="216">May 3</text><text class="usage-area-static-label" text-anchor="middle" x="720.4" y="216">May 8</text><text class="usage-area-static-label" text-anchor="middle" x="939.2" y="216">May 13</text><text class="usage-area-static-label" text-anchor="middle" x="1158" y="216">May 17</text></svg><div width="1280" height="252" class="recharts-wrapper usage-area-chart" style="position:relative;cursor:default;width:1280px;height:252px"></div></div><div class="usage-callout"><strong>May 17</strong><span><i class="usage-session-dot"></i>conversations<b>13</b></span><span><i class="usage-color-0"></i>codex<b>63M</b></span><span><i class="usage-color-1"></i>claude-code<b>110.4K</b></span></div></div><div class="usage-session-rail" aria-label="Conversation volume by day"><span title="Apr 17: 26 conversations"><i style="height:10.4%"></i></span><span title="Apr 19: 5 conversations"><i style="height:10.0%"></i></span><span title="Apr 20: 9 conversations"><i style="height:10.0%"></i></span><span title="Apr 26: 9 conversations"><i style="height:10.0%"></i></span><span title="Apr 27: 7 conversations"><i style="height:10.0%"></i></span><span title="Apr 28: 18 conversations"><i style="height:10.0%"></i></span><span title="Apr 29: 250 conversations"><i style="height:100.0%"></i></span><span title="Apr 30: 20 conversations"><i style="height:10.0%"></i></span><span title="May 3: 11 conversations"><i style="height:10.0%"></i></span><span title="May 4: 5 conversations"><i style="height:10.0%"></i></span><span title="May 5: 14 conversations"><i style="height:10.0%"></i></span><span title="May 7: 3 conversations"><i style="height:10.0%"></i></span><span title="May 8: 6 conversations"><i style="height:10.0%"></i></span><span title="May 9: 11 conversations"><i style="height:10.0%"></i></span><span title="May 10: 7 conversations"><i style="height:10.0%"></i></span><span title="May 11: 3 conversations"><i style="height:10.0%"></i></span><span title="May 13: 10 conversations"><i style="height:10.0%"></i></span><span title="May 14: 28 conversations"><i style="height:11.2%"></i></span><span title="May 15: 8 conversations"><i style="height:10.0%"></i></span><span title="May 16: 52 conversations"><i style="height:20.8%"></i></span><span title="May 17: 13 conversations"><i style="height:10.0%"></i></span></div><div class="usage-legend"><span><i class="usage-color-0"></i>codex</span><span><i class="usage-color-1"></i>claude-code</span></div></div></section><section class="compact-panel home-volume-panel home-analytics-panel"><div class="panel-header"><div><span class="eyebrow">Volume</span><h2>Conversation Days</h2></div><span class="panel-meta">13 latest</span></div><div aria-label="Day-over-day conversation volume" class="home-mini-bars conversation-volume-bars" role="img"><span title="Apr 17: 26 conversations"><i style="height:10.4%"></i><b>26</b></span><span title="Apr 19: 5 conversations"><i style="height:8.0%"></i><b>5</b></span><span title="Apr 20: 9 conversations"><i style="height:8.0%"></i><b>9</b></span><span title="Apr 26: 9 conversations"><i style="height:8.0%"></i><b>9</b></span><span title="Apr 27: 7 conversations"><i style="height:8.0%"></i><b>7</b></span><span title="Apr 28: 18 conversations"><i style="height:8.0%"></i><b>18</b></span><span title="Apr 29: 250 conversations"><i style="height:100.0%"></i><b>250</b></span><span title="Apr 30: 20 conversations"><i style="height:8.0%"></i><b>20</b></span><span title="May 3: 11 conversations"><i style="height:8.0%"></i><b>11</b></span><span title="May 4: 5 conversations"><i style="height:8.0%"></i><b>5</b></span><span title="May 5: 14 conversations"><i style="height:8.0%"></i><b>14</b></span><span title="May 7: 3 conversations"><i style="height:8.0%"></i><b>3</b></span><span title="May 8: 6 conversations"><i style="height:8.0%"></i><b>6</b></span><span title="May 9: 11 conversations"><i style="height:8.0%"></i><b>11</b></span><span title="May 10: 7 conversations"><i style="height:8.0%"></i><b>7</b></span><span title="May 11: 3 conversations"><i style="height:8.0%"></i><b>3</b></span><span title="May 13: 10 conversations"><i style="height:8.0%"></i><b>10</b></span><span title="May 14: 28 conversations"><i style="height:11.2%"></i><b>28</b></span><span title="May 15: 8 conversations"><i style="height:8.0%"></i><b>8</b></span><span title="May 16: 52 conversations"><i style="height:20.8%"></i><b>52</b></span><span title="May 17: 13 conversations"><i style="height:8.0%"></i><b>13</b></span></div></section><section class="compact-panel home-cost-panel home-analytics-panel"><div class="panel-header"><div><span class="eyebrow">Cost</span><h2>Estimated Cost</h2></div><span class="panel-meta">$11,814.10</span></div><div aria-label="Day-over-day estimated cost" class="home-mini-bars cost-bars" role="img"><span title="Apr 17: $197.98"><i style="height:9.0%"></i><b>$197.98</b></span><span title="Apr 19: $21.97"><i style="height:8.0%"></i><b>$21.97</b></span><span title="Apr 20: $52.36"><i style="height:8.0%"></i><b>$52.36</b></span><span title="Apr 26: $52.60"><i style="height:8.0%"></i><b>$52.60</b></span><span title="Apr 27: $90.39"><i style="height:8.0%"></i><b>$90.39</b></span><span title="Apr 28: $168.77"><i style="height:8.0%"></i><b>$168.77</b></span><span title="Apr 29: $2,188.90"><i style="height:100.0%"></i><b>$2,188.90</b></span><span title="Apr 30: $191.47"><i style="height:8.7%"></i><b>$191.47</b></span><span title="May 3: $101.02"><i style="height:8.0%"></i><b>$101.02</b></span><span title="May 4: $2.43"><i style="height:8.0%"></i><b>$2.43</b></span><span title="May 5: $62.86"><i style="height:8.0%"></i><b>$62.86</b></span><span title="May 7: $18.28"><i style="height:8.0%"></i><b>$18.28</b></span><span title="May 8: $109.86"><i style="height:8.0%"></i><b>$109.86</b></span><span title="May 9: $128.43"><i style="height:8.0%"></i><b>$128.43</b></span><span title="May 10: $166.77"><i style="height:8.0%"></i><b>$166.77</b></span><span title="May 11: $71.42"><i style="height:8.0%"></i><b>$71.42</b></span><span title="May 13: $107.95"><i style="height:8.0%"></i><b>$107.95</b></span><span title="May 14: $520.55"><i style="height:23.8%"></i><b>$520.55</b></span><span title="May 15: $135.90"><i style="height:8.0%"></i><b>$135.90</b></span><span title="May 16: $384.60"><i style="height:17.6%"></i><b>$384.60</b></span><span title="May 17: $108.55"><i style="height:8.0%"></i><b>$108.55</b></span></div><div class="home-token-mix" aria-label="Display and cache token mix"><span style="width:44.4%"></span><i style="width:55.6%"></i></div><div class="home-token-mix-labels"><span>3.2B display</span><span>4.1B cache</span></div></section><section class="compact-panel home-signals-panel home-analytics-panel"><div class="panel-header"><div><span class="eyebrow">Signals</span><h2>Recent Activity</h2></div><span class="panel-meta">5 signals</span></div><div class="home-signal-list"><article class="home-signal-row"><span>Latest</span><strong title="AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru">AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru</strong><div><b>May 17 at 2:40 PM</b><small>codex · mendeleden/jin.git</small></div></article><article class="home-signal-row"><span>Token peak</span><strong title="&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-">&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-</strong><div><b>29.8M tok</b><small>227 messages · 19h 12m</small></div></article><article class="home-signal-row"><span>Cost peak</span><strong title="&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-">&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-</strong><div><b>$50.32</b><small>codex · gpt-5.5</small></div></article><article class="home-signal-row"><span>Project</span><strong title="mendeleden/jin.git">mendeleden/jin.git</strong><div><b>6.4B</b><small>1,046 conv · May 17 at 2:40 PM</small></div></article><article class="home-signal-row"><span>Adapter</span><strong title="codex">codex</strong><div><b>6.2B</b><small>893 conv · $10,867.72</small></div></article></div></section><section class="compact-panel home-project-panel"><div class="panel-header"><div><span class="eyebrow">Projects</span><h2>Project Activity</h2></div><span class="panel-meta">5 tracked</span></div><div class="home-project-list"><article class="home-project-row"><div class="home-project-row-head"><strong title="https://github.com/mendeleden/jin.git">mendeleden/jin.git</strong><span>1,046 conv</span></div><div class="home-project-bar" aria-hidden="true"><span style="width:100.0%"></span></div><div class="home-project-row-meta"><span>6.4B tokens</span><span>$10,469.13</span><span>claude-code, codex</span></div></article><article class="home-project-row"><div class="home-project-row-head"><strong title="https://github.com/mendeleden/estatimate-v8.git">mendeleden/estatimate-v8.git</strong><span>25 conv</span></div><div class="home-project-bar" aria-hidden="true"><span style="width:5.0%"></span></div><div class="home-project-row-meta"><span>257.4M tokens</span><span>$439.08</span><span>codex, claude-code</span></div></article><article class="home-project-row"><div class="home-project-row-head"><strong title="https://github.com/namestonehq/earlywarning.git">namestonehq/earlywarning.git</strong><span>504 conv</span></div><div class="home-project-bar" aria-hidden="true"><span style="width:5.6%"></span></div><div class="home-project-row-meta"><span>361.8M tokens</span><span>$487.01</span><span>claude-code, codex</span></div></article><article class="home-project-row"><div class="home-project-row-head"><strong title="https://github.com/tkeren/prismatic.git">tkeren/prismatic.git</strong><span>8 conv</span></div><div class="home-project-bar" aria-hidden="true"><span style="width:5.0%"></span></div><div class="home-project-row-meta"><span>4.4M tokens</span><span>$5.87</span><span>claude-code, codex</span></div></article><article class="home-project-row"><div class="home-project-row-head"><strong title="https://github.com/patelneel55/healthi.git">patelneel55/healthi.git</strong><span>2 conv</span></div><div class="home-project-bar" aria-hidden="true"><span style="width:5.0%"></span></div><div class="home-project-row-meta"><span>1.6M tokens</span><span>$0.41</span><span>claude-code</span></div></article></div></section><section class="compact-panel home-adapter-panel"><div class="panel-header"><div><span class="eyebrow">Harnesses</span><h2>Adapter Mix</h2></div><span class="panel-meta">3 active</span></div><div class="home-adapter-list"><article class="home-adapter-row"><i class="usage-color-0"></i><div><strong>codex</strong><span>893 conv · 6.2B tok · $10,867.72</span></div><div class="home-adapter-bar" aria-hidden="true"><span style="width:100.0%"></span></div></article><article class="home-adapter-row"><i class="usage-color-1"></i><div><strong>claude-code</strong><span>878 conv · 1.1B tok · $941.59</span></div><div class="home-adapter-bar" aria-hidden="true"><span style="width:18.0%"></span></div></article><article class="home-adapter-row"><i class="usage-color-2"></i><div><strong>cursor</strong><span>107 conv · 1M tok · $4.79</span></div><div class="home-adapter-bar" aria-hidden="true"><span style="width:5.0%"></span></div></article></div></section><section class="compact-panel home-recent-panel"><div class="panel-header"><div><span class="eyebrow">Recent</span><h2>Latest conversations</h2></div><button class="toolbar-button subtle" type="button">Open library</button></div><div class="mini-list"><button class="mini-row" type="button"><div><div class="mini-row-title" title="# AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; # Jin for Codex ## Working rules - Ru">AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 2:40 PM</span><span>9m 44s</span></div></div><span class="relationship-chip root">root</span></button><button class="mini-row" type="button"><div><div class="mini-row-title" title="# AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; # Jin for Codex ## Working rules - Ru">AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 2:40 PM</span><span>29m 33s</span></div></div><span class="relationship-chip compacted">compacted</span></button><button class="mini-row" type="button"><div><div class="mini-row-title" title="&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-">&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 2:37 PM</span><span>12s</span></div></div><span class="relationship-chip compacted">compacted</span></button><button class="mini-row" type="button"><div><div class="mini-row-title" title="&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-">&lt;environment_context&gt; &lt;cwd&gt;/Users/edenmendel/Documents/GitHub/estatimate-v8&lt;/cwd&gt; &lt;shell&gt;zsh&lt;/shell&gt; &lt;current_date&gt;2026-</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 2:35 PM</span><span>19h 12m</span></div></div><span class="relationship-chip compacted">compacted</span></button><button class="mini-row" type="button"><div><div class="mini-row-title" title="# AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; # Jin for Codex ## Working rules - Ru">AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 2:09 PM</span><span>1h 9m</span></div></div><span class="relationship-chip compacted">compacted</span></button><button class="mini-row" type="button"><div><div class="mini-row-title" title="# AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; # Jin for Codex ## Working rules - Ru">AGENTS.md instructions for /Users/edenmendel/Documents/GitHub/jin &lt;INSTRUCTIONS&gt; - Jin for Codex - Working rules - Ru</div><div class="mini-row-meta"><span>codex</span><span>May 17 at 1:02 PM</span><span>27s</span></div></div><span class="relationship-chip spawned">spawned</span></button></div></section></section></main></div></div></body></html>
