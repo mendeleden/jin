@@ -470,7 +470,7 @@ sinks remain first-class.
 | Sink contract or push semantics | BP-06 |
 | Route matching mechanics | BP-08 |
 | Process lifecycle | BP-07 |
-| Desktop boundary | BP-07 and GitHub issue #34 |
+| Desktop boundary | BP-11 |
 | Config schema changes for team metadata | BP-08 amendment if needed |
 
 ---

@@ -178,7 +178,7 @@ describe("pipeline spec gap closure", () => {
     expect(logger.infos).toContain("Skipping disabled sink disabled");
   });
 
-  test("BP-02 matrix row: RSS warning and hard limit enforcement run in the v2 pipeline path", async () => {
+  test("BP-02 matrix row: RSS warning runs without a default hard stop in the v2 pipeline path", async () => {
     const store = new InMemoryConversationStore();
     const logger = createLogger();
     const sink = new TestSink("primary");
@@ -223,9 +223,7 @@ describe("pipeline spec gap closure", () => {
         hint: { kind: "periodic-scan" },
       });
 
-      await waitFor(() =>
-        logger.errors.some((message) => message.includes("hard limit")),
-      );
+      await waitFor(() => store.getConversation("alpha-3") !== null);
 
       const result = await handle.shutdown();
 
@@ -234,12 +232,11 @@ describe("pipeline spec gap closure", () => {
         true,
       );
       expect(logger.errors.some((message) => message.includes("hard limit"))).toBe(
-        true,
+        false,
       );
       expect(store.getConversation("alpha-1")?.id).toBe("alpha-1");
       expect(store.getConversation("alpha-2")?.id).toBe("alpha-2");
-      expect(store.getConversation("alpha-3")).toBeNull();
-      expect(sink.pushCalls).toHaveLength(0);
+      expect(store.getConversation("alpha-3")?.id).toBe("alpha-3");
       expect(sink.closeCalls).toBe(1);
     } finally {
       await handle.shutdown();

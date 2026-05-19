@@ -1,4 +1,5 @@
-import { configDir } from "../config";
+import { configDir, loadConfig, type JinConfig, type SinkConfig } from "../config";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import type { Conversation, Message } from "../contracts/conversations";
 import type {
   DesktopAdapterSummary,
@@ -7,9 +8,17 @@ import type {
   DesktopConversationListRequest,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopHomeRequest,
+  DesktopLogsRequest,
+  DesktopLogsView,
   DesktopModelSummary,
+  DesktopProjectHarnessSummary,
   DesktopProjectSummary,
+  DesktopRoutingProjectFlow,
+  DesktopRoutingSinkSummary,
+  DesktopRoutingView,
   DesktopTokenUsageDay,
+  DesktopTokenUsageWeek,
   DesktopTraceView,
   DesktopTreeView,
   DesktopToolSummary,
@@ -17,6 +26,8 @@ import type {
 import {
   CLI_UPDATE_COMMAND,
   DESKTOP_API_VERSION,
+  DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS,
+  DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
   DESKTOP_UPDATE_COMMAND,
 } from "../contracts/desktop";
@@ -30,13 +41,16 @@ import {
   getTraceConversations,
   listAvailableAdapters,
   listConversations,
+  listProjectUsageByHarness,
   listProjectsByRemote,
   parseSinceInput,
   summarizeRelationships,
   timelineByDay,
+  timelineByWeek,
   type ConversationTreeNode,
 } from "../db/query-surface";
 import { getStore } from "../db/store";
+import { sinkIdsForConversation } from "../routing";
 import { VERSION } from "../updater";
 import {
   createLocalControlBoundary,
@@ -48,6 +62,9 @@ type QueryStore = ReturnType<typeof getStore>;
 
 export const DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT = 48;
 export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
+export const DESKTOP_LOGS_DEFAULT_LIMIT = 240;
+export const DESKTOP_LOGS_MAX_LIMIT = 2_000;
+const DESKTOP_LOGS_READ_CHUNK_BYTES = 64 * 1024;
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -104,12 +121,20 @@ export function createRoutes(
     return json(buildDesktopCompatibilityInfo());
   });
 
-  routes.set("GET /api/desktop/home", () => {
-    return json(buildDesktopHomeData(queryStore));
+  routes.set("GET /api/desktop/home", (req) => {
+    return json(buildDesktopHomeData(queryStore, req));
   });
 
   routes.set("GET /api/desktop/conversations", (req) => {
     return json(buildDesktopConversationListView(queryStore, req));
+  });
+
+  routes.set("GET /api/desktop/logs", (req) => {
+    return json(buildDesktopLogsView(controlBoundary.getStatus().paths.log, req));
+  });
+
+  routes.set("GET /api/desktop/routing", async () => {
+    return json(await buildDesktopRoutingView(queryStore));
   });
 
   routes.set("GET /api/desktop/conversations/:id", (_req, params) => {
@@ -471,8 +496,12 @@ export function matchRoute(
   return null;
 }
 
-export function buildDesktopHomeData(queryStore: QueryStore): DesktopHomeData {
+export function buildDesktopHomeData(
+  queryStore: QueryStore,
+  request: Request | DesktopHomeRequest = {},
+): DesktopHomeData {
   const overview = getOverviewSummary(queryStore.database);
+  const tokenUsageDays = normalizeDesktopHomeTokenUsageDays(request);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -492,8 +521,16 @@ export function buildDesktopHomeData(queryStore: QueryStore): DesktopHomeData {
     topModels: summarizeModels(queryStore.database),
     topTools: summarizeTools(queryStore.database),
     topProjects: summarizeProjects(queryStore.database),
+    projectUsageByHarness: summarizeProjectUsageByHarness(queryStore.database),
     relationshipMix: summarizeRelationships(queryStore.database),
-    tokenUsageByDay: summarizeTokenUsageByDay(queryStore.database),
+    tokenUsageByDay: summarizeTokenUsageByDay(
+      queryStore.database,
+      tokenUsageDays,
+    ),
+    tokenUsageByWeek: summarizeTokenUsageByWeek(
+      queryStore.database,
+      tokenUsageDays,
+    ),
   };
 }
 
@@ -521,17 +558,68 @@ export function buildDesktopConversationListView(
   };
 }
 
+export function buildDesktopLogsView(
+  logPath: string,
+  request: Request | DesktopLogsRequest,
+): DesktopLogsView {
+  const limit = normalizeDesktopLogsLimit(request);
+  const logs = readLogLines(logPath, limit);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    path: logPath,
+    limit,
+    totalLines: logs.totalLines,
+    returnedLines: logs.lines.length,
+    truncated: logs.totalLines > logs.lines.length,
+    lines: logs.lines,
+  };
+}
+
+export async function buildDesktopRoutingView(
+  queryStore: QueryStore,
+  config?: JinConfig,
+): Promise<DesktopRoutingView> {
+  const effectiveConfig = config ?? await loadConfig();
+  const sinks = effectiveConfig.sinks.map(toDesktopRoutingSinkSummary);
+  const activeSinkIds = new Set(
+    sinks.filter((sink) => sink.enabled).map((sink) => sink.id),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sinks,
+    routes: effectiveConfig.routes.map((route, index) => ({
+      index,
+      match: route.match,
+      sinkIds: [...route.sinks],
+    })),
+    projects: listProjectsByRemote(queryStore.database).map((project) =>
+      buildDesktopRoutingProjectFlow(
+        queryStore,
+        effectiveConfig,
+        activeSinkIds,
+        project,
+      ),
+    ),
+  };
+}
+
 export function buildDesktopConversationDetailView(
   queryStore: QueryStore,
   conversation: Conversation,
 ): DesktopConversationDetailView {
-  const traceView = buildDesktopTraceView(queryStore, conversation);
-  const node = findTreeNode(traceView.tree, conversation.id);
+  const traceConversations = getTraceConversations(
+    queryStore.database,
+    conversation.traceId,
+  );
+  const tree = buildConversationTree(traceConversations);
+  const node = findTreeNode(tree, conversation.id);
   const parent =
     conversation.parentId
-      ? traceView.conversations.find(
-          (entry) => entry.conversation.id === conversation.parentId,
-        )?.conversation ?? null
+      ? traceConversations.find(
+          (entry) => entry.id === conversation.parentId,
+        ) ?? null
       : null;
 
   return {
@@ -541,10 +629,73 @@ export function buildDesktopConversationDetailView(
     parent,
     children: node?.children.map((child) => child.conversation) ?? [],
     trace: {
-      traceId: traceView.traceId,
-      rootId: traceView.rootId,
-      conversationCount: traceView.conversations.length,
+      traceId: conversation.traceId,
+      rootId: tree?.conversation.id ?? conversation.traceId,
+      conversationCount: traceConversations.length,
     },
+  };
+}
+
+function toDesktopRoutingSinkSummary(sink: SinkConfig): DesktopRoutingSinkSummary {
+  return {
+    id: sink.id,
+    type: sink.type,
+    enabled: sink.enabled !== false,
+    name: sink.name ?? "",
+    teamId: sink.teamId ?? "",
+    userId: sink.userId ?? "",
+  };
+}
+
+function buildDesktopRoutingProjectFlow(
+  queryStore: QueryStore,
+  config: JinConfig,
+  activeSinkIds: Set<string>,
+  project: ReturnType<typeof listProjectsByRemote>[number],
+): DesktopRoutingProjectFlow {
+  const conversations = listConversations(queryStore.database, {
+    remote: project.gitRemote,
+  });
+  const routedBySink = new Map<string, number>();
+  let routedConversations = 0;
+  let unroutedConversations = 0;
+
+  for (const conversation of conversations) {
+    const sinkIds = sinkIdsForConversation(conversation, config.routes);
+    const activeIds = sinkIds.filter((sinkId) => activeSinkIds.has(sinkId));
+    if (activeIds.length === 0) {
+      unroutedConversations += 1;
+      continue;
+    }
+
+    routedConversations += 1;
+    for (const sinkId of activeIds) {
+      routedBySink.set(sinkId, (routedBySink.get(sinkId) ?? 0) + 1);
+    }
+  }
+
+  return {
+    id: project.id,
+    name: project.name,
+    gitRemote: project.gitRemote,
+    conversationCount: project.conversationCount,
+    routedConversations,
+    unroutedConversations,
+    totalTokens: project.totalTokens,
+    totalCost: project.totalCost,
+    lastSeen: project.lastSeen,
+    adapters: project.tools
+      .split(",")
+      .map((adapter) => adapter.trim())
+      .filter((adapter) => adapter.length > 0)
+      .sort((left, right) => left.localeCompare(right)),
+    sinks: Array.from(routedBySink.entries())
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([sinkId, count]) => ({
+        sinkId,
+        routedConversations: count,
+        active: true,
+      })),
   };
 }
 
@@ -564,8 +715,8 @@ export function buildDesktopTraceView(
     selectedConversationId: conversation.id,
     conversations: conversations.map((entry) => ({
       conversation: entry,
-      messages: queryStore.getMessages(entry.id),
-      toolCalls: queryStore.getToolCalls(entry.id),
+      messages: [],
+      toolCalls: [],
     })),
     tree,
   };
@@ -644,16 +795,62 @@ function summarizeProjects(database: QueryStore["database"]): DesktopProjectSumm
   }));
 }
 
+function summarizeProjectUsageByHarness(
+  database: QueryStore["database"],
+): DesktopProjectHarnessSummary[] {
+  return listProjectUsageByHarness(database, 7);
+}
+
 function summarizeTokenUsageByDay(
   database: QueryStore["database"],
+  days: number,
 ): DesktopTokenUsageDay[] {
-  return timelineByDay(database, 30).map((entry) => ({
+  return timelineByDay(database, days).map((entry) => ({
     day: entry.day,
     adapterId: entry.adapter_id,
     sessions: entry.sessions,
     tokens: entry.tokens,
     cost: entry.cost,
   }));
+}
+
+function summarizeTokenUsageByWeek(
+  database: QueryStore["database"],
+  days: number,
+): DesktopTokenUsageWeek[] {
+  return timelineByWeek(database, days).map((entry) => ({
+    weekStart: entry.week_start,
+    weekEnd: entry.week_end,
+    adapterId: entry.adapter_id,
+    sessions: entry.sessions,
+    tokens: entry.tokens,
+    cost: entry.cost,
+  }));
+}
+
+function normalizeDesktopHomeTokenUsageDays(
+  request: Request | DesktopHomeRequest,
+): number {
+  let value: number | string | null | undefined;
+  if (request instanceof Request) {
+    const searchParams = new URL(request.url).searchParams;
+    value = searchParams.get("tokenUsageDays") ?? searchParams.get("days");
+  } else {
+    value = request.tokenUsageDays;
+  }
+
+  const days =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
+
+  if (!Number.isFinite(days) || days <= 0) {
+    return DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
+  }
+
+  return Math.min(Math.floor(days), DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS);
 }
 
 function splitProjectAdapters(value: string): string[] {
@@ -697,6 +894,76 @@ function normalizeDesktopConversationLimit(value: unknown): number {
   }
 
   return Math.min(limit, DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
+}
+
+function normalizeDesktopLogsLimit(request: Request | DesktopLogsRequest): number {
+  const value =
+    request instanceof Request
+      ? new URL(request.url).searchParams.get("limit")
+      : request.limit;
+
+  const limit =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : DESKTOP_LOGS_DEFAULT_LIMIT;
+
+  if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
+    return DESKTOP_LOGS_DEFAULT_LIMIT;
+  }
+
+  return Math.min(limit, DESKTOP_LOGS_MAX_LIMIT);
+}
+
+function readLogLines(logPath: string, limit: number): { lines: string[]; totalLines: number } {
+  if (!existsSync(logPath)) {
+    return { lines: [], totalLines: 0 };
+  }
+
+  const stat = statSync(logPath);
+  if (!stat.isFile() || stat.size === 0) {
+    return { lines: [], totalLines: 0 };
+  }
+
+  const fd = openSync(logPath, "r");
+  const buffer = Buffer.allocUnsafe(DESKTOP_LOGS_READ_CHUNK_BYTES);
+  const lines: string[] = [];
+  let totalLines = 0;
+  let pending = "";
+
+  const appendLine = (line: string) => {
+    totalLines += 1;
+    lines.push(line.endsWith("\r") ? line.slice(0, -1) : line);
+    if (lines.length > limit) {
+      lines.shift();
+    }
+  };
+
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+
+      const chunk = pending + buffer.subarray(0, bytesRead).toString("utf8");
+      const chunkLines = chunk.split("\n");
+      pending = chunkLines.pop() ?? "";
+      for (const line of chunkLines) {
+        appendLine(line);
+      }
+    } while (bytesRead > 0);
+  } finally {
+    closeSync(fd);
+  }
+
+  if (pending.length > 0) {
+    appendLine(pending);
+  }
+
+  return { lines, totalLines };
 }
 
 function resolveConversation(

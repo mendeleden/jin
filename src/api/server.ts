@@ -9,6 +9,7 @@ import {
   matchRoute,
   type CreateRoutesOptions,
 } from "./routes";
+import { appendDiagnosticEvent } from "../pipeline/diagnostic";
 
 export interface LocalApiServer {
   readonly socketPath: string;
@@ -32,16 +33,24 @@ type LocalApiServe = (
 
 export interface StartLocalApiServerOptions extends CreateRoutesOptions {
   authToken?: string;
+  diagnosticLogPath?: string;
+  getRssBytes?: () => number;
   localEndpoint?: string;
   platform?: NodeJS.Platform;
   socketPath?: string;
   serve?: LocalApiServe;
 }
 
+export interface ApiFetchHandlerOptions extends CreateRoutesOptions {
+  diagnosticLogPath?: string;
+  getRssBytes?: () => number;
+}
+
 export function createApiFetchHandler(
-  options: CreateRoutesOptions = {},
+  options: ApiFetchHandlerOptions = {},
 ): (request: Request) => Promise<Response> {
   const routes = createRoutes(options);
+  const getRssBytes = options.getRssBytes ?? (() => process.memoryUsage().rss);
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -50,11 +59,32 @@ export function createApiFetchHandler(
       return json({ error: "Not found" }, 404);
     }
 
+    const shouldLogDesktopApi =
+      typeof options.diagnosticLogPath === "string" &&
+      isDesktopApiPath(url.pathname);
+    const startedAt = performance.now();
+    const beforeRssBytes = shouldLogDesktopApi ? getRssBytes() : 0;
+    let response: Response;
+
     try {
-      return await match.handler(request, match.params);
+      response = await match.handler(request, match.params);
     } catch (error) {
-      return json({ error: formatError(error) }, 500);
+      response = json({ error: formatError(error) }, 500);
     }
+
+    if (shouldLogDesktopApi) {
+      const afterRssBytes = getRssBytes();
+      appendDesktopApiDiagnostic(options.diagnosticLogPath!, {
+        method: request.method,
+        path: url.pathname,
+        status: response.status,
+        durationMs: performance.now() - startedAt,
+        beforeRssBytes,
+        afterRssBytes,
+      });
+    }
+
+    return response;
   };
 }
 
@@ -162,6 +192,46 @@ function createAuthenticatedApiFetchHandler(
 
     return fetch(request);
   };
+}
+
+function isDesktopApiPath(pathname: string): boolean {
+  return pathname === "/api/desktop" || pathname.startsWith("/api/desktop/");
+}
+
+function appendDesktopApiDiagnostic(
+  path: string,
+  info: {
+    method: string;
+    path: string;
+    status: number;
+    durationMs: number;
+    beforeRssBytes: number;
+    afterRssBytes: number;
+  },
+): void {
+  const beforeRssMb = bytesToMb(info.beforeRssBytes);
+  const afterRssMb = bytesToMb(info.afterRssBytes);
+
+  appendDiagnosticEvent(
+    path,
+    {
+      event: "desktop-api:request",
+      method: info.method,
+      path: info.path,
+      status: info.status,
+      durationMs: Math.round(info.durationMs),
+      beforeRssMb,
+      afterRssMb,
+      deltaRssMb: afterRssMb - beforeRssMb,
+    },
+    {
+      getRssBytes: () => info.afterRssBytes,
+    },
+  );
+}
+
+function bytesToMb(bytes: number): number {
+  return Math.round(bytes / (1024 * 1024));
 }
 
 function assertWindowsLoopbackEndpoint(endpoint: string): void {

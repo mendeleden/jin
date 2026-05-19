@@ -376,7 +376,8 @@ If this blueprint is accepted, the rest of the docs should be aligned to it:
 - BP-08 should separate workspace/team configuration from generic sink
   configuration.
 
-- BP-07 should clarify the Daemon ↔ Desktop boundary.
+- BP-07 should clarify the Daemon ↔ Desktop lifecycle boundary, and BP-11
+  should catalog the concrete daemon API and Desktop IPC surface.
 
 - [BP-01-module-map.md](/Users/edenmendel/Documents/GitHub/jin/docs/blueprint/BP-01-module-map.md)
   should reflect Team as a distinct boundary rather than implicitly treating

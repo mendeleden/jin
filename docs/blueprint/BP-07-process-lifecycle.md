@@ -565,7 +565,9 @@ It must not:
 
 ## Daemon ↔ Desktop Boundary
 
-Desktop needs a stable local boundary from the daemon/runtime layer.
+Desktop needs a stable local boundary from the daemon/runtime layer. BP-07 owns
+the lifecycle invariant; BP-11 catalogs the concrete daemon routes and Electron
+IPC channels exposed across that boundary.
 
 ### What belongs on that boundary
 
@@ -610,6 +612,9 @@ BP-07 does not mandate the transport for this boundary. It may be:
 The invariant is architectural:
 
 > Desktop is a client of the daemon boundary, not a second runtime.
+
+The current route/channel surface is defined in
+[BP-11: Desktop Daemon Boundary](BP-11-desktop-daemon-boundary.md).
 
 ---
 

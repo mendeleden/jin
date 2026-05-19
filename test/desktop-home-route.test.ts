@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createApiFetchHandler } from "../src/api/server";
 import {
   DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
   DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
+  buildDesktopLogsView,
 } from "../src/api/routes";
 import { getStore, type SqliteConversationStore } from "../src/db";
 import type {
@@ -16,8 +17,16 @@ import type {
 import {
   CLI_UPDATE_COMMAND,
   DESKTOP_API_VERSION,
+  DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS,
+  DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
   DESKTOP_UPDATE_COMMAND,
+  type DesktopCompatibilityInfo,
+  type DesktopConversationDetailView,
+  type DesktopConversationListView,
+  type DesktopHomeData,
+  type DesktopTraceView,
+  type DesktopTreeView,
 } from "../src/contracts/desktop";
 import { VERSION } from "../src/updater";
 import { removeTestDir } from "./helpers";
@@ -38,7 +47,7 @@ describe("desktop viewer routes", () => {
     const response = await handler(
       new Request("http://localhost/api/desktop/compatibility"),
     );
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopCompatibilityInfo>(response);
 
     expect(payload).toEqual({
       jinVersion: VERSION,
@@ -49,13 +58,46 @@ describe("desktop viewer routes", () => {
     });
   });
 
+  test("serves bounded desktop log tails without exposing direct file access to renderer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "jin-desktop-logs-"));
+    cleanups.push(() => removeTestDir(dir));
+    const logPath = join(dir, "jin.log");
+    writeFileSync(
+      logPath,
+      [
+        "Local daemon query socket ready.",
+        "WARN watcher restart delayed.",
+        "Pushed 2 conversations to sink team-postgres.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const payload = buildDesktopLogsView(logPath, { limit: 2 });
+
+    expect(payload.path).toBe(logPath);
+    expect(payload.limit).toBe(2);
+    expect(payload.totalLines).toBe(3);
+    expect(payload.returnedLines).toBe(2);
+    expect(payload.truncated).toBe(true);
+    expect(payload.lines).toEqual([
+      "WARN watcher restart delayed.",
+      "Pushed 2 conversations to sink team-postgres.",
+    ]);
+
+    expect(buildDesktopLogsView(join(dir, "missing.log"), { limit: 2 })).toMatchObject({
+      totalLines: 0,
+      returnedLines: 0,
+      lines: [],
+    });
+  });
+
   test("serves a typed home payload that reuses canonical conversation entities", async () => {
     const { store } = createQueryEnv();
     seedDesktopStore(store);
 
     const handler = createApiFetchHandler({ queryStore: store });
     const response = await handler(new Request("http://localhost/api/desktop/home"));
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopHomeData>(response);
 
     expect(payload.overview.conversations).toBe(3);
     expect(payload.overview.toolCalls).toBe(2);
@@ -86,11 +128,45 @@ describe("desktop viewer routes", () => {
         cost: payload.tokenUsageByDay[1].cost,
       },
     ]);
+    expect(payload.tokenUsageByWeek).toEqual([
+      {
+        weekStart: "2026-04-27",
+        weekEnd: "2026-05-03",
+        adapterId: "claude-code",
+        sessions: 2,
+        tokens: 75,
+        cost: payload.tokenUsageByWeek[0].cost,
+      },
+      {
+        weekStart: "2026-04-27",
+        weekEnd: "2026-05-03",
+        adapterId: "codex",
+        sessions: 1,
+        tokens: 25,
+        cost: payload.tokenUsageByWeek[1].cost,
+      },
+    ]);
     expect(payload.topTools.map((tool: { name: string }) => tool.name).sort()).toEqual([
       "Grep",
       "Read",
     ]);
     expect(payload.topProjects[0].gitRemote).toBe("github.com/acme/jin");
+    expect(payload.projectUsageByHarness[0]).toMatchObject({
+      gitRemote: "github.com/acme/jin",
+      conversationCount: 3,
+      adapters: [
+        {
+          adapterId: "claude-code",
+          conversations: 2,
+          tokens: 75,
+        },
+        {
+          adapterId: "codex",
+          conversations: 1,
+          tokens: 25,
+        },
+      ],
+    });
     expect(
       payload.relationshipMix.toSorted(
         (left: { relationship: string }, right: { relationship: string }) =>
@@ -101,6 +177,89 @@ describe("desktop viewer routes", () => {
       { relationship: "root", conversations: 1 },
       { relationship: "spawned", conversations: 1 },
     ]);
+  });
+
+  test("serves enough token history for monthly home rollups", async () => {
+    const { store } = createQueryEnv();
+    const historyAgeDays = 120;
+    const historyAt = isoDaysAgo(historyAgeDays);
+    const historyDay = historyAt.slice(0, 10);
+
+    store.writeBundle(
+      makeBundle("desktop-history-window", {
+        conversation: {
+          startedAt: historyAt,
+          endedAt: historyAt,
+        },
+      }),
+    );
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=365"),
+    );
+    const payload = await readJson<DesktopHomeData>(response);
+
+    expect(historyAgeDays).toBeGreaterThan(30);
+    expect(
+      payload.tokenUsageByDay.some(
+        (entry: { day: string }) => entry.day === historyDay,
+      ),
+    ).toBe(true);
+  });
+
+  test("bounds desktop home token history from request parameters", async () => {
+    const { store } = createQueryEnv();
+    const recentAt = isoDaysAgo(5);
+    const olderAt = isoDaysAgo(45);
+
+    store.writeBundle(
+      makeBundle("desktop-history-recent", {
+        conversation: {
+          startedAt: recentAt,
+          endedAt: recentAt,
+        },
+      }),
+    );
+    store.writeBundle(
+      makeBundle("desktop-history-older", {
+        conversation: {
+          startedAt: olderAt,
+          endedAt: olderAt,
+        },
+      }),
+    );
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=30"),
+    );
+    const payload = await readJson<DesktopHomeData>(response);
+    const days = payload.tokenUsageByDay.map((entry: { day: string }) => entry.day);
+
+    expect(days).toContain(recentAt.slice(0, 10));
+    expect(days).not.toContain(olderAt.slice(0, 10));
+
+    const malformedResponse = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=not-a-number"),
+    );
+    const malformedPayload = await readJson<DesktopHomeData>(malformedResponse);
+    expect(
+      malformedPayload.tokenUsageByDay.some(
+        (entry: { day: string }) => entry.day === olderAt.slice(0, 10),
+      ),
+    ).toBe(true);
+
+    const oversizedResponse = await handler(
+      new Request(
+        `http://localhost/api/desktop/home?tokenUsageDays=${
+          DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS + 1
+        }`,
+      ),
+    );
+    const oversizedPayload = await readJson<DesktopHomeData>(oversizedResponse);
+    expect(oversizedPayload.tokenUsageByDay.length).toBeGreaterThan(0);
+    expect(DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS).toBe(365);
   });
 
   test("serves conversation list/detail/trace/tree routes without v1 aliases", async () => {
@@ -114,7 +273,7 @@ describe("desktop viewer routes", () => {
         "http://localhost/api/desktop/conversations?adapter=claude-code&limit=12",
       ),
     );
-    const listPayload = await readJson(listResponse);
+    const listPayload = await readJson<DesktopConversationListView>(listResponse);
 
     expect(listPayload.filters).toEqual({
       adapterId: "claude-code",
@@ -131,7 +290,9 @@ describe("desktop viewer routes", () => {
         "http://localhost/api/desktop/conversations?adapter=claude-code&limit=1",
       ),
     );
-    const limitedListPayload = await readJson(limitedListResponse);
+    const limitedListPayload = await readJson<DesktopConversationListView>(
+      limitedListResponse,
+    );
 
     expect(limitedListPayload.conversations).toHaveLength(1);
     expect(
@@ -147,7 +308,9 @@ describe("desktop viewer routes", () => {
     const detailResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child"),
     );
-    const detailPayload = await readJson(detailResponse);
+    const detailPayload = await readJson<DesktopConversationDetailView>(
+      detailResponse,
+    );
 
     expect(detailPayload.conversation.id).toBe("desktop-child");
     expect("parentSessionId" in detailPayload.conversation).toBe(false);
@@ -164,7 +327,7 @@ describe("desktop viewer routes", () => {
     const traceResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child/trace"),
     );
-    const tracePayload = await readJson(traceResponse);
+    const tracePayload = await readJson<DesktopTraceView>(traceResponse);
 
     expect(tracePayload.selectedConversationId).toBe("desktop-child");
     expect(tracePayload.rootId).toBe("desktop-root");
@@ -175,7 +338,7 @@ describe("desktop viewer routes", () => {
     const treeResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child/tree"),
     );
-    const treePayload = await readJson(treeResponse);
+    const treePayload = await readJson<DesktopTreeView>(treeResponse);
 
     expect(treePayload.traceId).toBe("desktop-root");
     expect(treePayload.selectedConversationId).toBe("desktop-child");
@@ -193,7 +356,7 @@ describe("desktop viewer routes", () => {
       const response = await handler(
         new Request(`http://localhost/api/desktop/conversations?limit=${limit}`),
       );
-      const payload = await readJson(response);
+      const payload = await readJson<DesktopConversationListView>(response);
 
       expect(payload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT);
       expect(payload.conversations).toHaveLength(
@@ -204,7 +367,9 @@ describe("desktop viewer routes", () => {
     const cappedResponse = await handler(
       new Request("http://localhost/api/desktop/conversations?limit=999999"),
     );
-    const cappedPayload = await readJson(cappedResponse);
+    const cappedPayload = await readJson<DesktopConversationListView>(
+      cappedResponse,
+    );
 
     expect(cappedPayload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
     expect(cappedPayload.conversations).toHaveLength(
@@ -389,7 +554,11 @@ function makeToolCall(
   };
 }
 
-async function readJson(response: Response): Promise<any> {
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
+async function readJson<T>(response: Response): Promise<T> {
   expect(response.status).toBe(200);
-  return response.json();
+  return response.json() as Promise<T>;
 }

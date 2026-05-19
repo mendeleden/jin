@@ -4,6 +4,7 @@ import type {
   Message,
   ToolCall,
 } from "./conversations";
+import type { RouteMatch, SinkType } from "./config";
 import type {
   RuntimeIssue,
   RuntimeOwnershipRecord,
@@ -141,6 +142,24 @@ export interface DesktopProjectSummary {
   adapters: string[];
 }
 
+export interface DesktopProjectHarnessSegment {
+  adapterId: string;
+  conversations: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface DesktopProjectHarnessSummary {
+  id: string;
+  name: string;
+  gitRemote: string;
+  conversationCount: number;
+  totalTokens: number;
+  totalCost: number;
+  lastSeen: string;
+  adapters: DesktopProjectHarnessSegment[];
+}
+
 export interface DesktopRelationshipSummary {
   relationship: ConversationRelationship;
   conversations: number;
@@ -154,9 +173,29 @@ export interface DesktopTokenUsageDay {
   cost: number;
 }
 
+export interface DesktopTokenUsageWeek {
+  weekStart: string;
+  weekEnd: string;
+  adapterId: string;
+  sessions: number;
+  tokens: number;
+  cost: number;
+}
+
+export const DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS = 365;
+export const DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS = 2_000;
+
+export interface DesktopHomeRequest {
+  tokenUsageDays?: number;
+}
+
 export interface DesktopConversationListRequest {
   adapterId?: string;
   since?: string;
+  limit?: number;
+}
+
+export interface DesktopLogsRequest {
   limit?: number;
 }
 
@@ -182,8 +221,10 @@ export interface DesktopHomeData {
   topModels: DesktopModelSummary[];
   topTools: DesktopToolSummary[];
   topProjects: DesktopProjectSummary[];
+  projectUsageByHarness: DesktopProjectHarnessSummary[];
   relationshipMix: DesktopRelationshipSummary[];
   tokenUsageByDay: DesktopTokenUsageDay[];
+  tokenUsageByWeek: DesktopTokenUsageWeek[];
 }
 
 export interface DesktopHomeSnapshot {
@@ -191,6 +232,58 @@ export interface DesktopHomeSnapshot {
   compatibility: DesktopCompatibilityStatus | null;
   data: DesktopHomeData | null;
   transportError: string | null;
+}
+
+export interface DesktopLogsView {
+  generatedAt: string;
+  path: string;
+  limit: number;
+  totalLines: number;
+  returnedLines: number;
+  truncated: boolean;
+  lines: string[];
+}
+
+export interface DesktopRoutingSinkSummary {
+  id: string;
+  type: SinkType;
+  enabled: boolean;
+  name: string;
+  teamId: string;
+  userId: string;
+}
+
+export interface DesktopRoutingRouteSummary {
+  index: number;
+  match: RouteMatch;
+  sinkIds: string[];
+}
+
+export interface DesktopRoutingProjectSinkFlow {
+  sinkId: string;
+  routedConversations: number;
+  active: boolean;
+}
+
+export interface DesktopRoutingProjectFlow {
+  id: string;
+  name: string;
+  gitRemote: string;
+  conversationCount: number;
+  routedConversations: number;
+  unroutedConversations: number;
+  totalTokens: number;
+  totalCost: number;
+  lastSeen: string;
+  adapters: string[];
+  sinks: DesktopRoutingProjectSinkFlow[];
+}
+
+export interface DesktopRoutingView {
+  generatedAt: string;
+  projects: DesktopRoutingProjectFlow[];
+  sinks: DesktopRoutingSinkSummary[];
+  routes: DesktopRoutingRouteSummary[];
 }
 
 export interface DesktopConversationDetailView {

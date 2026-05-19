@@ -34,7 +34,7 @@ BP-08 does NOT own:
   receives pre-seeded config, or connects to managed sinks. This is a
   product-level concern (see BP-Product-Strategy) that layers on top of
   the config primitives defined here.
-- **Desktop boundary API** — see BP-07 and GitHub issue #34.
+- **Desktop boundary API** — see BP-11.
 - **Managed deployment config provisioning** — see BP-07 §Managed
   Deployment.
 
@@ -620,5 +620,5 @@ sink sets are returned (union), not just the first.
 | Store schema and migrations | BP-05 |
 | Process lifecycle and daemon modes | BP-07 |
 | Workspace/team enrollment and managed deployment | BP-Product-Strategy |
-| Desktop boundary API and shared type contracts | GitHub issue #34 |
-| End-to-end type safety across CLI/daemon/Desktop | GitHub issue #34 |
+| Desktop boundary API and shared type contracts | BP-11 |
+| End-to-end type safety across CLI/daemon/Desktop | BP-11 |

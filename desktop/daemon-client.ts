@@ -10,13 +10,20 @@ import type {
   DesktopConversationListRequest,
   DesktopConversationListView,
   DesktopHomeData,
+  DesktopHomeRequest,
+  DesktopLogsRequest,
+  DesktopLogsView,
+  DesktopRoutingView,
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
+import { DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS } from "../src/contracts/desktop";
 
 export interface DesktopDaemonClient {
   getCompatibility(): Promise<DesktopCompatibilityInfo>;
-  getHomeData(): Promise<DesktopHomeData>;
+  getHomeData(request?: DesktopHomeRequest): Promise<DesktopHomeData>;
+  getLogs(request?: DesktopLogsRequest): Promise<DesktopLogsView>;
+  getRouting(): Promise<DesktopRoutingView>;
   listConversations(
     request?: DesktopConversationListRequest,
   ): Promise<DesktopConversationListView>;
@@ -66,10 +73,39 @@ export function createDesktopDaemonClient(
         authToken,
       );
     },
-    async getHomeData() {
+    async getHomeData(filters = {}) {
+      const tokenUsageDays =
+        filters.tokenUsageDays ?? DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
+      const search = new URLSearchParams();
+      if (Number.isFinite(tokenUsageDays) && tokenUsageDays > 0) {
+        search.set("tokenUsageDays", String(Math.floor(tokenUsageDays)));
+      }
+      const pathname = `/api/desktop/home${
+        search.size > 0 ? `?${search.toString()}` : ""
+      }`;
       return requestJson<DesktopHomeData>(
         request,
-        "/api/desktop/home",
+        pathname,
+        authToken,
+      );
+    },
+    async getLogs(filters = {}) {
+      const search = new URLSearchParams();
+      if (typeof filters.limit === "number") {
+        search.set("limit", String(filters.limit));
+      }
+
+      const pathname = `/api/desktop/logs${search.size > 0 ? `?${search.toString()}` : ""}`;
+      return requestJson<DesktopLogsView>(
+        request,
+        pathname,
+        authToken,
+      );
+    },
+    async getRouting() {
+      return requestJson<DesktopRoutingView>(
+        request,
+        "/api/desktop/routing",
         authToken,
       );
     },

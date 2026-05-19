@@ -1,6 +1,6 @@
 {
   "name": "jin",
-  "version": "0.10.0",
+  "version": "0.10.2",
   "license": "FSL-1.1-ALv2",
   "type": "module",
   "bin": {
@@ -12,6 +12,7 @@
     "dev": "bun run src/index.ts",
     "build": "bun build ./src/index.ts --compile --outfile jin",
     "desktop:build": "bun run scripts/build-desktop.ts",
+    "desktop:dev": "bun run scripts/desktop-dev.ts",
     "desktop:package": "bun run desktop:build && bun run scripts/package-desktop.ts",
     "desktop:start": "bun run desktop:build && electron desktop/dist/main.js",
     "desktop:typecheck": "tsc -p desktop/tsconfig.json --noEmit",
@@ -19,14 +20,32 @@
     "test:integration": "bun run scripts/test.ts integration",
     "test:all": "bun run scripts/test.ts all"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@xyflow/react": "^12.10.2",
+    "d3-sankey": "^0.12.3",
+    "d3-shape": "^3.2.0",
+    "lucide-react": "^1.16.0",
+    "recharts": "^3.8.1"
+  },
   "devDependencies": {
     "@electron/get": "^2.0.3",
     "@types/bun": "latest",
+    "@types/d3-sankey": "^0.12.5",
+    "@types/d3-shape": "^3.1.8",
     "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "electron": "^41.3.0",
     "extract-zip": "^2.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.7",
+    "vite": "^5.4.21",
     "vitepress": "^1.6.4"
   }
 }

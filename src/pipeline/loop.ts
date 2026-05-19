@@ -33,7 +33,6 @@ const NOOP_LOGGER: PipelineLogger = {
 };
 
 const DEFAULT_RSS_WARNING_BYTES = 200 * 1024 * 1024;
-const DEFAULT_RSS_HARD_LIMIT_BYTES = 256 * 1024 * 1024;
 
 // BP-02 uses a shutdown-specific full scan, but the frozen adapter contract only
 // publishes startup/fs-change/periodic hints. Reusing periodic-scan preserves
@@ -98,9 +97,8 @@ export async function runPipeline(
     options.rssWarningBytes,
     DEFAULT_RSS_WARNING_BYTES,
   );
-  const rssHardLimitBytes = normalizeRssBytes(
+  const rssHardLimitBytes = normalizeOptionalRssBytes(
     options.rssHardLimitBytes,
-    DEFAULT_RSS_HARD_LIMIT_BYTES,
   );
 
   let currentWork: PipelineWorkItem | null = null;
@@ -544,7 +542,10 @@ export async function runPipeline(
       return;
     }
 
-    if (rssBytes >= rssHardLimitBytes) {
+    if (
+      typeof rssHardLimitBytes === "number" &&
+      rssBytes >= rssHardLimitBytes
+    ) {
       logger.error(
         `RSS ${formatRssMb(rssBytes)} MB exceeded the ${formatRssMb(rssHardLimitBytes)} MB hard limit during ${context}; starting bounded shutdown`,
       );
@@ -632,6 +633,16 @@ function normalizeRssBytes(
 ): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+function normalizeOptionalRssBytes(
+  value: number | undefined,
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
   }
 
   return Math.max(1, Math.floor(value));
