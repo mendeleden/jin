@@ -182,6 +182,9 @@ export interface DesktopTokenUsageWeek {
   cost: number;
 }
 
+export const DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS = 365;
+export const DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS = 2_000;
+
 export interface DesktopHomeRequest {
   tokenUsageDays?: number;
 }

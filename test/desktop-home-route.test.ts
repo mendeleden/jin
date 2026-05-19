@@ -17,6 +17,8 @@ import type {
 import {
   CLI_UPDATE_COMMAND,
   DESKTOP_API_VERSION,
+  DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS,
+  DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
   DESKTOP_UPDATE_COMMAND,
 } from "../src/contracts/desktop";
@@ -231,6 +233,27 @@ describe("desktop viewer routes", () => {
 
     expect(days).toContain(recentAt.slice(0, 10));
     expect(days).not.toContain(olderAt.slice(0, 10));
+
+    const malformedResponse = await handler(
+      new Request("http://localhost/api/desktop/home?tokenUsageDays=not-a-number"),
+    );
+    const malformedPayload = await readJson(malformedResponse);
+    expect(
+      malformedPayload.tokenUsageByDay.some(
+        (entry: { day: string }) => entry.day === olderAt.slice(0, 10),
+      ),
+    ).toBe(true);
+
+    const oversizedResponse = await handler(
+      new Request(
+        `http://localhost/api/desktop/home?tokenUsageDays=${
+          DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS + 1
+        }`,
+      ),
+    );
+    const oversizedPayload = await readJson(oversizedResponse);
+    expect(oversizedPayload.tokenUsageByDay.length).toBeGreaterThan(0);
+    expect(DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS).toBe(365);
   });
 
   test("serves conversation list/detail/trace/tree routes without v1 aliases", async () => {

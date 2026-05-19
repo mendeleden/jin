@@ -26,6 +26,8 @@ import type {
 import {
   CLI_UPDATE_COMMAND,
   DESKTOP_API_VERSION,
+  DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS,
+  DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
   DESKTOP_UPDATE_COMMAND,
 } from "../contracts/desktop";
@@ -62,7 +64,6 @@ export const DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT = 48;
 export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
 export const DESKTOP_LOGS_DEFAULT_LIMIT = 240;
 export const DESKTOP_LOGS_MAX_LIMIT = 2_000;
-export const DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS = 2_000;
 const DESKTOP_LOGS_READ_CHUNK_BYTES = 64 * 1024;
 
 const json = (data: unknown, status = 200) =>
@@ -830,24 +831,26 @@ function summarizeTokenUsageByWeek(
 function normalizeDesktopHomeTokenUsageDays(
   request: Request | DesktopHomeRequest,
 ): number {
-  const value =
-    request instanceof Request
-      ? new URL(request.url).searchParams.get("tokenUsageDays") ??
-        new URL(request.url).searchParams.get("days")
-      : request.tokenUsageDays;
+  let value: number | string | null | undefined;
+  if (request instanceof Request) {
+    const searchParams = new URL(request.url).searchParams;
+    value = searchParams.get("tokenUsageDays") ?? searchParams.get("days");
+  } else {
+    value = request.tokenUsageDays;
+  }
 
   const days =
     typeof value === "number"
       ? value
       : typeof value === "string" && value.trim().length > 0
         ? Number(value)
-        : DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS;
+        : DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
 
-  if (!Number.isFinite(days) || !Number.isInteger(days) || days <= 0) {
-    return DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS;
+  if (!Number.isFinite(days) || days <= 0) {
+    return DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
   }
 
-  return Math.min(days, DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS);
+  return Math.min(Math.floor(days), DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS);
 }
 
 function splitProjectAdapters(value: string): string[] {

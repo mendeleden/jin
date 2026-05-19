@@ -17,6 +17,7 @@ import type {
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
+import { DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS } from "../src/contracts/desktop";
 
 export interface DesktopDaemonClient {
   getCompatibility(): Promise<DesktopCompatibilityInfo>;
@@ -55,8 +56,6 @@ export interface DesktopDaemonClientOptions {
   request?: DesktopUnixRequest;
 }
 
-export const DESKTOP_CLIENT_HOME_TOKEN_USAGE_DAYS = 365;
-
 export function createDesktopDaemonClient(
   options: DesktopDaemonClientOptions = {},
 ): DesktopDaemonClient {
@@ -76,7 +75,7 @@ export function createDesktopDaemonClient(
     },
     async getHomeData(filters = {}) {
       const tokenUsageDays =
-        filters.tokenUsageDays ?? DESKTOP_CLIENT_HOME_TOKEN_USAGE_DAYS;
+        filters.tokenUsageDays ?? DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS;
       const search = new URLSearchParams();
       if (Number.isFinite(tokenUsageDays) && tokenUsageDays > 0) {
         search.set("tokenUsageDays", String(Math.floor(tokenUsageDays)));
