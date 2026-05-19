@@ -21,6 +21,12 @@ import {
   DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
   DESKTOP_UPDATE_COMMAND,
+  type DesktopCompatibilityInfo,
+  type DesktopConversationDetailView,
+  type DesktopConversationListView,
+  type DesktopHomeData,
+  type DesktopTraceView,
+  type DesktopTreeView,
 } from "../src/contracts/desktop";
 import { VERSION } from "../src/updater";
 import { removeTestDir } from "./helpers";
@@ -41,7 +47,7 @@ describe("desktop viewer routes", () => {
     const response = await handler(
       new Request("http://localhost/api/desktop/compatibility"),
     );
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopCompatibilityInfo>(response);
 
     expect(payload).toEqual({
       jinVersion: VERSION,
@@ -91,7 +97,7 @@ describe("desktop viewer routes", () => {
 
     const handler = createApiFetchHandler({ queryStore: store });
     const response = await handler(new Request("http://localhost/api/desktop/home"));
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopHomeData>(response);
 
     expect(payload.overview.conversations).toBe(3);
     expect(payload.overview.toolCalls).toBe(2);
@@ -192,7 +198,7 @@ describe("desktop viewer routes", () => {
     const response = await handler(
       new Request("http://localhost/api/desktop/home?tokenUsageDays=365"),
     );
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopHomeData>(response);
 
     expect(historyAgeDays).toBeGreaterThan(30);
     expect(
@@ -228,7 +234,7 @@ describe("desktop viewer routes", () => {
     const response = await handler(
       new Request("http://localhost/api/desktop/home?tokenUsageDays=30"),
     );
-    const payload = await readJson(response);
+    const payload = await readJson<DesktopHomeData>(response);
     const days = payload.tokenUsageByDay.map((entry: { day: string }) => entry.day);
 
     expect(days).toContain(recentAt.slice(0, 10));
@@ -237,7 +243,7 @@ describe("desktop viewer routes", () => {
     const malformedResponse = await handler(
       new Request("http://localhost/api/desktop/home?tokenUsageDays=not-a-number"),
     );
-    const malformedPayload = await readJson(malformedResponse);
+    const malformedPayload = await readJson<DesktopHomeData>(malformedResponse);
     expect(
       malformedPayload.tokenUsageByDay.some(
         (entry: { day: string }) => entry.day === olderAt.slice(0, 10),
@@ -251,7 +257,7 @@ describe("desktop viewer routes", () => {
         }`,
       ),
     );
-    const oversizedPayload = await readJson(oversizedResponse);
+    const oversizedPayload = await readJson<DesktopHomeData>(oversizedResponse);
     expect(oversizedPayload.tokenUsageByDay.length).toBeGreaterThan(0);
     expect(DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS).toBe(365);
   });
@@ -267,7 +273,7 @@ describe("desktop viewer routes", () => {
         "http://localhost/api/desktop/conversations?adapter=claude-code&limit=12",
       ),
     );
-    const listPayload = await readJson(listResponse);
+    const listPayload = await readJson<DesktopConversationListView>(listResponse);
 
     expect(listPayload.filters).toEqual({
       adapterId: "claude-code",
@@ -284,7 +290,9 @@ describe("desktop viewer routes", () => {
         "http://localhost/api/desktop/conversations?adapter=claude-code&limit=1",
       ),
     );
-    const limitedListPayload = await readJson(limitedListResponse);
+    const limitedListPayload = await readJson<DesktopConversationListView>(
+      limitedListResponse,
+    );
 
     expect(limitedListPayload.conversations).toHaveLength(1);
     expect(
@@ -300,7 +308,9 @@ describe("desktop viewer routes", () => {
     const detailResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child"),
     );
-    const detailPayload = await readJson(detailResponse);
+    const detailPayload = await readJson<DesktopConversationDetailView>(
+      detailResponse,
+    );
 
     expect(detailPayload.conversation.id).toBe("desktop-child");
     expect("parentSessionId" in detailPayload.conversation).toBe(false);
@@ -317,7 +327,7 @@ describe("desktop viewer routes", () => {
     const traceResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child/trace"),
     );
-    const tracePayload = await readJson(traceResponse);
+    const tracePayload = await readJson<DesktopTraceView>(traceResponse);
 
     expect(tracePayload.selectedConversationId).toBe("desktop-child");
     expect(tracePayload.rootId).toBe("desktop-root");
@@ -328,7 +338,7 @@ describe("desktop viewer routes", () => {
     const treeResponse = await handler(
       new Request("http://localhost/api/desktop/conversations/desktop-child/tree"),
     );
-    const treePayload = await readJson(treeResponse);
+    const treePayload = await readJson<DesktopTreeView>(treeResponse);
 
     expect(treePayload.traceId).toBe("desktop-root");
     expect(treePayload.selectedConversationId).toBe("desktop-child");
@@ -346,7 +356,7 @@ describe("desktop viewer routes", () => {
       const response = await handler(
         new Request(`http://localhost/api/desktop/conversations?limit=${limit}`),
       );
-      const payload = await readJson(response);
+      const payload = await readJson<DesktopConversationListView>(response);
 
       expect(payload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT);
       expect(payload.conversations).toHaveLength(
@@ -357,7 +367,9 @@ describe("desktop viewer routes", () => {
     const cappedResponse = await handler(
       new Request("http://localhost/api/desktop/conversations?limit=999999"),
     );
-    const cappedPayload = await readJson(cappedResponse);
+    const cappedPayload = await readJson<DesktopConversationListView>(
+      cappedResponse,
+    );
 
     expect(cappedPayload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
     expect(cappedPayload.conversations).toHaveLength(
@@ -546,7 +558,7 @@ function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
-async function readJson(response: Response): Promise<any> {
+async function readJson<T>(response: Response): Promise<T> {
   expect(response.status).toBe(200);
-  return response.json();
+  return response.json() as Promise<T>;
 }

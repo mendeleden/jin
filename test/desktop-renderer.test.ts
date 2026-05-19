@@ -5,6 +5,7 @@ import {
   ESTIMATED_COST_HELP,
   type RendererState,
 } from "../desktop/renderer";
+import type { JinDesktopBridge } from "../desktop/bridge";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
 import type {
   Conversation,
@@ -640,34 +641,35 @@ describe("desktop renderer", () => {
 
   test("logs refresh reports stale preload bridges with an actionable error", async () => {
     const snapshots: RendererState[] = [];
+    const staleBridge: Omit<JinDesktopBridge, "getLogs"> = {
+      async getHomeSnapshot() {
+        return makeSnapshot("running");
+      },
+      async listConversations() {
+        return makeConversationListView();
+      },
+      async getConversationDetail() {
+        return makeConversationDetailView();
+      },
+      async getTraceView() {
+        return makeTraceView();
+      },
+      async getTreeView() {
+        return makeTreeView();
+      },
+      async runControlAction() {
+        return {
+          action: "restart",
+          ok: true,
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          status: makeStatus("running"),
+        };
+      },
+    };
     const controller = new DesktopRendererController({
-      bridge: {
-        async getHomeSnapshot() {
-          return makeSnapshot("running");
-        },
-        async listConversations() {
-          return makeConversationListView();
-        },
-        async getConversationDetail() {
-          return makeConversationDetailView();
-        },
-        async getTraceView() {
-          return makeTraceView();
-        },
-        async getTreeView() {
-          return makeTreeView();
-        },
-        async runControlAction() {
-          return {
-            action: "restart",
-            ok: true,
-            exitCode: 0,
-            stdout: "",
-            stderr: "",
-            status: makeStatus("running"),
-          };
-        },
-      } as any,
+      bridge: staleBridge as JinDesktopBridge,
       initialState: {
         activeView: "logs",
         snapshot: makeSnapshot("running"),
