@@ -571,7 +571,9 @@ async function main(): Promise<void> {
             console.error("Usage: jin sink repush <sink-id>");
             process.exit(1);
           }
-          await sinkRepushCommand(sinkId);
+          await sinkRepushCommand(sinkId, {
+            writeDebugJsonl: readWriteDebugJsonlFlag(),
+          });
           break;
         default:
           console.error(`Unknown sink action: ${action || "(missing)"}`);
