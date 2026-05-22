@@ -17,6 +17,7 @@ import { SqliteDiscoveryCache } from "../db/discovery-cache";
 import { openStoreAtPath, type SqliteConversationStore } from "../db/store";
 import { daemonize } from "../daemon/daemonize";
 import { appendDiagnosticEvent } from "../pipeline/diagnostic";
+import { resolveDebugJsonlPath } from "../diagnostics/debug-jsonl";
 import { runPipeline } from "../pipeline/loop";
 import type { PushDeliverySnapshot } from "../pipeline/push";
 import type { PipelineHandle, PipelineLogger } from "../pipeline/types";
@@ -85,9 +86,9 @@ export async function watchCommand(opts: {
   const config = await loadStartupConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
-  const diagnosticPath = opts.writeDebugJsonl
-    ? process.env.JIN_DIAGNOSTIC_LOG || join(configDir(), "debug.jsonl")
-    : undefined;
+  const diagnosticPath = resolveDebugJsonlPath({
+    enabled: opts.writeDebugJsonl,
+  });
   const sinks = await createActiveSinks(config, log);
   const activeAdapters = await detectActiveAdapters(config, diagnosticPath);
 

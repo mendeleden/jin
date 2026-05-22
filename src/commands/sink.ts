@@ -20,12 +20,12 @@ import {
   getRuntimeStatus,
   runModeLabel,
 } from "../daemon/runtime-state";
+import { resolveDebugJsonlPath } from "../diagnostics/debug-jsonl";
 import { DiagnosticLogger } from "../pipeline/diagnostic";
 import { pushDirty } from "../pipeline/push";
 import type { PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import { finalizeConfigChange } from "./config-control";
-import { join } from "path";
 
 export interface SinkCommandOptions {
   id?: string;
@@ -173,10 +173,10 @@ export async function sinkRepushCommand(
     const sinkEnabled = sinkConfig.enabled === undefined ? true : sinkConfig.enabled;
     sink.enabled = sinkEnabled;
 
-    const diagnosticPath = opts.writeDebugJsonl
-      ? process.env.JIN_DIAGNOSTIC_LOG ||
-        join(runtimePaths.configDir, "debug.jsonl")
-      : undefined;
+    const diagnosticPath = resolveDebugJsonlPath({
+      enabled: opts.writeDebugJsonl,
+      configDir: runtimePaths.configDir,
+    });
     const diag = diagnosticPath
       ? new DiagnosticLogger({
           path: diagnosticPath,

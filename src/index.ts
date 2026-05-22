@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { VERSION } from "./updater";
+import { WRITE_DEBUG_JSONL_FLAG } from "./diagnostics/debug-jsonl";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -52,7 +53,7 @@ function readConfigRestartFlag(): boolean {
 }
 
 function readWriteDebugJsonlFlag(): boolean {
-  return parseBooleanFlag(flags["write-debug-jsonl"]) === true;
+  return parseBooleanFlag(flags[WRITE_DEBUG_JSONL_FLAG]) === true;
 }
 
 const COMMAND_HELP: Record<string, string> = {

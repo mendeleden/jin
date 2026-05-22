@@ -14,6 +14,7 @@ import {
   windowsTaskIdentityPowerShellLines,
   windowsTaskReferenceForDocs,
 } from "../windows-task";
+import { WRITE_DEBUG_JSONL_FLAG } from "../diagnostics/debug-jsonl";
 
 const PLATFORM = process.platform;
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
@@ -26,7 +27,7 @@ function serviceStartArgs(opts: ServiceInstallOptions = {}): string[] {
   return [
     "start",
     "--foreground",
-    ...(opts.writeDebugJsonl ? ["--write-debug-jsonl"] : []),
+    ...(opts.writeDebugJsonl ? [`--${WRITE_DEBUG_JSONL_FLAG}`] : []),
   ];
 }
 
@@ -173,7 +174,7 @@ const LAUNCHD_PLIST = join(LAUNCHD_DIR, "com.jin.agent.plist");
 function launchdPlist(binPath: string, opts: ServiceInstallOptions = {}): string {
   const logDir = join(HOME, "Library", "Logs");
   const extraArgs = opts.writeDebugJsonl
-    ? "        <string>--write-debug-jsonl</string>\n"
+    ? `        <string>--${WRITE_DEBUG_JSONL_FLAG}</string>\n`
     : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
