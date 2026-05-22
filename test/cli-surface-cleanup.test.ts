@@ -24,6 +24,7 @@ test("jin help no longer advertises removed UI and v1 bridge commands", async ()
   expect(result.stdout).not.toContain(" init ");
   expect(result.stdout).not.toContain(" team-config ");
   expect(result.stdout).not.toContain(" sessions ");
+  expect(result.stdout).not.toContain("write-debug-jsonl");
 });
 
 test("jin help for connect/start/stop no longer shows removed compatibility flags", async () => {
@@ -37,6 +38,7 @@ test("jin help for connect/start/stop no longer shows removed compatibility flag
   expect(start.stdout).not.toContain("--ui");
   expect(start.stdout).not.toContain("--all");
   expect(start.stdout).not.toContain("--port");
+  expect(start.stdout).not.toContain("write-debug-jsonl");
   expect(stop.stdout).not.toContain("--ui");
 });
 

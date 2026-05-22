@@ -51,6 +51,10 @@ function readConfigRestartFlag(): boolean {
   return !!flags.restart;
 }
 
+function readWriteDebugJsonlFlag(): boolean {
+  return parseBooleanFlag(flags["write-debug-jsonl"]) === true;
+}
+
 const COMMAND_HELP: Record<string, string> = {
   search: `
   Search local conversation content
@@ -385,10 +389,16 @@ async function main(): Promise<void> {
       }
       if (flags.foreground) {
         const { watchCommand } = await import("./commands/watch");
-        await watchCommand({ daemon: false });
+        await watchCommand({
+          daemon: false,
+          writeDebugJsonl: readWriteDebugJsonlFlag(),
+        });
       } else {
         const { startCommand } = await import("./commands/start");
-        await startCommand({ service: !!flags.service });
+        await startCommand({
+          service: !!flags.service,
+          writeDebugJsonl: readWriteDebugJsonlFlag(),
+        });
       }
       break;
     }
@@ -412,7 +422,10 @@ async function main(): Promise<void> {
         ]);
       }
       const { restartCommand } = await import("./commands/start");
-      await restartCommand({ service: !!flags.service });
+      await restartCommand({
+        service: !!flags.service,
+        writeDebugJsonl: readWriteDebugJsonlFlag(),
+      });
       break;
     }
     case "ingest": {
@@ -744,7 +757,9 @@ async function main(): Promise<void> {
     case "service": {
       const { serviceCommand } = await import("./commands/service");
       const action = args[1];
-      await serviceCommand(action);
+      await serviceCommand(action, {
+        writeDebugJsonl: readWriteDebugJsonlFlag(),
+      });
       break;
     }
     case "desktop": {

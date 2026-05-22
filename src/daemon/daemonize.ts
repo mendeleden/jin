@@ -6,8 +6,15 @@ import { resolveSelfCommand } from "../runtime/self-command";
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
-export async function daemonize(): Promise<void> {
-  const cmd = [...resolveSelfCommand(), "start", "--foreground"];
+export async function daemonize(opts: {
+  writeDebugJsonl?: boolean;
+} = {}): Promise<void> {
+  const cmd = [
+    ...resolveSelfCommand(),
+    "start",
+    "--foreground",
+    ...(opts.writeDebugJsonl ? ["--write-debug-jsonl"] : []),
+  ];
 
   const logFd = openSync(LOG_FILE, "a");
   const proc = Bun.spawn(cmd, {

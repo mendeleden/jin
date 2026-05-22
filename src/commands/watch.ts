@@ -36,7 +36,10 @@ import { resolveSelfCommand } from "../runtime/self-command";
 type RuntimeLog = (message: string) => void;
 const CONFIG_RELOAD_WATCH_DEBOUNCE_MS = 150;
 
-export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
+export async function watchCommand(opts: {
+  daemon?: boolean;
+  writeDebugJsonl?: boolean;
+}): Promise<void> {
   const {
     getRuntimeStatus,
     getRuntimePaths,
@@ -68,7 +71,7 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
       console.log("  Note: OS service is installed but not active.");
       console.log("  Consider `jin start --service` instead.\n");
     }
-    return daemonize();
+    return daemonize({ writeDebugJsonl: opts.writeDebugJsonl });
   }
 
   // Foreground mode: error if daemon is already running.
@@ -82,8 +85,9 @@ export async function watchCommand(opts: { daemon?: boolean }): Promise<void> {
   const config = await loadStartupConfig();
   const protectedSourceNotices = protectedSourceStartupNotices(config.adapters);
   const log = createRuntimeLogger(!!process.env.JIN_DAEMON);
-  const diagnosticPath =
-    process.env.JIN_DIAGNOSTIC_LOG || join(configDir(), "debug.jsonl");
+  const diagnosticPath = opts.writeDebugJsonl
+    ? process.env.JIN_DIAGNOSTIC_LOG || join(configDir(), "debug.jsonl")
+    : undefined;
   const sinks = await createActiveSinks(config, log);
   const activeAdapters = await detectActiveAdapters(config, diagnosticPath);
 
@@ -174,7 +178,7 @@ async function startPipeline(
   sinks: V2Sink[],
   log: RuntimeLog,
   initialAdapters: V2Adapter[],
-  diagnosticPath: string,
+  diagnosticPath?: string,
 ): Promise<PipelineHandle> {
   let currentConfig = config;
   let currentSinks = sinks;
