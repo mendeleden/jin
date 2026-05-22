@@ -1,13 +1,21 @@
 import { closeSync, openSync, writeFileSync } from "fs";
 import { join } from "path";
 import { configDir } from "../config";
+import { WRITE_DEBUG_JSONL_FLAG } from "../diagnostics/debug-jsonl";
 import { resolveSelfCommand } from "../runtime/self-command";
 
 const PID_FILE = join(configDir(), "jin.pid");
 const LOG_FILE = join(configDir(), "jin.log");
 
-export async function daemonize(): Promise<void> {
-  const cmd = [...resolveSelfCommand(), "start", "--foreground"];
+export async function daemonize(opts: {
+  writeDebugJsonl?: boolean;
+} = {}): Promise<void> {
+  const cmd = [
+    ...resolveSelfCommand(),
+    "start",
+    "--foreground",
+    ...(opts.writeDebugJsonl ? [`--${WRITE_DEBUG_JSONL_FLAG}`] : []),
+  ];
 
   const logFd = openSync(LOG_FILE, "a");
   const proc = Bun.spawn(cmd, {

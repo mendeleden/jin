@@ -8,6 +8,8 @@
 - Desktop release matrices, package-script target guards, and `jin desktop` asset candidates must describe the same platform/architecture set.
 - If a fix needs behavior that conflicts with a frozen blueprint or contract, stop and surface the drift explicitly before implementing it. Do not hide contract extensions behind duck-typed hooks or packet-local shortcuts.
 - Do not add standalone `.mmd` copies of Mermaid diagrams unless they are generated from a current source-of-truth doc or explicitly owned as first-class artifacts.
+- Daemon diagnostic JSONL must stay explicitly opt-in and hidden from help text; default daemon runs should rely on bounded logs/status, not `debug.jsonl`.
+- Policy-like behavior must have one owner module and tests at the policy boundary. Do not scatter env-var checks, magic flag strings, default paths, schema names, or compatibility decisions across call sites.
 - Prefer small, typed changes to existing files.
 - Run focused validation after changes when practical.
 - Prefer `bun run test` over raw `bun test` for broad local validation. The repo runner isolates each `.test.ts` file in a fresh Bun process so top-level `mock.module()` calls cannot leak across files.

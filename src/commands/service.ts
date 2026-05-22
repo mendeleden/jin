@@ -14,9 +14,22 @@ import {
   windowsTaskIdentityPowerShellLines,
   windowsTaskReferenceForDocs,
 } from "../windows-task";
+import { WRITE_DEBUG_JSONL_FLAG } from "../diagnostics/debug-jsonl";
 
 const PLATFORM = process.platform;
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
+
+interface ServiceInstallOptions {
+  writeDebugJsonl?: boolean;
+}
+
+function serviceStartArgs(opts: ServiceInstallOptions = {}): string[] {
+  return [
+    "start",
+    "--foreground",
+    ...(opts.writeDebugJsonl ? [`--${WRITE_DEBUG_JSONL_FLAG}`] : []),
+  ];
+}
 
 function getJinBinaryPath(): string {
   // For compiled binary, resolve real path
@@ -56,7 +69,8 @@ function getJinBinaryPath(): string {
 const SYSTEMD_DIR = join(HOME, ".config", "systemd", "user");
 const SYSTEMD_UNIT = join(SYSTEMD_DIR, "jin.service");
 
-function systemdUnit(binPath: string): string {
+function systemdUnit(binPath: string, opts: ServiceInstallOptions = {}): string {
+  const args = serviceStartArgs(opts).join(" ");
   return `[Unit]
 Description=jin — conversation data pipeline for agentic coding tools
 After=network-online.target
@@ -65,7 +79,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=JIN_LAUNCHED_BY_SERVICE=1
-ExecStart=${binPath} start --foreground
+ExecStart=${binPath} ${args}
 Restart=on-failure
 RestartSec=5s
 StandardOutput=append:${join(configDir(), "jin.log")}
@@ -81,7 +95,7 @@ WantedBy=default.target
 `;
 }
 
-async function linuxInstall(): Promise<void> {
+async function linuxInstall(opts: ServiceInstallOptions = {}): Promise<void> {
   const binPath = getJinBinaryPath();
   console.log(`  Binary: ${binPath}`);
 
@@ -89,7 +103,7 @@ async function linuxInstall(): Promise<void> {
     mkdirSync(SYSTEMD_DIR, { recursive: true });
   }
 
-  writeFileSync(SYSTEMD_UNIT, systemdUnit(binPath));
+  writeFileSync(SYSTEMD_UNIT, systemdUnit(binPath, opts));
   console.log(`  Wrote ${SYSTEMD_UNIT}`);
 
   // Reload, enable, start
@@ -157,8 +171,11 @@ async function linuxStatus(): Promise<void> {
 const LAUNCHD_DIR = join(HOME, "Library", "LaunchAgents");
 const LAUNCHD_PLIST = join(LAUNCHD_DIR, "com.jin.agent.plist");
 
-function launchdPlist(binPath: string): string {
+function launchdPlist(binPath: string, opts: ServiceInstallOptions = {}): string {
   const logDir = join(HOME, "Library", "Logs");
+  const extraArgs = opts.writeDebugJsonl
+    ? `        <string>--${WRITE_DEBUG_JSONL_FLAG}</string>\n`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -172,6 +189,7 @@ function launchdPlist(binPath: string): string {
         <string>${binPath}</string>
         <string>start</string>
         <string>--foreground</string>
+${extraArgs}
     </array>
 
     <key>RunAtLoad</key>
@@ -211,7 +229,7 @@ function launchdPlist(binPath: string): string {
 `;
 }
 
-async function darwinInstall(): Promise<void> {
+async function darwinInstall(opts: ServiceInstallOptions = {}): Promise<void> {
   const binPath = getJinBinaryPath();
   console.log(`  Binary: ${binPath}`);
 
@@ -219,7 +237,7 @@ async function darwinInstall(): Promise<void> {
     mkdirSync(LAUNCHD_DIR, { recursive: true });
   }
 
-  writeFileSync(LAUNCHD_PLIST, launchdPlist(binPath));
+  writeFileSync(LAUNCHD_PLIST, launchdPlist(binPath, opts));
   console.log(`  Wrote ${LAUNCHD_PLIST}`);
 
   // Load the agent
@@ -302,8 +320,9 @@ async function darwinStatus(): Promise<void> {
 
 // ── Windows: Task Scheduler ──────────────────────────────────────────
 
-async function windowsInstall(): Promise<void> {
+async function windowsInstall(opts: ServiceInstallOptions = {}): Promise<void> {
   const binPath = getJinBinaryPath();
+  const args = serviceStartArgs(opts).join(" ");
   console.log(`  Binary: ${binPath}`);
 
   // Register a per-user task so installation doesn't require admin rights.
@@ -319,7 +338,7 @@ async function windowsInstall(): Promise<void> {
     `$schedule = New-Object -ComObject 'Schedule.Service'`,
     `$schedule.Connect()`,
     `try { $null = $schedule.GetFolder($taskPath) } catch { $null = $schedule.GetFolder('\\').CreateFolder('${WINDOWS_TASK_FOLDER_NAME}') }`,
-    `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument 'start --foreground'`,
+    `$action = New-ScheduledTaskAction -Execute '${binPath}' -Argument '${args}'`,
     `$trigger = New-ScheduledTaskTrigger -AtLogOn -User $me`,
     `$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited`,
     `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
@@ -415,7 +434,10 @@ async function stopExistingRuntimeForServiceInstall(): Promise<boolean> {
   return true;
 }
 
-export async function serviceCommand(action: string | undefined): Promise<void> {
+export async function serviceCommand(
+  action: string | undefined,
+  opts: ServiceInstallOptions = {},
+): Promise<void> {
   console.log(`\n  jin service — ${PLATFORM}\n`);
 
   switch (action) {
@@ -427,9 +449,9 @@ export async function serviceCommand(action: string | undefined): Promise<void> 
 
       markRuntimeStarting("service");
 
-      if (PLATFORM === "linux") await linuxInstall();
-      else if (PLATFORM === "darwin") await darwinInstall();
-      else if (PLATFORM === "win32") await windowsInstall();
+      if (PLATFORM === "linux") await linuxInstall(opts);
+      else if (PLATFORM === "darwin") await darwinInstall(opts);
+      else if (PLATFORM === "win32") await windowsInstall(opts);
       else console.log(`  Unsupported platform: ${PLATFORM}`);
 
       await Bun.sleep(250);

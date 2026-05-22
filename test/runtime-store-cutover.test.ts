@@ -7,7 +7,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -138,6 +138,7 @@ afterEach(() => {
   exitMock?.restore();
   exitMock = null;
   delete process.env.JIN_CONFIG_DIR;
+  delete process.env.JIN_DIAGNOSTIC_LOG;
   delete process.env.JIN_RSS_WARNING_MB;
   delete process.env.JIN_RSS_HARD_LIMIT_MB;
   rmSync(tempDir, { recursive: true, force: true });
@@ -153,6 +154,7 @@ describe("W3-RUNTIME-01 live cutover", () => {
     exitMock = mockProcessExit();
     process.env.JIN_RSS_WARNING_MB = "123";
     process.env.JIN_RSS_HARD_LIMIT_MB = "456";
+    process.env.JIN_DIAGNOSTIC_LOG = join(tempDir, "ignored-debug.jsonl");
 
     const watchPromise = watchCommand({ daemon: false });
     await Bun.sleep(30);
@@ -175,6 +177,7 @@ describe("W3-RUNTIME-01 live cutover", () => {
       deferWatcherStart?: boolean;
       rssWarningBytes?: number;
       rssHardLimitBytes?: number;
+      diagnosticLogPath?: string;
     };
 
     expect(typeof options.store.writeBundle).toBe("function");
@@ -185,11 +188,47 @@ describe("W3-RUNTIME-01 live cutover", () => {
     expect(options.deferWatcherStart).toBe(true);
     expect(options.rssWarningBytes).toBeUndefined();
     expect(options.rssHardLimitBytes).toBeUndefined();
+    expect(options.diagnosticLogPath).toBeUndefined();
+    expect(
+      (startLocalApiServerCalls[0] as { diagnosticLogPath?: string })
+        .diagnosticLogPath,
+    ).toBeUndefined();
+    expect(existsSync(join(tempDir, "ignored-debug.jsonl"))).toBe(false);
+    expect(existsSync(join(tempDir, "debug.jsonl"))).toBe(false);
 
     const adapters = await options.adapterSource();
     expect(adapters).toHaveLength(1);
     expect(typeof adapters[0].findChanged).toBe("function");
     expect(typeof adapters[0].loadConversation).toBe("function");
+  });
+
+  test("watchCommand enables diagnostic JSONL only through the hidden flag", async () => {
+    mockAdapters = [createV2CapableAdapter("watch-debug-opt-in-conversation")];
+    exitMock = mockProcessExit();
+    const diagnosticPath = join(tempDir, "custom-debug.jsonl");
+    process.env.JIN_DIAGNOSTIC_LOG = diagnosticPath;
+
+    const watchPromise = watchCommand({
+      daemon: false,
+      writeDebugJsonl: true,
+    });
+    await Bun.sleep(30);
+    process.emit("SIGTERM");
+
+    await expect(watchPromise).rejects.toBeInstanceOf(ExitError);
+    expect(runPipelineCalls).toHaveLength(1);
+    expect(startLocalApiServerCalls).toHaveLength(1);
+
+    const options = runPipelineCalls[0] as {
+      diagnosticLogPath?: string;
+    };
+
+    expect(options.diagnosticLogPath).toBe(diagnosticPath);
+    expect(
+      (startLocalApiServerCalls[0] as { diagnosticLogPath?: string })
+        .diagnosticLogPath,
+    ).toBe(diagnosticPath);
+    expect(existsSync(diagnosticPath)).toBe(true);
   });
 
   test("watchCommand disables a corrupt discovery cache instead of crashing startup", async () => {

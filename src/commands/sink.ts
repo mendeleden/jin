@@ -20,12 +20,12 @@ import {
   getRuntimeStatus,
   runModeLabel,
 } from "../daemon/runtime-state";
+import { resolveDebugJsonlPath } from "../diagnostics/debug-jsonl";
 import { DiagnosticLogger } from "../pipeline/diagnostic";
 import { pushDirty } from "../pipeline/push";
 import type { PipelineLogger } from "../pipeline/types";
 import { createSink } from "../sinks/registry";
 import { finalizeConfigChange } from "./config-control";
-import { join } from "path";
 
 export interface SinkCommandOptions {
   id?: string;
@@ -43,6 +43,7 @@ export interface SinkCommandOptions {
   teamId?: string;
   userId?: string;
   restart?: boolean;
+  writeDebugJsonl?: boolean;
 }
 
 export interface SinkCandidateInput extends SinkCommandOptions {
@@ -132,7 +133,10 @@ export async function sinkEnableCommand(
   await setSinkEnabled(sinkId, true, opts);
 }
 
-export async function sinkRepushCommand(sinkId: string): Promise<void> {
+export async function sinkRepushCommand(
+  sinkId: string,
+  opts: { writeDebugJsonl?: boolean } = {},
+): Promise<void> {
   if (!sinkId) {
     fail("specify a sink id");
   }
@@ -169,18 +173,21 @@ export async function sinkRepushCommand(sinkId: string): Promise<void> {
     const sinkEnabled = sinkConfig.enabled === undefined ? true : sinkConfig.enabled;
     sink.enabled = sinkEnabled;
 
-    const diagnosticPath =
-      process.env.JIN_DIAGNOSTIC_LOG ||
-      join(runtimePaths.configDir, "debug.jsonl");
-    const diag = new DiagnosticLogger({
-      path: diagnosticPath,
-      getRssBytes: () => process.memoryUsage().rss,
-      getQueueSize: () => 0,
-      getQueueSnapshot: () => [],
+    const diagnosticPath = resolveDebugJsonlPath({
+      enabled: opts.writeDebugJsonl,
+      configDir: runtimePaths.configDir,
     });
+    const diag = diagnosticPath
+      ? new DiagnosticLogger({
+          path: diagnosticPath,
+          getRssBytes: () => process.memoryUsage().rss,
+          getQueueSize: () => 0,
+          getQueueSnapshot: () => [],
+        })
+      : null;
 
     const reset = resetPushStateForSink(store.database, sinkId);
-    diag.repushReset({
+    diag?.repushReset({
       sinkId,
       clearedStateRows: reset.clearedStateRows,
       dirtyBefore: reset.dirtyBefore,
@@ -207,7 +214,7 @@ export async function sinkRepushCommand(sinkId: string): Promise<void> {
       diag,
       reason: "repush",
     });
-    diag.pushResult(
+    diag?.pushResult(
       summary,
       performance.now() - startedAt,
       summary.sinkBreakdown,

@@ -679,6 +679,7 @@ describe("config mutation and control commands", () => {
     expect(console_.logs.join("\n")).toContain(
       "Repush complete. attempts 1, pushed 1, failed 0.",
     );
+    expect(existsSync(join(runtimePaths.configDir, "debug.jsonl"))).toBe(false);
   });
 
   test("connect resolves project routing to remote matches and preserves sink identity metadata", async () => {

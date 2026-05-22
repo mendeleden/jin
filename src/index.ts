@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { VERSION } from "./updater";
+import { WRITE_DEBUG_JSONL_FLAG } from "./diagnostics/debug-jsonl";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -49,6 +50,10 @@ const flags = parseFlags(args.slice(1));
 
 function readConfigRestartFlag(): boolean {
   return !!flags.restart;
+}
+
+function readWriteDebugJsonlFlag(): boolean {
+  return parseBooleanFlag(flags[WRITE_DEBUG_JSONL_FLAG]) === true;
 }
 
 const COMMAND_HELP: Record<string, string> = {
@@ -385,10 +390,16 @@ async function main(): Promise<void> {
       }
       if (flags.foreground) {
         const { watchCommand } = await import("./commands/watch");
-        await watchCommand({ daemon: false });
+        await watchCommand({
+          daemon: false,
+          writeDebugJsonl: readWriteDebugJsonlFlag(),
+        });
       } else {
         const { startCommand } = await import("./commands/start");
-        await startCommand({ service: !!flags.service });
+        await startCommand({
+          service: !!flags.service,
+          writeDebugJsonl: readWriteDebugJsonlFlag(),
+        });
       }
       break;
     }
@@ -412,7 +423,10 @@ async function main(): Promise<void> {
         ]);
       }
       const { restartCommand } = await import("./commands/start");
-      await restartCommand({ service: !!flags.service });
+      await restartCommand({
+        service: !!flags.service,
+        writeDebugJsonl: readWriteDebugJsonlFlag(),
+      });
       break;
     }
     case "ingest": {
@@ -558,7 +572,9 @@ async function main(): Promise<void> {
             console.error("Usage: jin sink repush <sink-id>");
             process.exit(1);
           }
-          await sinkRepushCommand(sinkId);
+          await sinkRepushCommand(sinkId, {
+            writeDebugJsonl: readWriteDebugJsonlFlag(),
+          });
           break;
         default:
           console.error(`Unknown sink action: ${action || "(missing)"}`);
@@ -744,7 +760,9 @@ async function main(): Promise<void> {
     case "service": {
       const { serviceCommand } = await import("./commands/service");
       const action = args[1];
-      await serviceCommand(action);
+      await serviceCommand(action, {
+        writeDebugJsonl: readWriteDebugJsonlFlag(),
+      });
       break;
     }
     case "desktop": {

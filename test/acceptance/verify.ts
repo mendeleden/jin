@@ -246,6 +246,7 @@ console.log(`  version: ${versionResult.stdout.trim()}`);
 const helpResult = await run(["--help"], jinEnv);
 assert("jin --help exits cleanly", helpResult.exitCode === 0);
 assert("jin --help mentions start", helpResult.stdout.includes("start"));
+assert("jin --help hides debug JSONL flag", !helpResult.stdout.includes("write-debug-jsonl"));
 
 // ─── Phase 1: Seed fixture data ──────────────────────────────────────────
 
@@ -311,7 +312,7 @@ console.log("");
 console.log("PHASE 2: JIN START --FOREGROUND (BOOTSTRAP + DAEMON)");
 
 // Start jin in foreground mode, let it do initial ingest, then kill it
-const daemonProc = Bun.spawn([JIN_BIN, "start", "--foreground"], {
+const daemonProc = Bun.spawn([JIN_BIN, "start", "--foreground", "--write-debug-jsonl"], {
   stdout: "pipe",
   stderr: "pipe",
   env: { ...process.env, ...jinEnv, JIN_DAEMON: "1" },

@@ -17,6 +17,7 @@ import {
 
 export async function startCommand(opts: {
   service?: boolean;
+  writeDebugJsonl?: boolean;
 }): Promise<void> {
   const watcherState = getWatcherState();
   const runtimePaths = getRuntimePaths();
@@ -47,7 +48,7 @@ export async function startCommand(opts: {
     }
 
     const { serviceCommand } = await import("./service");
-    await serviceCommand("install");
+    await serviceCommand("install", { writeDebugJsonl: opts.writeDebugJsonl });
     return;
   }
 
@@ -72,7 +73,10 @@ export async function startCommand(opts: {
     markRuntimeStarting("daemon");
     const { watchCommand } = await import("./watch");
     try {
-      await watchCommand({ daemon: true });
+      await watchCommand({
+        daemon: true,
+        writeDebugJsonl: opts.writeDebugJsonl,
+      });
       markRuntimeRunning("daemon");
     } catch (error) {
       clearRuntimeState();
@@ -88,6 +92,7 @@ export async function startCommand(opts: {
 
 export async function restartCommand(opts: {
   service?: boolean;
+  writeDebugJsonl?: boolean;
 }): Promise<void> {
   const watcherState = getWatcherState();
 
