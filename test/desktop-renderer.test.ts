@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   DesktopRendererController,
   ESTIMATED_COST_HELP,
@@ -7,6 +9,12 @@ import {
 } from "../desktop/renderer";
 import type { JinDesktopBridge } from "../desktop/bridge";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
+import { DashboardGrid } from "../desktop/views/home/dashboard-grid";
+import {
+  usageColorClassForColor,
+  usageHeightClass,
+  usageWidthClass,
+} from "../desktop/views/home/usage-visuals";
 import type {
   Conversation,
   Message,
@@ -123,11 +131,12 @@ describe("desktop renderer", () => {
     );
 
     expect(html).toContain("Conversation index");
-    expect(html).toContain("conversation-workspace-toolbar");
-    expect(html.indexOf("conversation-workspace-toolbar")).toBeLessThan(
-      html.indexOf("library-panel"),
+    expect(html).toContain("data-conversation-toolbar");
+    expect(html.indexOf("data-conversation-toolbar")).toBeLessThan(
+      html.indexOf("data-library-panel"),
     );
-    expect(html).toContain("conversation-filter-row");
+    expect(html).toContain("All adapters");
+    expect(html).toContain("All time");
     expect(html).toContain("Timeline");
     expect(html).toContain("Trace");
     expect(html).toContain("Tree");
@@ -178,9 +187,9 @@ describe("desktop renderer", () => {
     expect(html).toContain("Cost");
     expect(html).toContain("Daily");
     expect(html).toContain("Monthly");
+    expect(countText(html, 'data-selected="true"')).toBeGreaterThanOrEqual(2);
     expect(html).toContain("Previous usage window");
     expect(html).toContain("Next usage window");
-    expect(html).toContain("usage-area-chart");
     expect(html).not.toContain("usage-area-static-chart");
     expect(html).not.toContain("usage-area-static-fill");
     expect(html).toContain("Daily token usage by adapter");
@@ -193,7 +202,15 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Latest conversations");
     expect(html).not.toContain("Open library");
     expect(html).not.toContain("Current total");
-    expect(html).toContain("usage-chart");
+    expect(html).toContain('data-dashboard-grid="home"');
+    expect(html).toContain('data-layout-schema="home-grid-v1"');
+    expect(html).toContain('data-layout-columns="12"');
+    expect(html).toContain('data-panel-id="usage"');
+    expect(html).toContain('data-panel-id="projects"');
+    expect(html).toContain('data-panel-id="harnesses"');
+    expect(html).toContain("col-start-1 row-start-1 col-span-12 row-span-5");
+    expect(html).toContain("col-start-1 row-start-6 col-span-7 row-span-3");
+    expect(html).toContain("col-start-8 row-start-6 col-span-5 row-span-3");
     expect(html).toContain("Project Stacks");
     expect(html).toContain("Harness Timeline");
     expect(html).not.toContain('data-home-flow-graph="mission-control"');
@@ -219,21 +236,20 @@ describe("desktop renderer", () => {
 
     expect(html).toContain('data-usage-chart-source="snapshot"');
     expect(html).toContain("Current activity snapshot");
-    expect(html).toContain("Current snapshot");
     expect(html).toContain("claude-code");
     expect(html).toContain("244");
     expect(html).toContain("Snapshot-derived token usage by adapter");
-    expect(html).toContain("recharts-wrapper usage-area-chart");
+    expect(html).toContain("recharts-wrapper");
     expect(html).toContain('title="Snapshot: 3 conversations"');
     expect(html).toContain('title="Current: 3 conversations"');
     expect(html).not.toContain("usage-area-static-layer");
     const kpis = extractUsageChartKpis(html);
-    expect(countText(kpis, "<strong>244</strong>")).toBe(1);
-    expect(kpis).toContain("<strong>244</strong>");
+    expect(countText(kpis, ">244</strong>")).toBe(1);
+    expect(kpis).toContain(">244</strong>");
     expect(kpis).toContain("tokens");
-    expect(kpis).toContain("<strong>3</strong>");
+    expect(kpis).toContain(">3</strong>");
     expect(kpis).toContain("conversations");
-    expect(kpis).toContain("<strong>$1.32</strong>");
+    expect(kpis).toContain(">$1.32</strong>");
     expect(kpis).toContain("est. cost");
     expect(kpis).not.toContain("<strong>488</strong>");
     expect(kpis).not.toContain("$2.64");
@@ -298,34 +314,109 @@ describe("desktop renderer", () => {
       }),
     );
 
-    const callout = extractUsageCallout(html);
-    expect(extractUsageChartKpis(html)).toContain("<strong>269</strong>");
-    expect(callout).toContain("244");
-    expect(callout).toContain("25");
-    expect(countText(callout, "claude-code")).toBe(1);
+    expect(extractUsageChartKpis(html)).toContain(">269</strong>");
+    expect(html).not.toContain('data-usage-callout="latest"');
+    expect(html).toContain("claude-code");
   });
 
-  test("desktop home CSS reserves visible pulse panel height", () => {
-    const css = readFileSync(
-      new URL("../desktop/styles.css", import.meta.url),
+  test("desktop home styling is Tailwind-owned with only base CSS globals", () => {
+    const css = readDesktopCssSource();
+    const gridSource = readFileSync(
+      new URL("../desktop/views/home/dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const panelsSource = readFileSync(
+      new URL("../desktop/views/home/panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
       "utf8",
     );
 
-    expect(css).toContain(".home-pulse-panel");
-    expect(css).toContain(".workspace-home > .compact-panel.home-pulse-panel");
-    expect(css).toContain("grid-column: 1 / -1;");
-    expect(css).toContain("min-height: 448px;");
-    expect(css).toContain(".home-project-panel");
-    expect(css).toContain(".home-adapter-panel");
-    expect(css).toContain(".usage-chart-controls");
-    expect(css).toContain(".usage-period-toggle");
-    expect(css).toContain(".usage-window-controls");
-    expect(css).toContain(".usage-area-chart-shell");
-    expect(css).toContain(".usage-area-chart");
+    expect(css).toContain('@import "tailwindcss"');
+    expect(css).toContain("--radius-panel");
+    expect(css).not.toContain(".home-pulse-panel");
+    expect(css).not.toContain(".dashboard-grid");
+    expect(css).not.toContain(".usage-chart-controls");
+    expect(css.split("\n").length).toBeLessThan(90);
+    expect(gridSource).toContain("auto-rows-[80px]");
+    expect(gridSource).toContain("col-start-1");
+    expect(gridSource).toContain("row-span-5");
+    expect(gridSource).not.toContain("home-layout-");
+    expect(panelsSource).toContain("min-h-[448px]");
+    expect(chartSource).toContain("h-[252px]");
     expect(css).not.toContain(".usage-area-static-chart");
     expect(css).not.toContain(".usage-area-static-fill");
-    expect(css).toContain(".usage-session-rail");
-    expect(css).toContain("height: 252px;");
+  });
+
+  test("desktop home avoids direct inline styles for local visual sizing", () => {
+    const shellSource = readFileSync(
+      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      "utf8",
+    );
+    const homeWorkspaceSource = readFileSync(
+      new URL("../desktop/views/home/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const panelsSource = readFileSync(
+      new URL("../desktop/views/home/panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
+      "utf8",
+    );
+
+    for (const source of [
+      shellSource,
+      homeWorkspaceSource,
+      panelsSource,
+      chartSource,
+    ]) {
+      expect(source).not.toContain("style={{");
+      expect(source).not.toContain("<i style");
+      expect(source).not.toContain("wrapperStyle");
+    }
+
+    expect(shellSource).not.toContain("function HomePulsePanel");
+    expect(shellSource).toContain('from "../views/workspace-switcher"');
+    expect(homeWorkspaceSource).toContain('from "./panels"');
+    expect(panelsSource).toContain("usageWidthClass");
+    expect(panelsSource).toContain("usageHeightClass");
+  });
+
+  test("desktop home usage visuals resolve to the supported class vocabulary", () => {
+    expect(usageWidthClass(0, 100, 7)).toBe("w-[7%]");
+    expect(usageWidthClass(8, 100, 7)).toBe("w-[10%]");
+    expect(usageWidthClass(100, 100, 7)).toBe("w-[100%]");
+    expect(usageHeightClass(0, 100, 2)).toBe("h-[2%]");
+    expect(usageHeightClass(1, 100, 12)).toBe("h-[12%]");
+    expect(usageHeightClass(99, 100, 10)).toBe("h-[100%]");
+    expect(usageColorClassForColor("#89B4FF")).toBe("bg-[#89b4ff]");
+  });
+
+  test("dashboard grid normalizes layout data before rendering placement metadata", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        items: [
+          {
+            panelId: "usage",
+            children: createElement("section"),
+          },
+        ],
+        layout: [{ panelId: "usage", x: 99, y: 99, w: 2, h: 1 }],
+      }),
+    );
+
+    expect(html).toContain('data-layout-x="6"');
+    expect(html).toContain('data-layout-y="8"');
+    expect(html).toContain('data-layout-w="6"');
+    expect(html).toContain('data-layout-h="4"');
+    expect(html).toContain("col-start-7");
+    expect(html).toContain("row-start-9");
+    expect(html).toContain("col-span-6");
+    expect(html).toContain("row-span-4");
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
@@ -436,6 +527,99 @@ describe("desktop renderer", () => {
     expect(settingsHtml).toContain("Daemon status");
   });
 
+  test("desktop app shell delegates workspace surfaces to modules", () => {
+    const shellSource = readFileSync(
+      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      "utf8",
+    );
+    const workspaceSwitcherSource = readFileSync(
+      new URL("../desktop/views/workspace-switcher.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(shellSource).toContain("function AppShell");
+    expect(shellSource).toContain("ActiveWorkspace");
+    expect(shellSource).not.toContain("function HomeWorkspace");
+    expect(shellSource).not.toContain("function ConversationsWorkspace");
+    expect(shellSource).not.toContain("function RoutingWorkspace");
+    expect(shellSource).not.toContain("function LogsWorkspace");
+    expect(shellSource).not.toContain("function SettingsWorkspace");
+    expect(workspaceSwitcherSource).toContain("./home/workspace");
+    expect(workspaceSwitcherSource).toContain("./conversations/workspace");
+    expect(workspaceSwitcherSource).toContain("./routing/workspace");
+    expect(workspaceSwitcherSource).toContain("./logs/workspace");
+    expect(workspaceSwitcherSource).toContain("./settings/workspace");
+  });
+
+  test("desktop workspace runtime lifecycle handling stays centralized", () => {
+    const statusPanelsSource = readFileSync(
+      new URL("../desktop/components/shell/status-panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const surfaceSources = [
+      "../desktop/views/home/workspace.tsx",
+      "../desktop/views/conversations/workspace.tsx",
+      "../desktop/views/routing/workspace.tsx",
+      "../desktop/views/logs/workspace.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+
+    expect(statusPanelsSource).toContain("function RuntimeStateGate");
+    expect(statusPanelsSource).toContain("isTransitionalRuntimeState");
+
+    for (const source of surfaceSources) {
+      expect(source).toContain("RuntimeStateGate");
+      expect(source).not.toContain("isTransitionalRuntimeState");
+      expect(source).not.toContain('runtime.state === "stopped"');
+    }
+  });
+
+  test("desktop renderer polls lifecycle snapshots so external daemon changes reconcile", () => {
+    const source = readFileSync(
+      new URL("../desktop/react-renderer.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("DESKTOP_LIFECYCLE_REFRESH_MS");
+    expect(source).toContain("window.setInterval");
+    expect(source).toContain("preserveMessage: true");
+    expect(source).toContain("window.clearInterval");
+  });
+
+  test("desktop shared UI primitives replace legacy global control classes", () => {
+    const primitiveSources = [
+      "../desktop/ui/button.tsx",
+      "../desktop/ui/badge.tsx",
+      "../desktop/ui/panel.tsx",
+      "../desktop/ui/primitives.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+    const migratedSources = [
+      "../desktop/components/app-shell.tsx",
+      "../desktop/components/shell/frame.tsx",
+      "../desktop/components/shell/status-panels.tsx",
+      "../desktop/views/conversations/workspace.tsx",
+      "../desktop/views/logs/workspace.tsx",
+      "../desktop/views/settings/workspace.tsx",
+      "../desktop/views/home/token-usage-chart.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+    const css = readDesktopCssSource();
+
+    expect(primitiveSources.join("\n")).toContain("function StatusBadge");
+    expect(primitiveSources.join("\n")).toContain("function PanelHeader");
+    expect(primitiveSources.join("\n")).toContain("function FieldGrid");
+
+    for (const source of migratedSources) {
+      expect(source).not.toContain("toolbar-button");
+      expect(source).not.toContain("status-badge");
+      expect(source).not.toContain("runtime-grid");
+      expect(source).not.toContain("runtime-field");
+    }
+
+    expect(css).not.toContain(".toolbar-button");
+    expect(css).not.toContain(".status-badge");
+    expect(css).not.toContain(".runtime-grid");
+    expect(css).not.toContain(".runtime-field");
+  });
+
   test("react sidebar cost uses a focusable popover affordance with the full estimated amount", () => {
     const snapshot = makeSnapshot("running");
     if (!snapshot.data) {
@@ -459,18 +643,16 @@ describe("desktop renderer", () => {
     expect(costMetric).toContain('data-cost-popover-trigger="estimated-cost"');
     expect(costMetric).toContain(ESTIMATED_COST_HELP);
     expect(html).not.toContain("sidebar-cost-tooltip-content");
-    const css = readFileSync(
-      new URL("../desktop/styles.css", import.meta.url),
-      "utf8",
-    );
-    expect(css).toContain(".sidebar-cost-tooltip-content");
-    expect(css).toContain(".sidebar-cost-tooltip-arrow");
+    const css = readDesktopCssSource();
+    expect(css).not.toContain(".sidebar-cost-tooltip-content");
+    expect(css).not.toContain(".sidebar-cost-tooltip-arrow");
     const source = readFileSync(
-      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
       "utf8",
     );
     expect(source).toContain("@radix-ui/react-tooltip");
     expect(source).toContain("RadixTooltip.Content");
+    expect(source).toContain("data-cost-popover");
     expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
       costMetric.indexOf("$1,234,567.89"),
     );
@@ -495,7 +677,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("/tmp/jin/jin.log");
     expect(html).toContain("Local daemon query socket ready.");
     expect(html).toContain("WARN watcher restart delayed.");
-    expect(html).toContain("log-line warning");
+    expect(html).toContain('data-log-severity="warning"');
   });
 
   test("routing workspace renders project-to-sink graph state", () => {
@@ -537,7 +719,7 @@ describe("desktop renderer", () => {
     expect(extractRoutingWorkspace(html)).not.toContain("Refresh");
     const routingFlowStrokeWidths = Array.from(
       html.matchAll(
-        /<path class="routing-flow-path(?: muted)?"[^>]*stroke-width="([^"]+)"/g,
+        /<path[^>]*data-routing-flow-path="true"[^>]*stroke-width="([^"]+)"/g,
       ),
       (match) => match[1],
     );
@@ -635,7 +817,7 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("routing-flow-path muted");
     expect(html).not.toContain("stroke-dasharray");
     expect(
-      Array.from(html.matchAll(/<path class="routing-flow-path"/g)),
+      Array.from(html.matchAll(/data-routing-flow-path="true"/g)),
     ).toHaveLength(2);
   });
 
@@ -699,8 +881,8 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("inspector-collapsed");
-    expect(html).toContain("inspector-rail");
+    expect(html).toContain('data-inspector-state="collapsed"');
+    expect(html).toContain("data-inspector-rail");
     expect(html).toContain("Expand metadata inspector");
     expect(html).toContain("Metadata");
   });
@@ -743,7 +925,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("Desktop root conversation");
     expect(html).toContain("Spawned project summary");
     expect(html).toContain("forked");
-    expect(html).toContain("trace-row");
+    expect(html).toContain("data-trace-row");
   });
 
   test("incompatible desktop protocol renders an update-first state", () => {
@@ -775,10 +957,11 @@ describe("desktop renderer", () => {
 });
 
 function extractSidebarRuntimeMetrics(html: string): string {
-  const start = html.indexOf('<div class="sidebar-metrics">');
-  if (start < 0) {
+  const marker = html.indexOf("data-sidebar-metrics");
+  if (marker < 0) {
     throw new Error("expected sidebar runtime metrics");
   }
+  const start = html.lastIndexOf("<div", marker);
   const end = html.indexOf("</section>", start);
   if (end < 0) {
     throw new Error("expected sidebar runtime section end");
@@ -788,13 +971,13 @@ function extractSidebarRuntimeMetrics(html: string): string {
 
 function extractMetricLabels(html: string): string[] {
   return Array.from(
-    html.matchAll(/<span class="sidebar-metric-label">([^<]+)(?:<|<\/span>)/g),
+    html.matchAll(/<span[^>]*data-sidebar-metric-label="true"[^>]*>([^<]+)(?:<|<\/span>)/g),
     (match) => (match[1] ?? "").trim(),
   );
 }
 
 function extractTopbar(html: string): string {
-  const match = html.match(/<header class="topbar">[\s\S]*?<\/header>/);
+  const match = html.match(/<header[^>]*data-topbar="true"[\s\S]*?<\/header>/);
   if (!match) {
     throw new Error("expected topbar");
   }
@@ -802,7 +985,7 @@ function extractTopbar(html: string): string {
 }
 
 function extractReactCostMetric(html: string): string {
-  const index = html.indexOf("sidebar-metric sidebar-metric-cost");
+  const index = html.indexOf('data-sidebar-metric="cost"');
   if (index < 0) {
     throw new Error("expected react sidebar cost metric");
   }
@@ -810,7 +993,7 @@ function extractReactCostMetric(html: string): string {
 }
 
 function extractReactSidebar(html: string): string {
-  const match = html.match(/<aside class="sidebar [\s\S]*?<\/aside>/);
+  const match = html.match(/<aside[^>]*data-sidebar="true"[\s\S]*?<\/aside>/);
   if (!match) {
     throw new Error("expected react sidebar");
   }
@@ -818,7 +1001,7 @@ function extractReactSidebar(html: string): string {
 }
 
 function extractRoutingWorkspace(html: string): string {
-  const match = html.match(/<section class="workspace-routing">[\s\S]*?<\/main>/);
+  const match = html.match(/<section[^>]*data-routing-workspace="true"[\s\S]*?<\/main>/);
   if (!match) {
     throw new Error("expected routing workspace");
   }
@@ -826,25 +1009,19 @@ function extractRoutingWorkspace(html: string): string {
 }
 
 function extractUsageChartKpis(html: string): string {
-  const match = html.match(/<div class="usage-chart-kpis">([\s\S]*?)<\/div>/);
+  const match = html.match(/<div[^>]*data-usage-chart-kpis="true"[^>]*>([\s\S]*?)<\/div>/);
   if (!match) {
     throw new Error("expected usage chart KPIs");
   }
   return match[1] ?? "";
 }
 
-function extractUsageCallout(html: string): string {
-  const match = html.match(
-    /<div class="[^"]*\busage-callout\b[^"]*">([\s\S]*?)<\/div>/,
-  );
-  if (!match) {
-    throw new Error("expected usage callout");
-  }
-  return match[1] ?? "";
-}
-
 function countText(html: string, text: string): number {
   return html.split(text).length - 1;
+}
+
+function readDesktopCssSource(): string {
+  return readFileSync(new URL("../desktop/styles.css", import.meta.url), "utf8");
 }
 
 function makeState(overrides: Partial<RendererState> = {}): RendererState {

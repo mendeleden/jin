@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DESKTOP_IPC_CHANNELS, createDesktopBridge } from "../desktop/bridge";
-import { createDesktopDaemonClient } from "../desktop/daemon-client";
+import {
+  createDesktopDaemonClient,
+  DesktopDaemonRequestError,
+} from "../desktop/daemon-client";
 import {
   DESKTOP_DEV_SERVER_URL_ENV,
   normalizeDesktopDevServerUrl,
@@ -206,6 +209,34 @@ describe("desktop shell service", () => {
     expect(snapshot.compatibility?.compatible).toBe(false);
     expect(snapshot.compatibility?.reason).toBe("desktop_too_old");
     expect(snapshot.transportError).toContain("jin desktop --update");
+  });
+
+  test("running runtime reports daemon transport failures without compatibility skew", async () => {
+    const service = createDesktopShellService({
+      controlBoundary: {
+        getStatus: () => makeStatus("running"),
+        runAction: async () => makeActionResult("restart"),
+      },
+      daemonClient: makeDaemonClient({
+        async getCompatibility() {
+          throw new DesktopDaemonRequestError(
+            "socket_missing",
+            "Desktop daemon socket is missing.",
+          );
+        },
+        async getHomeData() {
+          throw new Error("home data should not load before compatibility");
+        },
+      }),
+    });
+
+    const snapshot = await service.getHomeSnapshot();
+
+    expect(snapshot.data).toBeNull();
+    expect(snapshot.compatibility).toBeNull();
+    expect(snapshot.transportError).toContain("not reachable yet");
+    expect(snapshot.transportError).not.toContain("jin update");
+    expect(snapshot.transportError).not.toContain("Jin CLI update required");
   });
 
   test("ipc handlers and preload bridge stay on typed channels", async () => {

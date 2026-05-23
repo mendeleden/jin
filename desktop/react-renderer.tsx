@@ -8,6 +8,8 @@ import {
 } from "./renderer";
 import "./styles.css";
 
+const DESKTOP_LIFECYCLE_REFRESH_MS = 5_000;
+
 export function DesktopReactApp({
   bridge = window.jinDesktop,
 }: {
@@ -27,9 +29,30 @@ export function DesktopReactApp({
 
     setState(controller.getSnapshot());
 
-    void controller.refreshShell({ preserveSelection: true });
+    let refreshInFlight = false;
+    const refreshLifecycle = async () => {
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        await controller.refreshShell({
+          preserveSelection: true,
+          preserveMessage: true,
+        });
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    void refreshLifecycle();
+    const refreshInterval = window.setInterval(
+      () => void refreshLifecycle(),
+      DESKTOP_LIFECYCLE_REFRESH_MS,
+    );
 
     return () => {
+      window.clearInterval(refreshInterval);
       controllerRef.current = null;
     };
   }, [bridge]);
