@@ -47,23 +47,27 @@ reversible.
 
 `react-grid-layout` was the mature candidate. It supports draggable and
 resizable widgets, responsive breakpoints, serializable layouts, min/max
-constraints, and TypeScript in v2. It also places grid items using CSS
-transforms and ships CSS that must be integrated into the Desktop build.
+constraints, collision resolution, compaction, and TypeScript in v2. Its React
+DOM renderer places grid items using inline styles and CSS transforms, but v2
+also exposes a framework-agnostic `react-grid-layout/core` entrypoint.
 
 Because Desktop currently treats CSP-safe class-based visuals as a hard-earned
 constraint, do not adopt a dashboard-grid dependency blindly. The first
 implementation step is a small CSP/package spike:
 
-- If `react-grid-layout` works in packaged Desktop without inline-style CSP
-  violations or unacceptable bundle/style compromises, use it through the
-  adapter.
-- If it requires relaxing packaged CSP or leaks styling outside the component
-  system, keep the layout adapter but implement snapped pointer drag/resize over
-  the existing class-bucket CSS grid.
+- If the `react-grid-layout` DOM renderer works in packaged Desktop without
+  inline-style CSP violations or unacceptable bundle/style compromises, use it
+  through the adapter.
+- If the DOM renderer requires relaxing packaged CSP, keep rendering owned by
+  Jin but test whether `react-grid-layout/core` can provide collision,
+  compaction, and constraint algorithms behind a narrow adapter.
+- If even the core entrypoint leaks styling or renderer assumptions, keep the
+  layout adapter but implement snapped pointer drag/resize over the existing
+  class-bucket CSS grid.
 
 The product-facing layout model must not depend on which engine wins.
 
-### Spike Result: react-grid-layout Rejected
+### Spike Result: react-grid-layout DOM Rejected, Core Accepted
 
 On 2026-05-23, a local spike installed `react-grid-layout@2.2.3` and routed
 Home through a narrow `EditableDashboardGrid` adapter without persistence. The
@@ -77,10 +81,22 @@ That violates the packaged Desktop `style-src 'self'` constraint documented in
 Keeping the package would require weakening CSP or building an extensive custom
 positioning layer around the package, which defeats the purpose of adopting it.
 
-Decision: do not adopt `react-grid-layout` for Jin Desktop dynamic layouts.
-Continue with a repo-owned snapped CSS-grid interaction engine that maps
-placement to bounded classes or CSS variables generated from trusted layout
-state, without renderer-authored inline style attributes.
+Decision: do not adopt the `react-grid-layout` React DOM renderer or its CSS for
+Jin Desktop dynamic layouts.
+
+A follow-up spike kept the package but imported only `react-grid-layout/core`
+from `desktop/layout/grid-engine.ts`. The adapter maps Jin layout data to RGL
+layout data, clones at the boundary because several RGL helpers mutate their
+arguments, and returns `{ panelId, x, y, w, h }` data without RGL DOM metadata.
+Focused tests proved movement, collision blocking, resize compaction, min-size
+clamping, and renderer isolation. A temporary Bun bundle of the adapter built in
+5 modules at 5.77 KB and did not include `react-draggable`, `react-resizable`,
+React JSX, RGL CSS, or RGL style helpers.
+
+Updated decision: keep `react-grid-layout@2.2.3` as an algorithm dependency
+behind the `desktop/layout/grid-engine.ts` adapter. Keep the renderer owned by
+Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
+`style-src 'unsafe-inline'`.
 
 ## Files to Change
 
@@ -90,6 +106,8 @@ state, without renderer-authored inline style attributes.
   handling, schema-version migration, reset helpers.
 - `desktop/layout/types.ts` - shared layout schema types for surfaces,
   breakpoints, panel constraints, and saved layouts.
+- `desktop/layout/grid-engine.ts` - RGL-core-backed layout algorithm adapter
+  that exposes Jin-shaped movement and resize operations without DOM rendering.
 - `desktop/layout/editable-dashboard-grid.tsx` - repo-owned snapped engine that
   renders draggable/resizable panels in edit mode and read-only panels
   otherwise.
@@ -118,8 +136,9 @@ state, without renderer-authored inline style attributes.
   shared edit-mode controls without one-off local styling.
 - `test/desktop-renderer.test.ts` - cover schema normalization, edit-mode
   markup, save/cancel/reset affordances, and default layout preservation.
-- `package.json` and `bun.lock` - no dynamic-layout package is planned after
-  the `react-grid-layout` CSP spike failed.
+- `package.json` and `bun.lock` - keep `react-grid-layout@2.2.3` only for the
+  `react-grid-layout/core` algorithm entrypoint. Do not import the package DOM
+  renderer or CSS.
 
 ### Delete
 
@@ -129,10 +148,12 @@ state, without renderer-authored inline style attributes.
 ## Implementation Sequence
 
 1. **Write package/CSP spike**
-   Completed on 2026-05-23. `react-grid-layout@2.2.3` was rejected because it
-   rendered inline style attributes for core placement. The product/package
-   changes were reverted and the plan now proceeds with a repo-owned snapped
-   grid engine.
+   Completed on 2026-05-23 in two passes. The `react-grid-layout@2.2.3` DOM
+   renderer was rejected because it rendered inline style attributes for core
+   placement. The `react-grid-layout/core` algorithm entrypoint was accepted
+   behind `desktop/layout/grid-engine.ts`, with focused tests covering movement,
+   collision blocking, resize compaction, min constraints, immutability, and
+   renderer isolation.
 
 2. **Create layout preference model**
    Add a provider and storage helpers for versioned layout state. Support
@@ -146,9 +167,10 @@ state, without renderer-authored inline style attributes.
    guides.
 
 4. **Wire drag and resize**
-   Implement movement and resizing through the repo-owned snapped engine. Snap
-   to a 12-column grid and row units. Respect `minW`, `minH`, and
-   panel-specific max constraints. Prevent unusable panel sizes.
+   Implement movement and resizing through the repo-owned snapped renderer and
+   the `grid-engine.ts` algorithm adapter. Snap to a 12-column grid and row
+   units. Respect `minW`, `minH`, and panel-specific max constraints. Prevent
+   unusable panel sizes.
 
 5. **Make panels size-aware**
    Ensure charts, project lists, harness timelines, and empty states adapt to
@@ -174,8 +196,9 @@ state, without renderer-authored inline style attributes.
 
 - **Risk**: A grid package relies on inline styles or CSS transforms that
   conflict with packaged Desktop CSP.
-  **Mitigation**: Treat package adoption as a spike with packaged CSP
-  validation before committing to it.
+  **Mitigation**: Reject the package DOM renderer. Use only
+  `react-grid-layout/core` behind a data-only adapter, and keep renderer tests
+  guarding against package CSS, RGL DOM imports, and inline placement styles.
 
 - **Risk**: Users create layouts that make panels unusable.
   **Mitigation**: Enforce panel min/max sizes, compact panel variants, and
