@@ -9,7 +9,10 @@ import {
 } from "../desktop/renderer";
 import type { JinDesktopBridge } from "../desktop/bridge";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
-import { DashboardGrid } from "../desktop/views/home/dashboard-grid";
+import {
+  DashboardGrid,
+  type DashboardGridItemContext,
+} from "../desktop/views/home/dashboard-grid";
 import {
   usageColorClassForColor,
   usageHeightClass,
@@ -352,8 +355,12 @@ describe("desktop renderer", () => {
     expect(gridSource).toContain("row-span-5");
     expect(gridSource).not.toContain("home-layout-");
     expect(editableGridSource).not.toContain("home-layout-");
-    expect(panelsSource).toContain("min-h-[448px]");
+    expect(panelsSource).not.toContain("min-h-[448px]");
+    expect(panelsSource).toContain("data-home-panel-density");
+    expect(panelsSource).toContain("homePanelItemLimit");
+    expect(chartSource).toContain("h-[168px]");
     expect(chartSource).toContain("h-[252px]");
+    expect(chartSource).toContain("h-[318px]");
     expect(css).not.toContain(".usage-area-static-chart");
     expect(css).not.toContain(".usage-area-static-fill");
   });
@@ -435,6 +442,31 @@ describe("desktop renderer", () => {
     expect(html).toContain("row-start-9");
     expect(html).toContain("col-span-6");
     expect(html).toContain("row-span-4");
+  });
+
+  test("dashboard grid passes normalized layout context to panel renderers", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        items: [
+          {
+            panelId: "harnesses",
+            children: ({ panel }: DashboardGridItemContext) =>
+              createElement("section", {
+                "data-render-density": panel.density,
+                "data-render-height": panel.height,
+                "data-render-layout": `${panel.layout.w}x${panel.layout.h}`,
+                "data-render-width": panel.width,
+              }),
+          },
+        ],
+        layout: [{ panelId: "harnesses", x: 8, y: 5, w: 4, h: 3 }],
+      }),
+    );
+
+    expect(html).toContain('data-render-density="compact"');
+    expect(html).toContain('data-render-height="short"');
+    expect(html).toContain('data-render-width="narrow"');
+    expect(html).toContain('data-render-layout="4x3"');
   });
 
   test("dashboard grid edit mode exposes CSP-safe move and resize handles", () => {

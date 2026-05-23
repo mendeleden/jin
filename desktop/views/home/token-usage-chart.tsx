@@ -33,6 +33,7 @@ import {
   type UsageDisplayBucket,
   type UsageWindowedChartModel,
 } from "./usage-chart-model";
+import type { HomePanelLayoutContext } from "./layout";
 import {
   usageColorClass,
   usageColorClassForColor,
@@ -40,10 +41,12 @@ import {
 } from "./usage-visuals";
 
 export function HomeMetricToggle({
+  compact = false,
   metric,
   onChange,
   values = ["tokens", "conversations", "cost"],
 }: {
+  compact?: boolean;
   metric: HomeBreakdownMetric;
   onChange(metric: HomeBreakdownMetric): void;
   values?: HomeBreakdownMetric[];
@@ -58,7 +61,10 @@ export function HomeMetricToggle({
   return (
     <SegmentedControl
       ariaLabel="Breakdown metric"
-      buttonClassName="text-[0.68rem] font-semibold uppercase tracking-normal"
+      buttonClassName={cx(
+        "text-[0.68rem] font-semibold uppercase tracking-normal",
+        compact && "px-1.5 text-[0.64rem]",
+      )}
       onChange={onChange}
       options={options}
       value={metric}
@@ -95,12 +101,14 @@ export function TokenUsageChart({
   onNextWindow,
   onPeriodChange,
   onPreviousWindow,
+  panel,
 }: {
   chart: UsageWindowedChartModel;
   monthlyAvailable: boolean;
   onNextWindow(): void;
   onPeriodChange(period: UsageChartPeriod): void;
   onPreviousWindow(): void;
+  panel: HomePanelLayoutContext;
 }) {
   const [metric, setMetric] = useState<HomeBreakdownMetric>("tokens");
 
@@ -127,6 +135,10 @@ export function TokenUsageChart({
   const metricLabel = homeMetricLabel(metric).toLowerCase();
   const metricUsageLabel = usageMetricUsageLabel(metric);
   const useWeeklyBars = chart.period === "monthly" && chart.source === "timeline";
+  const chartSize = getUsageChartSize(panel);
+  const compactChrome = chartSize.variant === "compact";
+  const showSessionRail = !compactChrome && panel.width !== "narrow";
+  const showLegend = !compactChrome && panel.width !== "narrow";
   const title =
     chart.source === "snapshot"
       ? "Current activity snapshot"
@@ -163,27 +175,52 @@ export function TokenUsageChart({
   return (
     <div
       className="grid min-h-0 flex-1 gap-2"
+      data-usage-chart-density={panel.density}
+      data-usage-chart-height={chartSize.variant}
       data-usage-chart-source={chart.source}
       data-usage-period={chart.period}
       data-usage-window={chart.windowLabel}
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
+      <div
+        className={cx(
+          "flex min-w-0 items-start justify-between gap-3",
+          compactChrome && "gap-2",
+          panel.width === "narrow" && "flex-col",
+        )}
+      >
         <div>
-          <h3 className="m-0 text-[1.08rem] tracking-normal text-[var(--text)]">
+          <h3
+            className={cx(
+              "m-0 tracking-normal text-[var(--text)]",
+              compactChrome ? "text-[0.98rem]" : "text-[1.08rem]",
+            )}
+          >
             {title}
           </h3>
-          <p className="m-0 mt-1 text-[0.76rem] text-[var(--text-dim)]">
-            {description}
-          </p>
+          {compactChrome ? null : (
+            <p className="m-0 mt-1 text-[0.76rem] text-[var(--text-dim)]">
+              {description}
+            </p>
+          )}
         </div>
         <div
-          className="flex min-w-0 flex-wrap items-center justify-end gap-2"
+          className={cx(
+            "flex min-w-0 flex-wrap items-center justify-end gap-2",
+            compactChrome && "gap-1.5",
+          )}
           aria-label="Usage chart controls"
         >
-          <HomeMetricToggle metric={metric} onChange={setMetric} />
+          <HomeMetricToggle
+            compact={compactChrome || panel.width === "narrow"}
+            metric={metric}
+            onChange={setMetric}
+          />
           <SegmentedControl
             ariaLabel="Usage period"
-            buttonClassName="min-w-[72px] px-2.5"
+            buttonClassName={cx(
+              "min-w-[72px] px-2.5",
+              (compactChrome || panel.width === "narrow") && "min-w-0 px-2",
+            )}
             onChange={onPeriodChange}
             options={periodOptions}
             value={chart.period}
@@ -202,7 +239,10 @@ export function TokenUsageChart({
               <ChevronLeft aria-hidden="true" />
             </Button>
             <span
-              className="min-w-[118px] max-w-[178px] truncate rounded-full border border-[rgba(210,224,255,0.1)] bg-white/[0.035] px-2.5 py-[7px] text-center"
+              className={cx(
+                "min-w-[118px] max-w-[178px] truncate rounded-full border border-[rgba(210,224,255,0.1)] bg-white/[0.035] px-2.5 py-[7px] text-center",
+                compactChrome && "hidden",
+              )}
               title={chart.windowLabel}
             >
               {chart.rangeLabel}
@@ -219,39 +259,50 @@ export function TokenUsageChart({
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-[7px]" data-usage-chart-kpis>
+      <div
+        className={cx(
+          "grid gap-[7px]",
+          panel.width === "narrow" ? "grid-cols-1" : "grid-cols-3",
+        )}
+        data-usage-chart-kpis
+      >
         <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatMetricNumber(totalTokens).display}
           </strong>
-          tokens
+          {compactChrome ? "tok" : "tokens"}
         </span>
         <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatNumber(totalSessions)}
           </strong>
-          conversations
+          {compactChrome ? "conv" : "conversations"}
         </span>
         <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatCost(totalCost)}
           </strong>
-          est. cost
+          {compactChrome ? "cost" : "est. cost"}
         </span>
       </div>
-      <div className="relative min-h-[252px] overflow-hidden rounded-[14px] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.014)),radial-gradient(circle_at_70%_18%,rgba(137,180,255,0.1),transparent_32%)]">
+      <div
+        className={cx(
+          "relative overflow-hidden rounded-[14px] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.014)),radial-gradient(circle_at_70%_18%,rgba(137,180,255,0.1),transparent_32%)]",
+          chartSize.className,
+        )}
+      >
         <div
           aria-label={ariaLabel}
-          className="relative h-[252px] min-h-[252px] w-full"
+          className={cx("relative w-full", chartSize.className)}
           role="img"
         >
           <ComposedChart
             accessibilityLayer
             barCategoryGap={useWeeklyBars ? "28%" : "10%"}
-            className="relative z-[1] block h-[252px] min-h-[252px] w-full outline-none"
+            className={cx("relative z-[1] block w-full outline-none", chartSize.className)}
             data={chartData}
-            height={USAGE_CHART_HEIGHT}
-            margin={{ bottom: 36, left: 12, right: 36, top: 18 }}
+            height={chartSize.height}
+            margin={chartSize.margin}
             width={USAGE_CHART_WIDTH}
           >
             <defs>
@@ -342,17 +393,56 @@ export function TokenUsageChart({
           </ComposedChart>
         </div>
       </div>
-      <UsageSessionRail days={displayDays} />
-      <div className="flex flex-wrap gap-x-3.5 gap-y-2 text-[0.8rem] text-[var(--text-soft)]">
-        {series.map((adapter, index) => (
-          <span className="inline-flex items-center gap-[7px]" key={adapter.key}>
-            <i className={cx("h-[9px] w-[9px] rounded-full", usageColorClass(index))} />
-            {adapter.adapterId}
-          </span>
-        ))}
-      </div>
+      {showSessionRail ? <UsageSessionRail days={displayDays} /> : null}
+      {showLegend ? (
+        <div className="flex flex-wrap gap-x-3.5 gap-y-2 text-[0.8rem] text-[var(--text-soft)]">
+          {series.map((adapter, index) => (
+            <span className="inline-flex items-center gap-[7px]" key={adapter.key}>
+              <i className={cx("h-[9px] w-[9px] rounded-full", usageColorClass(index))} />
+              {adapter.adapterId}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function getUsageChartSize(panel: HomePanelLayoutContext): {
+  className: string;
+  height: number;
+  margin: {
+    bottom: number;
+    left: number;
+    right: number;
+    top: number;
+  };
+  variant: "compact" | "standard" | "expanded";
+} {
+  if (panel.layout.h <= 4 || panel.width === "narrow") {
+    return {
+      className: "h-[168px] min-h-[168px]",
+      height: 168,
+      margin: { bottom: 28, left: 4, right: 18, top: 10 },
+      variant: "compact",
+    };
+  }
+
+  if (panel.density === "expanded") {
+    return {
+      className: "h-[318px] min-h-[318px]",
+      height: 318,
+      margin: { bottom: 38, left: 12, right: 38, top: 20 },
+      variant: "expanded",
+    };
+  }
+
+  return {
+    className: "h-[252px] min-h-[252px]",
+    height: USAGE_CHART_HEIGHT,
+    margin: { bottom: 36, left: 12, right: 36, top: 18 },
+    variant: "standard",
+  };
 }
 
 function UsageChartTooltip({

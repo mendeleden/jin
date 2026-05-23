@@ -192,6 +192,12 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
    smaller/larger panels. Small panels should compact content rather than clip
    text or overflow incoherently.
 
+   Initial implementation completed on 2026-05-23. `DashboardGrid` now derives
+   a normalized panel render context from live grid units and passes it to Home
+   panels. The token chart switches compact/standard/expanded chrome and chart
+   heights, while project and harness panels adjust visible item counts,
+   compact labels, metadata, and mini-chart heights from the same context.
+
 6. **Persist and migrate**
    Save only after explicit user confirmation in edit mode. Include layout
    schema version in storage. Unknown panel IDs, invalid numbers, or old
@@ -258,6 +264,13 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
 - [x] Computer Use visual pass: Home renders in dev, edit mode exposes
       Reset/Cancel/Save plus move/resize handles, keyboard movement mutates the
       draft, and Cancel restores the read-only dashboard.
+
+### 2026-05-23 Size-Aware Panel Validation
+
+- [x] `bun run desktop:typecheck`
+- [x] `bun test test/desktop-layout-engine.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts`
+- [x] `bun run desktop:build`
+- [x] `git diff --check`
 
 ## Open Questions
 

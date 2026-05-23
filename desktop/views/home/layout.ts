@@ -25,6 +25,17 @@ export type HomePanelLayout = PanelGridPlacement & {
   panelId: HomePanelId;
 };
 
+export type HomePanelWidth = "narrow" | "standard" | "wide";
+export type HomePanelHeight = "short" | "standard" | "tall";
+export type HomePanelDensity = "compact" | "standard" | "expanded";
+
+export interface HomePanelLayoutContext {
+  density: HomePanelDensity;
+  height: HomePanelHeight;
+  layout: HomePanelLayout;
+  width: HomePanelWidth;
+}
+
 export const HOME_PANEL_DEFINITION_BY_ID = {
   usage: {
     id: "usage",
@@ -66,6 +77,20 @@ export function getHomePanelLayout(panelId: HomePanelId): HomePanelLayout {
   };
 }
 
+export function getHomePanelLayoutContext(
+  layout: HomePanelLayout,
+): HomePanelLayoutContext {
+  const width = getHomePanelWidth(layout.w);
+  const height = getHomePanelHeight(layout.h);
+
+  return {
+    density: getHomePanelDensity(layout, width, height),
+    height,
+    layout,
+    width,
+  };
+}
+
 export function normalizeHomePanelLayout(
   layout: readonly HomePanelLayout[] = DEFAULT_HOME_PANEL_LAYOUT,
 ): HomePanelLayout[] {
@@ -89,6 +114,40 @@ export function normalizeHomePanelLayout(
       h,
     };
   });
+}
+
+function getHomePanelWidth(width: number): HomePanelWidth {
+  if (width <= 5) {
+    return "narrow";
+  }
+  if (width >= 9) {
+    return "wide";
+  }
+  return "standard";
+}
+
+function getHomePanelHeight(height: number): HomePanelHeight {
+  if (height <= 3) {
+    return "short";
+  }
+  if (height >= 6) {
+    return "tall";
+  }
+  return "standard";
+}
+
+function getHomePanelDensity(
+  layout: HomePanelLayout,
+  width: HomePanelWidth,
+  height: HomePanelHeight,
+): HomePanelDensity {
+  if (height === "short" || width === "narrow") {
+    return "compact";
+  }
+  if (height === "tall" && layout.w >= 8) {
+    return "expanded";
+  }
+  return "standard";
 }
 
 function clampGridValue(value: number, min: number, max: number): number {

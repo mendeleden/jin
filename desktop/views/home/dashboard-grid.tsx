@@ -8,9 +8,12 @@ import {
   HOME_GRID_ROWS,
   HOME_LAYOUT_SCHEMA_VERSION,
   HOME_PANEL_DEFINITION_BY_ID,
+  getHomePanelLayout,
+  getHomePanelLayoutContext,
   normalizeHomePanelLayout,
   type HomePanelId,
   type HomePanelLayout,
+  type HomePanelLayoutContext,
 } from "./layout";
 
 const GRID_X_CLASSES = [
@@ -76,7 +79,11 @@ const GRID_H_CLASSES = [
 
 export interface DashboardGridItem {
   panelId: HomePanelId;
-  children: ReactNode;
+  children: ReactNode | ((context: DashboardGridItemContext) => ReactNode);
+}
+
+export interface DashboardGridItemContext {
+  panel: HomePanelLayoutContext;
 }
 
 export function DashboardGrid({
@@ -90,15 +97,24 @@ export function DashboardGrid({
   layout?: readonly HomePanelLayout[];
   onLayoutChange?(layout: readonly HomePanelLayout[]): void;
 }) {
+  const normalizedLayout = normalizeHomePanelLayout(layout);
+  const layoutByPanel = new Map(
+    normalizedLayout.map((panelLayout) => [panelLayout.panelId, panelLayout]),
+  );
+
   return (
     <EditableDashboardGrid
       columns={HOME_GRID_COLUMNS}
       editable={editable}
       items={items.map((item) => ({
         ...item,
+        children: renderDashboardGridItemChildren(
+          item.children,
+          layoutByPanel.get(item.panelId) ?? getHomePanelLayout(item.panelId),
+        ),
         title: HOME_PANEL_DEFINITION_BY_ID[item.panelId].title,
       }))}
-      layout={withHomePanelConstraints(layout)}
+      layout={withHomePanelConstraints(normalizedLayout)}
       normalizeLayout={normalizeEditableHomeLayout}
       onLayoutChange={(nextLayout) =>
         onLayoutChange?.(stripHomePanelConstraints(nextLayout))
@@ -109,6 +125,19 @@ export function DashboardGrid({
       surface="home"
     />
   );
+}
+
+function renderDashboardGridItemChildren(
+  children: DashboardGridItem["children"],
+  layout: HomePanelLayout,
+): ReactNode {
+  if (typeof children === "function") {
+    return children({
+      panel: getHomePanelLayoutContext(layout),
+    });
+  }
+
+  return children;
 }
 
 function withHomePanelConstraints(

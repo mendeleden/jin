@@ -17,6 +17,7 @@ import {
   type HomeBreakdownMetric,
   type UsageChartPeriod,
 } from "./usage-chart-model";
+import type { HomePanelLayoutContext } from "./layout";
 import {
   HomeMetricToggle,
   TokenUsageChart,
@@ -28,7 +29,13 @@ import {
   usageWidthClass,
 } from "./usage-visuals";
 
-export function HomePulsePanel({ data }: { data: DesktopHomeData }) {
+export function HomePulsePanel({
+  data,
+  panel,
+}: {
+  data: DesktopHomeData;
+  panel: HomePanelLayoutContext;
+}) {
   const chart = buildUsageChartModel(data);
   const monthlyAvailable =
     chart.source === "timeline" && (chart.weeklyDays?.length ?? 0) > 0;
@@ -44,7 +51,10 @@ export function HomePulsePanel({ data }: { data: DesktopHomeData }) {
 
   return (
     <Panel
-      className="flex h-full min-h-[448px] flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_4%,rgba(137,180,255,0.16),transparent_30%),radial-gradient(circle_at_78%_0%,rgba(137,212,161,0.1),transparent_28%),linear-gradient(180deg,rgba(14,20,31,0.95),rgba(7,10,16,0.95))]"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_4%,rgba(137,180,255,0.16),transparent_30%),radial-gradient(circle_at_78%_0%,rgba(137,212,161,0.1),transparent_28%),linear-gradient(180deg,rgba(14,20,31,0.95),rgba(7,10,16,0.95))]"
+      data-home-panel-density={panel.density}
+      data-home-panel-height={panel.height}
+      data-home-panel-width={panel.width}
       span="none"
     >
       <TokenUsageChart
@@ -56,12 +66,19 @@ export function HomePulsePanel({ data }: { data: DesktopHomeData }) {
           setWindowOffset(0);
         }}
         onPreviousWindow={() => setWindowOffset((current) => current + 1)}
+        panel={panel}
       />
     </Panel>
   );
 }
 
-export function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
+export function HomeProjectActivityPanel({
+  data,
+  panel,
+}: {
+  data: DesktopHomeData;
+  panel: HomePanelLayoutContext;
+}) {
   const [metric, setMetric] = useState<HomeBreakdownMetric>("tokens");
   const projects =
     data.projectUsageByHarness && data.projectUsageByHarness.length > 0
@@ -79,23 +96,52 @@ export function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
     ...projects.map((project) => projectMetricValue(project, metric)),
     1,
   );
+  const visibleProjectCount = homePanelItemLimit(panel, {
+    compact: 3,
+    expanded: 10,
+    standard: 5,
+  });
+  const showProjectMeta = panel.density !== "compact";
 
   return (
     <Panel
-      className="h-full min-h-80 overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(240,196,109,0.1),transparent_30%),linear-gradient(180deg,rgba(14,19,28,0.95),rgba(7,10,16,0.95))]"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(240,196,109,0.1),transparent_30%),linear-gradient(180deg,rgba(14,19,28,0.95),rgba(7,10,16,0.95))]"
+      data-home-panel-density={panel.density}
+      data-home-panel-height={panel.height}
+      data-home-panel-width={panel.width}
       span="none"
     >
-      <PanelHeader actions={<HomeMetricToggle metric={metric} onChange={setMetric} />}>
+      <PanelHeader
+        actions={
+          <HomeMetricToggle
+            compact={panel.density === "compact"}
+            metric={metric}
+            onChange={setMetric}
+          />
+        }
+        className={panel.density === "compact" ? "mb-2 gap-2" : undefined}
+      >
         <Eyebrow>Projects</Eyebrow>
         <PanelTitle>Project Stacks</PanelTitle>
       </PanelHeader>
-      <div className="grid gap-2">
+      <div
+        className={cx(
+          "grid min-h-0 gap-2",
+          panel.height === "tall" ? "overflow-auto pr-1" : "overflow-hidden",
+        )}
+        data-home-panel-visible-items={String(visibleProjectCount)}
+      >
         {projects.length > 0 ? (
-          projects.slice(0, 7).map((project) => {
+          projects.slice(0, visibleProjectCount).map((project) => {
             const total = projectMetricValue(project, metric);
             return (
               <article
-                className="min-w-0 rounded-xl border border-[rgba(210,224,255,0.08)] bg-white/[0.024] px-2.5 pb-2.5 pt-[9px]"
+                className={cx(
+                  "min-w-0 rounded-xl border border-[rgba(210,224,255,0.08)] bg-white/[0.024]",
+                  panel.density === "compact"
+                    ? "px-2 py-2"
+                    : "px-2.5 pb-2.5 pt-[9px]",
+                )}
                 key={project.id}
               >
                 <div className="flex min-w-0 items-baseline justify-between gap-2.5">
@@ -110,7 +156,10 @@ export function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
                   </span>
                 </div>
                 <div
-                  className="my-[7px] mt-2 h-2.5 overflow-hidden rounded-full bg-[rgba(210,224,255,0.075)]"
+                  className={cx(
+                    "mt-2 overflow-hidden rounded-full bg-[rgba(210,224,255,0.075)]",
+                    showProjectMeta ? "my-[7px] h-2.5" : "h-2",
+                  )}
                   title={`${formatProjectReference(project.name)}: ${formatHomeMetricValue(
                     total,
                     metric,
@@ -144,13 +193,15 @@ export function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
                     })}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-x-2.5 gap-y-[7px] text-[0.7rem] text-[var(--text-dim)]">
-                  <span>Last seen {formatDate(project.lastSeen)}</span>
-                  <span>
-                    {project.adapters.map((adapter) => adapter.adapterId).join(", ") ||
-                      "unknown adapter"}
-                  </span>
-                </div>
+                {showProjectMeta ? (
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-[7px] text-[0.7rem] text-[var(--text-dim)]">
+                    <span>Last seen {formatDate(project.lastSeen)}</span>
+                    <span>
+                      {project.adapters.map((adapter) => adapter.adapterId).join(", ") ||
+                        "unknown adapter"}
+                    </span>
+                  </div>
+                ) : null}
               </article>
             );
           })
@@ -162,14 +213,25 @@ export function HomeProjectActivityPanel({ data }: { data: DesktopHomeData }) {
   );
 }
 
-export function HomeAdapterMixPanel({ data }: { data: DesktopHomeData }) {
+export function HomeAdapterMixPanel({
+  data,
+  panel,
+}: {
+  data: DesktopHomeData;
+  panel: HomePanelLayoutContext;
+}) {
   const [metric, setMetric] =
     useState<Extract<HomeBreakdownMetric, "tokens" | "conversations">>(
       "tokens",
     );
   const chart = buildUsageChartModel(data);
   const windowedChart = buildWindowedUsageChart(chart, "daily", 0);
-  const adapters = windowedChart.adapters.slice(0, 6);
+  const visibleAdapterCount = homePanelItemLimit(panel, {
+    compact: 3,
+    expanded: 8,
+    standard: 5,
+  });
+  const adapters = windowedChart.adapters.slice(0, visibleAdapterCount);
   const days = windowedChart.days;
   const totals = adapters.map((adapterId) => ({
     adapterId,
@@ -188,12 +250,20 @@ export function HomeAdapterMixPanel({ data }: { data: DesktopHomeData }) {
     ),
   }));
   const maxValue = Math.max(...totals.map((entry) => entry.value), 1);
+  const showAdapterSubtitle = panel.density !== "compact";
 
   return (
-    <Panel className="h-full min-h-80 overflow-hidden" span="none">
+    <Panel
+      className="flex h-full min-h-0 flex-col overflow-hidden"
+      data-home-panel-density={panel.density}
+      data-home-panel-height={panel.height}
+      data-home-panel-width={panel.width}
+      span="none"
+    >
       <PanelHeader
         actions={
           <HomeMetricToggle
+            compact={panel.density === "compact"}
             metric={metric}
             onChange={(nextMetric) => {
               if (nextMetric !== "cost") {
@@ -203,11 +273,18 @@ export function HomeAdapterMixPanel({ data }: { data: DesktopHomeData }) {
             values={["tokens", "conversations"]}
           />
         }
+        className={panel.density === "compact" ? "mb-2 gap-2" : undefined}
       >
         <Eyebrow>Harnesses</Eyebrow>
         <PanelTitle>Harness Timeline</PanelTitle>
       </PanelHeader>
-      <div className="grid gap-2">
+      <div
+        className={cx(
+          "grid min-h-0 gap-2",
+          panel.height === "tall" ? "overflow-auto pr-1" : "overflow-hidden",
+        )}
+        data-home-panel-visible-items={String(visibleAdapterCount)}
+      >
         {adapters.length > 0 ? (
           adapters.map((adapterId, index) => {
             const total =
@@ -227,12 +304,17 @@ export function HomeAdapterMixPanel({ data }: { data: DesktopHomeData }) {
                   <strong className="block truncate text-[0.82rem] text-[var(--text)]">
                     {adapterId}
                   </strong>
-                  <span className="block truncate text-[0.7rem] text-[var(--text-dim)]">
-                    {formatHomeMetricValue(total, metric)} over current window
-                  </span>
+                  {showAdapterSubtitle ? (
+                    <span className="block truncate text-[0.7rem] text-[var(--text-dim)]">
+                      {formatHomeMetricValue(total, metric)} over current window
+                    </span>
+                  ) : null}
                 </div>
                 <div
-                  className="col-start-2 grid h-[34px] grid-flow-col auto-cols-[minmax(5px,1fr)] items-end gap-[3px] rounded-[10px] bg-[rgba(210,224,255,0.045)] p-[5px]"
+                  className={cx(
+                    "col-start-2 grid grid-flow-col auto-cols-[minmax(5px,1fr)] items-end gap-[3px] rounded-[10px] bg-[rgba(210,224,255,0.045)]",
+                    panel.density === "compact" ? "h-[24px] p-1" : "h-[34px] p-[5px]",
+                  )}
                   aria-hidden="true"
                 >
                   {days.map((day) => {
@@ -303,4 +385,21 @@ function adapterMetricValue(
     return adapter.cost;
   }
   return adapter.tokens;
+}
+
+function homePanelItemLimit(
+  panel: HomePanelLayoutContext,
+  limits: {
+    compact: number;
+    expanded: number;
+    standard: number;
+  },
+): number {
+  if (panel.density === "expanded") {
+    return limits.expanded;
+  }
+  if (panel.density === "compact") {
+    return limits.compact;
+  }
+  return limits.standard;
 }

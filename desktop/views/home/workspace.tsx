@@ -88,15 +88,21 @@ export function HomeWorkspace({
                   items={[
                     {
                       panelId: "usage",
-                      children: <HomePulsePanel data={data} />,
+                      children: ({ panel }) => (
+                        <HomePulsePanel data={data} panel={panel} />
+                      ),
                     },
                     {
                       panelId: "projects",
-                      children: <HomeProjectActivityPanel data={data} />,
+                      children: ({ panel }) => (
+                        <HomeProjectActivityPanel data={data} panel={panel} />
+                      ),
                     },
                     {
                       panelId: "harnesses",
-                      children: <HomeAdapterMixPanel data={data} />,
+                      children: ({ panel }) => (
+                        <HomeAdapterMixPanel data={data} panel={panel} />
+                      ),
                     },
                   ]}
                   layout={layout}
