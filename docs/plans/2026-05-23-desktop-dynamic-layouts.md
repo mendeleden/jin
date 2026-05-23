@@ -45,7 +45,7 @@ reversible.
 
 ## Engine Decision
 
-`react-grid-layout` is the mature candidate. It supports draggable and
+`react-grid-layout` was the mature candidate. It supports draggable and
 resizable widgets, responsive breakpoints, serializable layouts, min/max
 constraints, and TypeScript in v2. It also places grid items using CSS
 transforms and ships CSS that must be integrated into the Desktop build.
@@ -63,6 +63,25 @@ implementation step is a small CSP/package spike:
 
 The product-facing layout model must not depend on which engine wins.
 
+### Spike Result: react-grid-layout Rejected
+
+On 2026-05-23, a local spike installed `react-grid-layout@2.2.3` and routed
+Home through a narrow `EditableDashboardGrid` adapter without persistence. The
+package rendered grid placement with inline `style` attributes for container
+height, item transforms, width, height, and absolute positioning. The evidence
+appeared immediately in `renderToStaticMarkup` output while running
+`bun test test/desktop-renderer.test.ts test/desktop-shell-service.test.ts`.
+
+That violates the packaged Desktop `style-src 'self'` constraint documented in
+`docs/solutions/2026-05-11-desktop-csp-requires-class-based-renderer-visuals.md`.
+Keeping the package would require weakening CSP or building an extensive custom
+positioning layer around the package, which defeats the purpose of adopting it.
+
+Decision: do not adopt `react-grid-layout` for Jin Desktop dynamic layouts.
+Continue with a repo-owned snapped CSS-grid interaction engine that maps
+placement to bounded classes or CSS variables generated from trusted layout
+state, without renderer-authored inline style attributes.
+
 ## Files to Change
 
 ### Create
@@ -71,12 +90,13 @@ The product-facing layout model must not depend on which engine wins.
   handling, schema-version migration, reset helpers.
 - `desktop/layout/types.ts` - shared layout schema types for surfaces,
   breakpoints, panel constraints, and saved layouts.
-- `desktop/layout/editable-dashboard-grid.tsx` - engine adapter that renders
-  draggable/resizable panels in edit mode and read-only panels otherwise.
+- `desktop/layout/editable-dashboard-grid.tsx` - repo-owned snapped engine that
+  renders draggable/resizable panels in edit mode and read-only panels
+  otherwise.
 - `desktop/layout/layout-storage.ts` - local renderer persistence helpers with
   defensive parsing and schema validation.
-- `desktop/layout/collision.ts` - only if the package spike fails and a
-  repo-owned snapped engine is needed.
+- `desktop/layout/collision.ts` - collision and bounds helpers for the
+  repo-owned snapped grid engine.
 
 ### Modify
 
@@ -98,7 +118,8 @@ The product-facing layout model must not depend on which engine wins.
   shared edit-mode controls without one-off local styling.
 - `test/desktop-renderer.test.ts` - cover schema normalization, edit-mode
   markup, save/cancel/reset affordances, and default layout preservation.
-- `package.json` and `bun.lock` - only if the engine spike approves a package.
+- `package.json` and `bun.lock` - no dynamic-layout package is planned after
+  the `react-grid-layout` CSP spike failed.
 
 ### Delete
 
@@ -108,10 +129,10 @@ The product-facing layout model must not depend on which engine wins.
 ## Implementation Sequence
 
 1. **Write package/CSP spike**
-   Create a minimal local branch commit that tries `react-grid-layout` behind
-   `EditableDashboardGrid` for Home with no persistence. Validate packaged
-   Desktop CSP, build output, HMR behavior, keyboard/focus behavior, and visual
-   quality. Revert or keep based on evidence.
+   Completed on 2026-05-23. `react-grid-layout@2.2.3` was rejected because it
+   rendered inline style attributes for core placement. The product/package
+   changes were reverted and the plan now proceeds with a repo-owned snapped
+   grid engine.
 
 2. **Create layout preference model**
    Add a provider and storage helpers for versioned layout state. Support
@@ -125,9 +146,9 @@ The product-facing layout model must not depend on which engine wins.
    guides.
 
 4. **Wire drag and resize**
-   Implement movement and resizing through the chosen engine adapter. Snap to a
-   12-column grid and row units. Respect `minW`, `minH`, and panel-specific
-   max constraints. Prevent unusable panel sizes.
+   Implement movement and resizing through the repo-owned snapped engine. Snap
+   to a 12-column grid and row units. Respect `minW`, `minH`, and
+   panel-specific max constraints. Prevent unusable panel sizes.
 
 5. **Make panels size-aware**
    Ensure charts, project lists, harness timelines, and empty states adapt to
