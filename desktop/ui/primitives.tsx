@@ -27,7 +27,7 @@ export function SegmentedControl<TValue extends number | string>({
     <div
       aria-label={ariaLabel}
       className={cx(
-        "inline-flex overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.028]",
+        "inline-flex min-h-[34px] overflow-hidden rounded-[var(--radius-control)] border border-[rgba(210,224,255,0.12)] bg-[rgba(13,19,29,0.82)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
         className,
       )}
       role="group"
@@ -38,10 +38,10 @@ export function SegmentedControl<TValue extends number | string>({
           <button
             aria-pressed={selected}
             className={cx(
-              "relative cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2 py-[5px] text-[0.76rem] text-[var(--text-dim)] transition-[background-color,color,box-shadow] first:border-l-0 disabled:cursor-default disabled:opacity-50",
-              selected &&
-                "z-[1] bg-[rgba(137,180,255,0.26)] text-[var(--text)] shadow-[inset_0_0_0_1px_rgba(137,180,255,0.62),0_0_0_2px_rgba(137,180,255,0.12)]",
+              "relative cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2 py-[5px] text-[0.76rem] font-semibold text-[rgba(164,175,196,0.72)] transition-[background-color,color,box-shadow] first:border-l-0 hover:text-[var(--text-soft)] disabled:cursor-default disabled:opacity-45",
               buttonClassName,
+              selected &&
+                "z-[1] bg-[linear-gradient(180deg,rgba(58,75,101,0.98),rgba(43,60,84,0.98))] font-bold text-[#f6f8fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.075)] hover:text-[#f6f8fd]",
             )}
             data-selected={selected ? "true" : undefined}
             disabled={option.disabled}
