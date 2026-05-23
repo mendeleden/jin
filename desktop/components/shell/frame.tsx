@@ -324,7 +324,7 @@ function Topbar({
 
   return (
     <header
-      className="flex min-h-11 items-center justify-between gap-[18px] max-[880px]:flex-col max-[880px]:items-start"
+      className="flex min-h-11 items-center justify-between gap-[18px] [-webkit-app-region:drag] max-[880px]:flex-col max-[880px]:items-start"
       data-topbar
     >
       <div className="min-w-0">
@@ -335,7 +335,7 @@ function Topbar({
           </p>
         ) : null}
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-[7px] max-[880px]:justify-start">
+      <div className="flex flex-wrap items-center justify-end gap-[7px] [-webkit-app-region:no-drag] max-[880px]:justify-start">
         <StatusBadge value={runtimeState} />
         {status ? (
           <RuntimeActions

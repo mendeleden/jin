@@ -585,6 +585,16 @@ describe("desktop renderer", () => {
     expect(source).toContain("window.clearInterval");
   });
 
+  test("desktop topbar exposes a draggable Electron titlebar region", () => {
+    const source = readFileSync(
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("[-webkit-app-region:drag]");
+    expect(source).toContain("[-webkit-app-region:no-drag]");
+  });
+
   test("desktop shared UI primitives replace legacy global control classes", () => {
     const primitiveSources = [
       "../desktop/ui/button.tsx",
