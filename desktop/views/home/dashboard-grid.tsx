@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { EditableDashboardGrid } from "../../layout/editable-dashboard-grid";
+import type { DesktopGridPanelLayout } from "../../layout/grid-engine";
 import { cx } from "../../ui/classnames";
 import {
   DEFAULT_HOME_PANEL_LAYOUT,
@@ -78,53 +80,77 @@ export interface DashboardGridItem {
 }
 
 export function DashboardGrid({
+  editable = false,
   items,
   layout = DEFAULT_HOME_PANEL_LAYOUT,
+  onLayoutChange,
 }: {
+  editable?: boolean;
   items: readonly DashboardGridItem[];
   layout?: readonly HomePanelLayout[];
+  onLayoutChange?(layout: readonly HomePanelLayout[]): void;
 }) {
-  const normalizedLayout = normalizeHomePanelLayout(layout);
-  const itemsByPanel = new Map(items.map((item) => [item.panelId, item]));
-
   return (
-    <section
-      className="grid min-h-0 flex-1 auto-rows-[80px] grid-cols-12 content-start gap-3 overflow-auto pb-0.5"
-      data-dashboard-grid="home"
-      data-layout-columns={String(HOME_GRID_COLUMNS)}
-      data-layout-schema={HOME_LAYOUT_SCHEMA_VERSION}
-    >
-      {normalizedLayout.map((panelLayout) => {
-        const item = itemsByPanel.get(panelLayout.panelId);
-        if (!item) {
-          return null;
-        }
+    <EditableDashboardGrid
+      columns={HOME_GRID_COLUMNS}
+      editable={editable}
+      items={items.map((item) => ({
+        ...item,
+        title: HOME_PANEL_DEFINITION_BY_ID[item.panelId].title,
+      }))}
+      layout={withHomePanelConstraints(layout)}
+      normalizeLayout={normalizeEditableHomeLayout}
+      onLayoutChange={(nextLayout) =>
+        onLayoutChange?.(stripHomePanelConstraints(nextLayout))
+      }
+      panelClassName={homePanelClassName}
+      rows={HOME_GRID_ROWS}
+      schema={HOME_LAYOUT_SCHEMA_VERSION}
+      surface="home"
+    />
+  );
+}
 
-        const definition = HOME_PANEL_DEFINITION_BY_ID[panelLayout.panelId];
-        const className = cx(
-          "min-w-0 max-[1220px]:col-start-1 max-[1220px]:col-span-full max-[1220px]:row-auto",
-          gridXClass(panelLayout.x),
-          gridYClass(panelLayout.y),
-          gridWClass(panelLayout.w),
-          gridHClass(panelLayout.h),
-        );
+function withHomePanelConstraints(
+  layout: readonly HomePanelLayout[],
+): DesktopGridPanelLayout<HomePanelId>[] {
+  return normalizeHomePanelLayout(layout).map((panelLayout) => {
+    const definition = HOME_PANEL_DEFINITION_BY_ID[panelLayout.panelId];
+    return {
+      ...panelLayout,
+      minH: definition.minH,
+      minW: definition.minW,
+    };
+  });
+}
 
-        return (
-          <div
-            className={className}
-            data-layout-h={String(panelLayout.h)}
-            data-layout-w={String(panelLayout.w)}
-            data-layout-x={String(panelLayout.x)}
-            data-layout-y={String(panelLayout.y)}
-            data-panel-id={panelLayout.panelId}
-            data-panel-title={definition.title}
-            key={panelLayout.panelId}
-          >
-            {item.children}
-          </div>
-        );
-      })}
-    </section>
+function normalizeEditableHomeLayout(
+  layout: readonly DesktopGridPanelLayout<HomePanelId>[],
+): DesktopGridPanelLayout<HomePanelId>[] {
+  return withHomePanelConstraints(stripHomePanelConstraints(layout));
+}
+
+function stripHomePanelConstraints(
+  layout: readonly DesktopGridPanelLayout<HomePanelId>[],
+): HomePanelLayout[] {
+  return normalizeHomePanelLayout(
+    layout.map((panelLayout) => ({
+      h: panelLayout.h,
+      panelId: panelLayout.panelId,
+      w: panelLayout.w,
+      x: panelLayout.x,
+      y: panelLayout.y,
+    })),
+  );
+}
+
+function homePanelClassName(panelLayout: HomePanelLayout): string {
+  return cx(
+    "max-[1220px]:col-start-1 max-[1220px]:col-span-full max-[1220px]:row-auto",
+    gridXClass(panelLayout.x),
+    gridYClass(panelLayout.y),
+    gridWClass(panelLayout.w),
+    gridHClass(panelLayout.h),
   );
 }
 

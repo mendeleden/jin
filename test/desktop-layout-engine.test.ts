@@ -5,6 +5,8 @@ import {
   resizeDesktopGridPanel,
   type DesktopGridPanelLayout,
 } from "../desktop/layout/grid-engine";
+import { parseStoredDesktopLayouts } from "../desktop/layout/layout-storage";
+import { normalizeStoredHomeLayout } from "../desktop/layout/preferences";
 
 type PanelId = "usage" | "projects" | "harnesses";
 
@@ -83,6 +85,34 @@ describe("desktop grid engine", () => {
     expect(engineSource).not.toContain("setTransform");
     expect(engineSource).not.toContain("setTopLeft");
     expect(dashboardGridSource).not.toContain("react-grid-layout");
+  });
+
+  test("layout preference parsing falls back from invalid stored data", () => {
+    expect(parseStoredDesktopLayouts("{")).toEqual({});
+    expect(parseStoredDesktopLayouts("[]")).toEqual({});
+
+    const stored = parseStoredDesktopLayouts(
+      JSON.stringify({
+        home: {
+          schema: "home-grid-v1",
+          panels: [{ panelId: "usage", x: 99, y: 99, w: 2, h: 1 }],
+        },
+      }),
+    );
+    const normalized = normalizeStoredHomeLayout(stored.home?.panels);
+
+    expect(panel(normalized, "usage")).toMatchObject({
+      h: 4,
+      panelId: "usage",
+      w: 6,
+      x: 6,
+      y: 8,
+    });
+    expect(panel(normalized, "projects")).toMatchObject({
+      panelId: "projects",
+      x: 0,
+      y: 5,
+    });
   });
 });
 

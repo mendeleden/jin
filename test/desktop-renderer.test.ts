@@ -205,6 +205,7 @@ describe("desktop renderer", () => {
     expect(html).toContain('data-dashboard-grid="home"');
     expect(html).toContain('data-layout-schema="home-grid-v1"');
     expect(html).toContain('data-layout-columns="12"');
+    expect(html).toContain('data-layout-mode="view"');
     expect(html).toContain('data-panel-id="usage"');
     expect(html).toContain('data-panel-id="projects"');
     expect(html).toContain('data-panel-id="harnesses"');
@@ -214,6 +215,8 @@ describe("desktop renderer", () => {
     expect(html).toContain("Project Stacks");
     expect(html).toContain("Harness Timeline");
     expect(html).not.toContain('data-home-flow-graph="mission-control"');
+    expect(html).toContain("data-home-layout-toolbar");
+    expect(html).toContain("Edit layout");
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
@@ -325,6 +328,10 @@ describe("desktop renderer", () => {
       new URL("../desktop/views/home/dashboard-grid.tsx", import.meta.url),
       "utf8",
     );
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
     const panelsSource = readFileSync(
       new URL("../desktop/views/home/panels.tsx", import.meta.url),
       "utf8",
@@ -340,10 +347,11 @@ describe("desktop renderer", () => {
     expect(css).not.toContain(".dashboard-grid");
     expect(css).not.toContain(".usage-chart-controls");
     expect(css.split("\n").length).toBeLessThan(90);
-    expect(gridSource).toContain("auto-rows-[80px]");
+    expect(editableGridSource).toContain("auto-rows-[80px]");
     expect(gridSource).toContain("col-start-1");
     expect(gridSource).toContain("row-span-5");
     expect(gridSource).not.toContain("home-layout-");
+    expect(editableGridSource).not.toContain("home-layout-");
     expect(panelsSource).toContain("min-h-[448px]");
     expect(chartSource).toContain("h-[252px]");
     expect(css).not.toContain(".usage-area-static-chart");
@@ -359,6 +367,14 @@ describe("desktop renderer", () => {
       new URL("../desktop/views/home/workspace.tsx", import.meta.url),
       "utf8",
     );
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const layoutPreferencesSource = readFileSync(
+      new URL("../desktop/layout/preferences.tsx", import.meta.url),
+      "utf8",
+    );
     const panelsSource = readFileSync(
       new URL("../desktop/views/home/panels.tsx", import.meta.url),
       "utf8",
@@ -371,6 +387,8 @@ describe("desktop renderer", () => {
     for (const source of [
       shellSource,
       homeWorkspaceSource,
+      editableGridSource,
+      layoutPreferencesSource,
       panelsSource,
       chartSource,
     ]) {
@@ -417,6 +435,28 @@ describe("desktop renderer", () => {
     expect(html).toContain("row-start-9");
     expect(html).toContain("col-span-6");
     expect(html).toContain("row-span-4");
+  });
+
+  test("dashboard grid edit mode exposes CSP-safe move and resize handles", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        editable: true,
+        items: [
+          {
+            panelId: "usage",
+            children: createElement("section"),
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain('data-layout-mode="edit"');
+    expect(html).toContain('data-layout-edit-handle="move"');
+    expect(html).toContain('data-layout-edit-handle="resize"');
+    expect(html).toContain("Move Token &amp; Cost Observatory");
+    expect(html).toContain("Resize Token &amp; Cost Observatory");
+    expect(html).not.toContain("style=");
+    expect(html).not.toContain("react-grid-layout");
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { JinDesktopBridge } from "./bridge";
 import { AppShell, type DesktopShellActions } from "./components/app-shell";
+import { DesktopLayoutPreferencesProvider } from "./layout/preferences";
 import {
   DesktopPreferencesProvider,
   useDesktopPreferences,
@@ -19,7 +20,9 @@ export function DesktopReactApp({
 }) {
   return (
     <DesktopPreferencesProvider>
-      <DesktopReactAppContent bridge={bridge} />
+      <DesktopLayoutPreferencesProvider>
+        <DesktopReactAppContent bridge={bridge} />
+      </DesktopLayoutPreferencesProvider>
     </DesktopPreferencesProvider>
   );
 }

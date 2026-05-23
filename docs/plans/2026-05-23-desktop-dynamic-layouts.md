@@ -160,17 +160,32 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
    schema defaults, invalid-state fallback, and reset-to-defaults. Keep storage
    renderer-local at first, matching the refresh interval preference pattern.
 
+   Completed on 2026-05-23. Home layout preferences now live behind
+   `DesktopLayoutPreferencesProvider`, read/write `jin.desktop.layouts.v1` in
+   renderer `localStorage`, and normalize invalid or stale data back to
+   `home-grid-v1` defaults.
+
 3. **Add Home edit mode**
    Add explicit edit/save/cancel/reset controls. Read-only mode must be visually
    identical to the current dashboard except for an unobtrusive edit affordance.
    Edit mode should show handles, drag cursor affordances, and subtle grid
    guides.
 
+   Initial implementation completed on 2026-05-23. Home exposes an `Edit layout`
+   action, then switches to Reset/Cancel/Save controls with per-panel move and
+   resize handles. Save persists the draft layout; Cancel discards draft changes;
+   Reset restores the draft to defaults before saving.
+
 4. **Wire drag and resize**
    Implement movement and resizing through the repo-owned snapped renderer and
    the `grid-engine.ts` algorithm adapter. Snap to a 12-column grid and row
    units. Respect `minW`, `minH`, and panel-specific max constraints. Prevent
    unusable panel sizes.
+
+   Initial implementation completed on 2026-05-23. Pointer drag/resize and
+   keyboard arrow interactions mutate draft Home layout through
+   `moveDesktopGridPanel` and `resizeDesktopGridPanel`, while rendering remains
+   CSS Grid/Tailwind owned.
 
 5. **Make panels size-aware**
    Ensure charts, project lists, harness timelines, and empty states adapt to
@@ -233,6 +248,16 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
 - [ ] Resized chart/list panels remain readable and non-overlapping.
 - [ ] Reset returns the exact default layout.
 - [ ] Narrow viewport behavior stacks or adapts predictably.
+
+### 2026-05-23 Layout Preference/Edit Validation
+
+- [x] `bun run desktop:typecheck`
+- [x] `bun test test/desktop-layout-engine.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts`
+- [x] `bun run desktop:build`
+- [x] `git diff --check`
+- [x] Computer Use visual pass: Home renders in dev, edit mode exposes
+      Reset/Cancel/Save plus move/resize handles, keyboard movement mutates the
+      draft, and Cancel restores the read-only dashboard.
 
 ## Open Questions
 
