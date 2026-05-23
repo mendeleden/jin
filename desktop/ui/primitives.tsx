@@ -1,6 +1,63 @@
 import type { ReactNode } from "react";
 import { cx } from "./classnames";
 
+export interface SegmentedControlOption<TValue extends number | string> {
+  disabled?: boolean;
+  label: string;
+  title?: string;
+  value: TValue;
+}
+
+export function SegmentedControl<TValue extends number | string>({
+  ariaLabel,
+  buttonClassName,
+  className,
+  onChange,
+  options,
+  value,
+}: {
+  ariaLabel: string;
+  buttonClassName?: string;
+  className?: string;
+  onChange(value: TValue): void;
+  options: readonly SegmentedControlOption<TValue>[];
+  value: TValue;
+}) {
+  return (
+    <div
+      aria-label={ariaLabel}
+      className={cx(
+        "inline-flex overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.028]",
+        className,
+      )}
+      role="group"
+    >
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            aria-pressed={selected}
+            className={cx(
+              "relative cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2 py-[5px] text-[0.76rem] text-[var(--text-dim)] transition-[background-color,color,box-shadow] first:border-l-0 disabled:cursor-default disabled:opacity-50",
+              selected &&
+                "z-[1] bg-[rgba(137,180,255,0.26)] text-[var(--text)] shadow-[inset_0_0_0_1px_rgba(137,180,255,0.62),0_0_0_2px_rgba(137,180,255,0.12)]",
+              buttonClassName,
+            )}
+            data-selected={selected ? "true" : undefined}
+            disabled={option.disabled}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            title={option.title}
+            type="button"
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function EmptyState({
   children,
   className,

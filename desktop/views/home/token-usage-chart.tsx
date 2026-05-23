@@ -16,7 +16,11 @@ import {
 } from "../../renderer";
 import { Button } from "../../ui/button";
 import { cx } from "../../ui/classnames";
-import { EmptyState } from "../../ui/primitives";
+import {
+  EmptyState,
+  SegmentedControl,
+  type SegmentedControlOption,
+} from "../../ui/primitives";
 import {
   USAGE_CHART_HEIGHT,
   USAGE_CHART_WIDTH,
@@ -44,29 +48,21 @@ export function HomeMetricToggle({
   onChange(metric: HomeBreakdownMetric): void;
   values?: HomeBreakdownMetric[];
 }) {
+  const options = values.map<SegmentedControlOption<HomeBreakdownMetric>>(
+    (value) => ({
+      label: homeMetricLabel(value),
+      value,
+    }),
+  );
+
   return (
-    <div
-      className="inline-flex overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.028]"
-      role="group"
-      aria-label="Breakdown metric"
-    >
-      {values.map((value) => (
-        <button
-          aria-pressed={metric === value}
-          data-selected={metric === value ? "true" : undefined}
-          className={cx(
-            "relative cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2 py-[5px] text-[0.68rem] font-semibold uppercase tracking-normal text-[var(--text-dim)] transition-[background-color,color,box-shadow] first:border-l-0",
-            metric === value &&
-              "z-[1] bg-[rgba(137,180,255,0.26)] text-[var(--text)] shadow-[inset_0_0_0_1px_rgba(137,180,255,0.62),0_0_0_2px_rgba(137,180,255,0.12)]",
-          )}
-          key={value}
-          onClick={() => onChange(value)}
-          type="button"
-        >
-          {homeMetricLabel(value)}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl
+      ariaLabel="Breakdown metric"
+      buttonClassName="text-[0.68rem] font-semibold uppercase tracking-normal"
+      onChange={onChange}
+      options={options}
+      value={metric}
+    />
   );
 }
 
@@ -149,6 +145,20 @@ export function TokenUsageChart({
     displayDays.length <= 7
       ? 0
       : Math.max(1, Math.ceil(displayDays.length / 6) - 1);
+  const periodOptions: SegmentedControlOption<UsageChartPeriod>[] = [
+    {
+      label: "Daily",
+      value: "daily",
+    },
+    {
+      disabled: !monthlyAvailable,
+      label: "Monthly",
+      title: monthlyAvailable
+        ? "Monthly rollup"
+        : "Monthly rollup requires weekly usage buckets",
+      value: "monthly",
+    },
+  ];
 
   return (
     <div
@@ -171,44 +181,13 @@ export function TokenUsageChart({
           aria-label="Usage chart controls"
         >
           <HomeMetricToggle metric={metric} onChange={setMetric} />
-          <div
-            className="inline-flex items-center overflow-hidden rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.028]"
-            aria-label="Usage period"
-            role="group"
-          >
-            <button
-              aria-pressed={chart.period === "daily"}
-              data-selected={chart.period === "daily" ? "true" : undefined}
-              className={cx(
-                "relative min-w-[72px] cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2.5 py-[5px] text-[0.76rem] text-[var(--text-dim)] transition-[background-color,color,box-shadow] first:border-l-0",
-                chart.period === "daily" &&
-                  "z-[1] bg-[rgba(137,180,255,0.26)] text-[var(--text)] shadow-[inset_0_0_0_1px_rgba(137,180,255,0.62),0_0_0_2px_rgba(137,180,255,0.12)]",
-              )}
-              onClick={() => onPeriodChange("daily")}
-              type="button"
-            >
-              Daily
-            </button>
-            <button
-              aria-pressed={chart.period === "monthly"}
-              data-selected={chart.period === "monthly" ? "true" : undefined}
-              className={cx(
-                "relative min-w-[72px] cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2.5 py-[5px] text-[0.76rem] text-[var(--text-dim)] transition-[background-color,color,box-shadow] first:border-l-0",
-                chart.period === "monthly" &&
-                  "z-[1] bg-[rgba(137,180,255,0.26)] text-[var(--text)] shadow-[inset_0_0_0_1px_rgba(137,180,255,0.62),0_0_0_2px_rgba(137,180,255,0.12)]",
-              )}
-              disabled={!monthlyAvailable}
-              onClick={() => onPeriodChange("monthly")}
-              title={
-                monthlyAvailable
-                  ? "Monthly rollup"
-                  : "Monthly rollup requires weekly usage buckets"
-              }
-              type="button"
-            >
-              Monthly
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel="Usage period"
+            buttonClassName="min-w-[72px] px-2.5"
+            onChange={onPeriodChange}
+            options={periodOptions}
+            value={chart.period}
+          />
           <div
             className="inline-flex min-w-0 items-center gap-1.5 text-[0.76rem] text-[var(--text-dim)]"
             aria-label={chart.rangeLabel}

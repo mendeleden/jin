@@ -2,19 +2,34 @@ import { useEffect, useRef, useState } from "react";
 import type { JinDesktopBridge } from "./bridge";
 import { AppShell, type DesktopShellActions } from "./components/app-shell";
 import {
+  DesktopPreferencesProvider,
+  useDesktopPreferences,
+} from "./preferences";
+import {
   createInitialRendererState,
   DesktopRendererController,
   type RendererState,
 } from "./renderer";
 import "./styles.css";
 
-const DESKTOP_LIFECYCLE_REFRESH_MS = 5_000;
-
 export function DesktopReactApp({
   bridge = window.jinDesktop,
 }: {
   bridge?: JinDesktopBridge;
 }) {
+  return (
+    <DesktopPreferencesProvider>
+      <DesktopReactAppContent bridge={bridge} />
+    </DesktopPreferencesProvider>
+  );
+}
+
+function DesktopReactAppContent({
+  bridge,
+}: {
+  bridge: JinDesktopBridge;
+}) {
+  const { refreshIntervalMs } = useDesktopPreferences();
   const controllerRef = useRef<DesktopRendererController | null>(null);
   const [state, setState] = useState<RendererState>(() =>
     createInitialRendererState(),
@@ -29,9 +44,16 @@ export function DesktopReactApp({
 
     setState(controller.getSnapshot());
 
+    return () => {
+      controllerRef.current = null;
+    };
+  }, [bridge]);
+
+  useEffect(() => {
     let refreshInFlight = false;
     const refreshLifecycle = async () => {
-      if (refreshInFlight) {
+      const controller = controllerRef.current;
+      if (!controller || refreshInFlight) {
         return;
       }
       refreshInFlight = true;
@@ -48,14 +70,13 @@ export function DesktopReactApp({
     void refreshLifecycle();
     const refreshInterval = window.setInterval(
       () => void refreshLifecycle(),
-      DESKTOP_LIFECYCLE_REFRESH_MS,
+      refreshIntervalMs,
     );
 
     return () => {
       window.clearInterval(refreshInterval);
-      controllerRef.current = null;
     };
-  }, [bridge]);
+  }, [bridge, refreshIntervalMs]);
 
   const actions: DesktopShellActions = {
     openConversation(conversationId) {

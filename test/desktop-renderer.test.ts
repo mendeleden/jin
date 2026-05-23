@@ -524,6 +524,9 @@ describe("desktop renderer", () => {
     expect(conversationsHtml).toContain("Conversation index");
     expect(conversationsHtml).toContain("Metadata");
     expect(logsHtml).toContain("Daemon log tail");
+    expect(settingsHtml).toContain("Shell refresh");
+    expect(settingsHtml).toContain("Every 30s");
+    expect(settingsHtml).toContain("Desktop auto-refresh interval");
     expect(settingsHtml).toContain("Daemon status");
   });
 
@@ -574,15 +577,31 @@ describe("desktop renderer", () => {
   });
 
   test("desktop renderer polls lifecycle snapshots so external daemon changes reconcile", () => {
-    const source = readFileSync(
+    const rendererSource = readFileSync(
       new URL("../desktop/react-renderer.tsx", import.meta.url),
       "utf8",
     );
+    const preferencesSource = readFileSync(
+      new URL("../desktop/preferences.tsx", import.meta.url),
+      "utf8",
+    );
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
 
-    expect(source).toContain("DESKTOP_LIFECYCLE_REFRESH_MS");
-    expect(source).toContain("window.setInterval");
-    expect(source).toContain("preserveMessage: true");
-    expect(source).toContain("window.clearInterval");
+    expect(rendererSource).toContain("DesktopPreferencesProvider");
+    expect(rendererSource).toContain("refreshIntervalMs");
+    expect(rendererSource).toContain("window.setInterval");
+    expect(rendererSource).toContain("preserveMessage: true");
+    expect(rendererSource).toContain("window.clearInterval");
+    expect(rendererSource).not.toContain("DESKTOP_LIFECYCLE_REFRESH_MS");
+    expect(preferencesSource).toContain(
+      "DEFAULT_DESKTOP_REFRESH_INTERVAL_MS: DesktopRefreshIntervalMs =\n  30_000",
+    );
+    expect(preferencesSource).toContain("localStorage");
+    expect(settingsSource).toContain("DESKTOP_REFRESH_INTERVAL_OPTIONS");
+    expect(settingsSource).toContain("Shell refresh");
   });
 
   test("desktop topbar exposes a draggable Electron titlebar region", () => {
@@ -616,6 +635,7 @@ describe("desktop renderer", () => {
     expect(primitiveSources.join("\n")).toContain("function StatusBadge");
     expect(primitiveSources.join("\n")).toContain("function PanelHeader");
     expect(primitiveSources.join("\n")).toContain("function FieldGrid");
+    expect(primitiveSources.join("\n")).toContain("function SegmentedControl");
 
     for (const source of migratedSources) {
       expect(source).not.toContain("toolbar-button");
