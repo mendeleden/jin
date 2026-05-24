@@ -14,10 +14,7 @@ body,
 body {
   margin: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top left, rgba(84, 128, 210, 0.16), transparent 29%),
-    radial-gradient(circle at bottom right, rgba(137, 212, 161, 0.08), transparent 28%),
-    linear-gradient(180deg, #080b11 0%, #06080d 50%, #080b11 100%);
+  background: var(--app-bg);
   color: var(--text);
   font-family: var(--sans);
 }

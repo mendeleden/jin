@@ -16,6 +16,12 @@ import {
   type DesktopLayoutPreferences,
 } from "../desktop/layout/preferences";
 import {
+  DesktopPreferencesProvider,
+  useDesktopPreferences,
+  type DesktopPreferences,
+} from "../desktop/preferences";
+import { SettingsWorkspace } from "../desktop/views/settings/workspace";
+import {
   DashboardGrid,
   type DashboardGridItemContext,
 } from "../desktop/views/home/dashboard-grid";
@@ -362,8 +368,13 @@ describe("desktop renderer", () => {
 
     expect(css).toContain('@import "tailwindcss"');
     expect(css).toContain('@import "./theme.css"');
+    expect(css).toContain("background: var(--app-bg)");
     expect(theme).toContain("--radius-panel");
     expect(theme).toContain("--accent:");
+    expect(theme).toContain(':root[data-theme="light"]');
+    expect(theme).toContain("--sidebar-bg:");
+    expect(theme).toContain("--control-selected-bg:");
+    expect(theme).toContain("--home-usage-panel-bg:");
     expect(css).not.toContain(".home-pulse-panel");
     expect(css).not.toContain(".dashboard-grid");
     expect(css).not.toContain(".usage-chart-controls");
@@ -773,6 +784,62 @@ describe("desktop renderer", () => {
     expect(preferencesSource).toContain("localStorage");
     expect(settingsSource).toContain("DESKTOP_REFRESH_INTERVAL_OPTIONS");
     expect(settingsSource).toContain("Shell refresh");
+  });
+
+  test("desktop appearance theme is preference-owned and rendered in Settings", () => {
+    const rendererSource = readFileSync(
+      new URL("../desktop/react-renderer.tsx", import.meta.url),
+      "utf8",
+    );
+    const preferencesSource = readFileSync(
+      new URL("../desktop/preferences.tsx", import.meta.url),
+      "utf8",
+    );
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+
+    withFakeWindowLocalStorage(
+      {
+        "jin.desktop.themeMode": "light",
+      },
+      (storage) => {
+        const preferences = renderDesktopPreferencesProbe();
+        expect(preferences.themeMode).toBe("light");
+        preferences.setThemeMode("dark");
+        expect(storage.getItem("jin.desktop.themeMode")).toBe("dark");
+      },
+    );
+
+    const html = withFakeWindowLocalStorage(
+      {
+        "jin.desktop.themeMode": "light",
+      },
+      () =>
+        renderToStaticMarkup(
+          createElement(
+            DesktopPreferencesProvider,
+            null,
+            createElement(SettingsWorkspace, {
+              state: makeState({
+                activeView: "settings",
+                snapshot: makeSnapshot("running"),
+              }),
+            }),
+          ),
+        ),
+    );
+
+    expect(rendererSource).toContain("data-theme={themeMode}");
+    expect(preferencesSource).toContain("DESKTOP_THEME_MODE_STORAGE_KEY");
+    expect(preferencesSource).toContain("applyDesktopThemeMode");
+    expect(settingsSource).toContain("ThemeModeToggle");
+    expect(settingsSource).toContain("DESKTOP_THEME_MODE_OPTIONS");
+    expect(html).toContain('data-theme-mode-toggle="true"');
+    expect(html).toContain('aria-label="Desktop theme mode"');
+    expect(html).toContain("Light");
+    expect(html).toContain('aria-pressed="true"');
   });
 
   test("desktop topbar exposes a draggable Electron titlebar region", () => {
@@ -1766,10 +1833,41 @@ function renderLayoutPreferencesProbe(): DesktopLayoutPreferences {
   return preferences;
 }
 
+function renderDesktopPreferencesProbe(): DesktopPreferences {
+  let preferences: DesktopPreferences | null = null;
+
+  function CaptureDesktopPreferences() {
+    preferences = useDesktopPreferences();
+    return createElement("div", null, preferences.themeMode);
+  }
+
+  renderToStaticMarkup(
+    createElement(
+      DesktopPreferencesProvider,
+      null,
+      createElement(CaptureDesktopPreferences),
+    ),
+  );
+
+  if (!preferences) {
+    throw new Error("Expected desktop preferences to render");
+  }
+
+  return preferences;
+}
+
 function withFakeWindowLocalStorage(
-  initialValue: string | null,
+  initialValue: string | null | Record<string, string | null>,
   callback: (storage: FakeLocalStorage) => void,
-): void {
+): void;
+function withFakeWindowLocalStorage<TResult>(
+  initialValue: string | null | Record<string, string | null>,
+  callback: (storage: FakeLocalStorage) => TResult,
+): TResult;
+function withFakeWindowLocalStorage<TResult>(
+  initialValue: string | null | Record<string, string | null>,
+  callback: (storage: FakeLocalStorage) => TResult,
+): TResult {
   const globalWithWindow = globalThis as typeof globalThis & {
     window?: { localStorage: FakeLocalStorage };
   };
@@ -1778,7 +1876,7 @@ function withFakeWindowLocalStorage(
 
   globalWithWindow.window = { localStorage: storage };
   try {
-    callback(storage);
+    return callback(storage);
   } finally {
     if (previousWindow) {
       globalWithWindow.window = previousWindow;
@@ -1789,18 +1887,29 @@ function withFakeWindowLocalStorage(
 }
 
 class FakeLocalStorage {
-  private value: string | null;
+  private readonly values = new Map<string, string>();
+  private readonly fallbackValue: string | null;
 
-  constructor(value: string | null) {
-    this.value = value;
+  constructor(value: string | null | Record<string, string | null>) {
+    if (typeof value === "object" && value !== null) {
+      this.fallbackValue = null;
+      for (const [key, item] of Object.entries(value)) {
+        if (item !== null) {
+          this.values.set(key, item);
+        }
+      }
+      return;
+    }
+
+    this.fallbackValue = value;
   }
 
-  getItem() {
-    return this.value;
+  getItem(key: string) {
+    return this.values.get(key) ?? this.fallbackValue;
   }
 
-  setItem(_key: string, value: string) {
-    this.value = value;
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
   }
 }
 

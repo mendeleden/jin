@@ -32,7 +32,7 @@ function DesktopReactAppContent({
 }: {
   bridge: JinDesktopBridge;
 }) {
-  const { refreshIntervalMs } = useDesktopPreferences();
+  const { refreshIntervalMs, themeMode } = useDesktopPreferences();
   const controllerRef = useRef<DesktopRendererController | null>(null);
   const [state, setState] = useState<RendererState>(() =>
     createInitialRendererState(),
@@ -115,7 +115,7 @@ function DesktopReactAppContent({
   };
 
   return (
-    <div className="desktop-react-root">
+    <div className="desktop-react-root" data-theme={themeMode}>
       <AppShell actions={actions} state={state} />
     </div>
   );

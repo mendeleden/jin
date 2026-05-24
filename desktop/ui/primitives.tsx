@@ -27,7 +27,7 @@ export function SegmentedControl<TValue extends number | string>({
     <div
       aria-label={ariaLabel}
       className={cx(
-        "inline-flex min-h-[34px] overflow-hidden rounded-[var(--radius-control)] border border-[rgba(210,224,255,0.12)] bg-[rgba(13,19,29,0.82)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
+        "inline-flex min-h-[34px] overflow-hidden rounded-[var(--radius-control)] border border-[var(--control-border)] bg-[var(--control-bg)] shadow-[inset_0_1px_0_var(--control-highlight)]",
         className,
       )}
       role="group"
@@ -38,10 +38,10 @@ export function SegmentedControl<TValue extends number | string>({
           <button
             aria-pressed={selected}
             className={cx(
-              "relative cursor-pointer border-0 border-l border-[rgba(210,224,255,0.08)] bg-transparent px-2 py-[5px] text-[0.76rem] font-semibold text-[rgba(164,175,196,0.72)] transition-[background-color,color,box-shadow] first:border-l-0 hover:text-[var(--text-soft)] disabled:cursor-default disabled:opacity-45",
+              "relative cursor-pointer border-0 border-l border-[var(--control-border-subtle)] bg-transparent px-2 py-[5px] text-[0.76rem] font-semibold text-[var(--control-text)] transition-[background-color,color,box-shadow] first:border-l-0 hover:text-[var(--text-soft)] disabled:cursor-default disabled:opacity-45",
               buttonClassName,
               selected &&
-                "z-[1] bg-[linear-gradient(180deg,rgba(58,75,101,0.98),rgba(43,60,84,0.98))] font-bold text-[#f6f8fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.075)] hover:text-[#f6f8fd]",
+                "z-[1] bg-[var(--control-selected-bg)] font-bold text-[var(--control-selected-text)] shadow-[var(--control-selected-shadow)] hover:text-[var(--control-selected-text)]",
             )}
             data-selected={selected ? "true" : undefined}
             disabled={option.disabled}
@@ -83,10 +83,10 @@ export function EmptyState({
 export function ListPlaceholder({ className = "" }: { className?: string }) {
   return (
     <div className={cx("grid gap-2.5", className)}>
-      <div className="h-[76px] rounded-xl bg-[linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04))]" />
-      <div className="h-14 rounded-xl bg-[linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04))]" />
-      <div className="h-14 rounded-xl bg-[linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04))]" />
-      <div className="h-14 w-[74%] rounded-xl bg-[linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04))]" />
+      <div className="h-[76px] rounded-xl bg-[var(--placeholder-bg)]" />
+      <div className="h-14 rounded-xl bg-[var(--placeholder-bg)]" />
+      <div className="h-14 rounded-xl bg-[var(--placeholder-bg)]" />
+      <div className="h-14 w-[74%] rounded-xl bg-[var(--placeholder-bg)]" />
     </div>
   );
 }
@@ -107,7 +107,7 @@ export function FieldGrid({
 
 export function RuntimeField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-2 rounded-xl border border-[var(--line)] bg-white/[0.03] p-3">
+    <div className="flex min-w-0 flex-col gap-2 rounded-xl border border-[var(--line)] bg-[var(--field-bg)] p-3">
       <span className="text-[0.72rem] uppercase tracking-normal text-[var(--text-dim)]">
         {label}
       </span>

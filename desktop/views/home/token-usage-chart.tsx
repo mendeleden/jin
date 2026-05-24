@@ -233,7 +233,7 @@ export function TokenUsageChart({
           >
             <Button
               aria-label="Previous usage window"
-              className="h-[30px] w-[30px] border-[rgba(137,180,255,0.3)] bg-[linear-gradient(180deg,rgba(137,180,255,0.18),rgba(137,180,255,0.08))] p-0 text-[var(--text)] hover:border-[rgba(137,180,255,0.55)] hover:bg-[linear-gradient(180deg,rgba(137,180,255,0.28),rgba(137,180,255,0.12))] hover:shadow-[0_0_0_3px_rgba(137,180,255,0.08)] disabled:cursor-default disabled:border-[rgba(210,224,255,0.07)] disabled:bg-white/[0.02] disabled:text-[rgba(164,175,196,0.32)] disabled:opacity-100"
+              className="h-[30px] w-[30px] border-[var(--control-selected-border)] bg-[var(--accent-soft)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--accent-softer)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
               disabled={!chart.canGoPrevious}
               onClick={onPreviousWindow}
               title="Previous window"
@@ -242,7 +242,7 @@ export function TokenUsageChart({
             </Button>
             <span
               className={cx(
-                "min-w-[118px] max-w-[178px] truncate rounded-full border border-[rgba(210,224,255,0.1)] bg-white/[0.035] px-2.5 py-[7px] text-center",
+                "min-w-[118px] max-w-[178px] truncate rounded-full border border-[var(--control-border)] bg-[var(--field-bg)] px-2.5 py-[7px] text-center",
                 compactChrome && "hidden",
                 "max-[1220px]:hidden",
               )}
@@ -252,7 +252,7 @@ export function TokenUsageChart({
             </span>
             <Button
               aria-label="Next usage window"
-              className="h-[30px] w-[30px] border-[rgba(137,180,255,0.3)] bg-[linear-gradient(180deg,rgba(137,180,255,0.18),rgba(137,180,255,0.08))] p-0 text-[var(--text)] hover:border-[rgba(137,180,255,0.55)] hover:bg-[linear-gradient(180deg,rgba(137,180,255,0.28),rgba(137,180,255,0.12))] hover:shadow-[0_0_0_3px_rgba(137,180,255,0.08)] disabled:cursor-default disabled:border-[rgba(210,224,255,0.07)] disabled:bg-white/[0.02] disabled:text-[rgba(164,175,196,0.32)] disabled:opacity-100"
+              className="h-[30px] w-[30px] border-[var(--control-selected-border)] bg-[var(--accent-soft)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--accent-softer)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
               disabled={!chart.canGoNext}
               onClick={onNextWindow}
               title="Next window"
@@ -270,19 +270,19 @@ export function TokenUsageChart({
         )}
         data-usage-chart-kpis
       >
-        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
+        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-[var(--field-bg)] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatMetricNumber(totalTokens).display}
           </strong>
           {compactChrome ? "tok" : "tokens"}
         </span>
-        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
+        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-[var(--field-bg)] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatNumber(totalSessions)}
           </strong>
           {compactChrome ? "conv" : "conversations"}
         </span>
-        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-white/[0.028] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
+        <span className="grid min-w-0 gap-1 rounded-[10px] border border-[var(--line)] bg-[var(--field-bg)] px-2.5 py-2 text-[0.7rem] text-[var(--text-dim)]">
           <strong className="text-[0.98rem] text-[var(--text)]">
             {formatCost(totalCost)}
           </strong>
@@ -291,7 +291,7 @@ export function TokenUsageChart({
       </div>
       <div
         className={cx(
-          "relative overflow-hidden rounded-[14px] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.014)),radial-gradient(circle_at_70%_18%,rgba(137,180,255,0.1),transparent_32%)]",
+          "relative overflow-hidden rounded-[14px] border border-[var(--line)] bg-[var(--chart-frame-bg)]",
           chartSize.className,
         )}
       >
@@ -334,7 +334,7 @@ export function TokenUsageChart({
             </defs>
             <CartesianGrid
               horizontal
-              stroke="rgba(210, 224, 255, 0.11)"
+              stroke="var(--chart-grid)"
               strokeDasharray="4 7"
               vertical={false}
             />
@@ -366,7 +366,7 @@ export function TokenUsageChart({
             />
             <RechartsTooltip
               content={<UsageChartTooltip metric={metric} />}
-              cursor={{ stroke: "rgba(246, 248, 253, 0.5)", strokeDasharray: "6 6" }}
+              cursor={{ stroke: "var(--chart-cursor)", strokeDasharray: "6 6" }}
             />
             {series.map((adapter) =>
               useWeeklyBars ? (
@@ -477,26 +477,26 @@ function UsageChartTooltip({
     .sort((left, right) => Number(right.value) - Number(left.value));
 
   return (
-    <div className="pointer-events-none static grid min-w-[190px] gap-2 rounded-xl border border-[rgba(210,224,255,0.18)] bg-[rgba(17,22,32,0.86)] p-3 shadow-[0_18px_38px_rgba(0,0,0,0.28)] backdrop-blur-[14px]">
+    <div className="pointer-events-none static grid min-w-[190px] gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--tooltip-bg)] p-3 shadow-[var(--shadow)] backdrop-blur-[14px]">
       <strong className="text-[0.92rem] text-[var(--text)]">{label}</strong>
       {rows[0]?.payload ? (
         <>
           <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[rgba(246,248,253,0.72)]" />
+            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
             tokens
             <b className="font-semibold text-[var(--text)]">
               {formatMetricNumber(rows[0].payload.totalTokens).display}
             </b>
           </span>
           <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[rgba(246,248,253,0.72)]" />
+            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
             conversations
             <b className="font-semibold text-[var(--text)]">
               {formatNumber(rows[0].payload.totalSessions)}
             </b>
           </span>
           <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[rgba(246,248,253,0.72)]" />
+            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
             est. cost
             <b className="font-semibold text-[var(--text)]">
               {formatCost(rows[0].payload.totalCost)}
@@ -536,7 +536,7 @@ function UsageSessionRail({
   return (
     <div
       className={cx(
-        "grid h-[34px] grid-flow-col auto-cols-[minmax(6px,1fr)] items-end gap-[3px] rounded-[10px] border border-[rgba(210,224,255,0.08)] bg-white/[0.02] p-1.5",
+        "grid h-[34px] grid-flow-col auto-cols-[minmax(6px,1fr)] items-end gap-[3px] rounded-[10px] border border-[var(--control-border-subtle)] bg-[var(--field-bg)] p-1.5",
         className,
       )}
       aria-label="Conversation volume by day"
@@ -551,7 +551,7 @@ function UsageSessionRail({
         >
           <i
             className={cx(
-              "block w-full rounded-t-full rounded-b-[3px] bg-[linear-gradient(180deg,rgba(246,248,253,0.7),rgba(137,180,255,0.36))]",
+              "block w-full rounded-t-full rounded-b-[3px] bg-[linear-gradient(180deg,var(--text-soft),var(--accent-soft))]",
               usageHeightClass(day.totalSessions, maxSessions, 10),
             )}
           />

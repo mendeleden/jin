@@ -8,10 +8,10 @@ const BUTTON_BASE =
   "inline-flex items-center justify-center gap-[7px] rounded-[var(--radius-control)] border border-[var(--line)] text-[var(--text)] transition-[border-color,background,transform] duration-150 hover:border-[var(--line-strong)] disabled:pointer-events-none disabled:opacity-55 [&_svg]:h-[15px] [&_svg]:w-[15px] [&_svg]:shrink-0";
 
 const BUTTON_VARIANT_CLASS: Record<ButtonVariant, string> = {
-  default: "bg-white/[0.03]",
+  default: "bg-[var(--field-bg)]",
   primary:
-    "border-[rgba(137,180,255,0.36)] bg-[linear-gradient(180deg,rgba(137,180,255,0.94),rgba(84,124,197,0.94))] font-bold text-[#07101e]",
-  subtle: "bg-white/[0.03] px-[9px]",
+    "border-[var(--control-selected-border)] bg-[var(--control-selected-bg)] font-bold text-[var(--control-selected-text)]",
+  subtle: "bg-[var(--field-bg)] px-[9px]",
 };
 
 const BUTTON_SIZE_CLASS: Record<ButtonSize, string> = {

@@ -90,7 +90,7 @@ function Sidebar({
   return (
     <aside
       className={cx(
-        "flex h-full min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--line)] bg-[linear-gradient(180deg,rgba(12,15,23,0.98),rgba(10,12,20,0.96)),linear-gradient(180deg,transparent,rgba(255,255,255,0.02))] px-3.5 pb-4 pt-12 backdrop-blur-[14px] max-[880px]:border-r-0 max-[880px]:border-b",
+        "flex h-full min-h-0 flex-col gap-3 overflow-hidden border-r border-[var(--line)] bg-[var(--sidebar-bg)] px-3.5 pb-4 pt-12 backdrop-blur-[14px] max-[880px]:border-r-0 max-[880px]:border-b",
         collapsed && "items-center gap-2.5 px-2.5 pb-3.5",
       )}
       data-sidebar
@@ -112,9 +112,9 @@ function Sidebar({
           <button
             aria-current={state.activeView === view ? "page" : undefined}
             className={cx(
-              "relative flex min-h-9 w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[9px] border border-transparent bg-transparent px-2.5 py-2 text-left font-semibold leading-none text-[var(--text-soft)] transition-colors hover:border-[rgba(137,180,255,0.14)] hover:bg-white/[0.03] hover:text-[var(--text)]",
+              "relative flex min-h-9 w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[9px] border border-transparent bg-transparent px-2.5 py-2 text-left font-semibold leading-none text-[var(--text-soft)] transition-colors hover:border-[var(--control-border-hover)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)]",
               state.activeView === view &&
-                "border-[rgba(137,180,255,0.22)] bg-[linear-gradient(180deg,rgba(137,180,255,0.12),rgba(137,180,255,0.04))] text-[var(--accent-strong)]",
+                "border-[var(--control-selected-border)] bg-[var(--accent-soft)] text-[var(--accent-strong)]",
               collapsed && "h-10 w-10 justify-center p-0",
             )}
             key={view}
@@ -125,9 +125,9 @@ function Sidebar({
             <span
               aria-hidden="true"
               className={cx(
-                "inline-flex h-[22px] w-[22px] flex-none items-center justify-center rounded-lg border border-[rgba(210,224,255,0.08)] bg-white/[0.025] text-current transition-colors [&_svg]:h-4 [&_svg]:w-4 [&_svg]:fill-none [&_svg]:stroke-current [&_svg]:stroke-[1.8]",
+                "inline-flex h-[22px] w-[22px] flex-none items-center justify-center rounded-lg border border-[var(--control-border-subtle)] bg-[var(--control-bg-subtle)] text-current transition-colors [&_svg]:h-4 [&_svg]:w-4 [&_svg]:fill-none [&_svg]:stroke-current [&_svg]:stroke-[1.8]",
                 state.activeView === view &&
-                  "border-[rgba(137,180,255,0.3)] bg-[rgba(137,180,255,0.12)]",
+                  "border-[var(--control-selected-border)] bg-[var(--control-selected-icon-bg)]",
                 collapsed && "h-[26px] w-[26px]",
               )}
             >
@@ -243,7 +243,7 @@ function SidebarBrand({
           collapsed && "hidden",
         )}
       >
-        <span className="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-[11px] border border-[rgba(210,224,255,0.14)] bg-[#f8fafc] shadow-[0_10px_26px_rgba(0,0,0,0.22)]">
+        <span className="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-[11px] border border-[var(--control-border)] bg-[var(--brand-tile-bg)] shadow-[var(--shadow)]">
           <img
             alt=""
             className="h-full w-full object-cover"
@@ -263,9 +263,9 @@ function SidebarBrand({
       <button
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         className={cx(
-          "inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-[11px] border border-[var(--line)] bg-white/[0.035] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-white/[0.055] hover:text-[var(--text)] focus-visible:border-[rgba(137,180,255,0.5)] focus-visible:outline-none",
+          "inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-[11px] border border-[var(--line)] bg-[var(--field-bg)] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none",
           collapsed &&
-            "bg-[#f8fafc] p-0 text-[#314255] shadow-[0_10px_26px_rgba(0,0,0,0.22)] hover:bg-white hover:text-[#26394a]",
+            "bg-[var(--brand-tile-bg)] p-0 text-[var(--brand-tile-text)] shadow-[var(--shadow)] hover:bg-[var(--brand-tile-bg)] hover:text-[var(--brand-tile-text)]",
         )}
         onClick={onToggleSidebar}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -329,7 +329,7 @@ function SidebarMetric({
               <RadixTooltip.Trigger asChild>
                 <button
                   aria-label={ESTIMATED_COST_HELP}
-                  className="inline-flex h-[17px] w-[17px] cursor-pointer items-center justify-center rounded-full border border-[rgba(210,224,255,0.2)] bg-[rgba(137,180,255,0.08)] p-0 text-[var(--accent-strong)] outline-none hover:border-[rgba(137,180,255,0.4)] focus-visible:border-[rgba(137,180,255,0.4)] data-[state=delayed-open]:border-[rgba(137,180,255,0.56)] data-[state=delayed-open]:bg-[rgba(137,180,255,0.16)] data-[state=instant-open]:border-[rgba(137,180,255,0.56)] data-[state=instant-open]:bg-[rgba(137,180,255,0.16)] [&_svg]:h-[11px] [&_svg]:w-[11px]"
+                  className="inline-flex h-[17px] w-[17px] cursor-pointer items-center justify-center rounded-full border border-[var(--control-border)] bg-[var(--accent-softer)] p-0 text-[var(--accent-strong)] outline-none hover:border-[var(--control-border-hover)] focus-visible:border-[var(--control-border-hover)] data-[state=delayed-open]:border-[var(--control-selected-border)] data-[state=delayed-open]:bg-[var(--accent-soft)] data-[state=instant-open]:border-[var(--control-selected-border)] data-[state=instant-open]:bg-[var(--accent-soft)] [&_svg]:h-[11px] [&_svg]:w-[11px]"
                   data-cost-popover-trigger="estimated-cost"
                   type="button"
                 >
@@ -338,13 +338,13 @@ function SidebarMetric({
               </RadixTooltip.Trigger>
               <RadixTooltip.Portal>
                 <RadixTooltip.Content
-                  className="z-[1000] w-[260px] max-w-[min(260px,calc(100vw-36px))] rounded-[10px] border border-[rgba(210,224,255,0.18)] bg-[rgba(8,12,19,0.98)] px-2.5 py-[9px] text-[0.74rem] leading-[1.4] text-[var(--text-soft)] shadow-[0_16px_34px_rgba(0,0,0,0.36)] max-[880px]:w-auto max-[880px]:max-w-[calc(100vw-36px)]"
+                  className="z-[1000] w-[260px] max-w-[min(260px,calc(100vw-36px))] rounded-[10px] border border-[var(--line-strong)] bg-[var(--tooltip-bg)] px-2.5 py-[9px] text-[0.74rem] leading-[1.4] text-[var(--text-soft)] shadow-[var(--shadow)] max-[880px]:w-auto max-[880px]:max-w-[calc(100vw-36px)]"
                   data-cost-popover="estimated-cost"
                   side="right"
                   sideOffset={8}
                 >
                   {ESTIMATED_COST_HELP}
-                  <RadixTooltip.Arrow className="fill-[rgba(8,12,19,0.98)]" />
+                  <RadixTooltip.Arrow className="fill-[var(--tooltip-arrow)]" />
                 </RadixTooltip.Content>
               </RadixTooltip.Portal>
             </RadixTooltip.Root>
@@ -521,8 +521,8 @@ export function NoticeStack({ state }: { state: RendererState }) {
           className={cx(
             "rounded-xl border px-3 py-2.5 text-[0.9rem]",
             notice.tone === "warning"
-              ? "border-[rgba(240,196,109,0.2)] bg-[rgba(240,196,109,0.08)] text-[#f4d79a]"
-              : "border-[rgba(137,180,255,0.16)] bg-[rgba(137,180,255,0.08)] text-[var(--accent-strong)]",
+              ? "border-[var(--warning-soft)] bg-[var(--warning-soft)] text-[var(--warning)]"
+              : "border-[var(--accent-soft)] bg-[var(--accent-softer)] text-[var(--accent-strong)]",
           )}
           key={`${notice.value}-${index}`}
         >

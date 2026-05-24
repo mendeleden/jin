@@ -51,7 +51,7 @@ export function HomePulsePanel({
 
   return (
     <Panel
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_4%,rgba(137,180,255,0.16),transparent_30%),radial-gradient(circle_at_78%_0%,rgba(137,212,161,0.1),transparent_28%),linear-gradient(180deg,rgba(14,20,31,0.95),rgba(7,10,16,0.95))]"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--home-usage-panel-bg)]"
       data-home-panel-density={panel.density}
       data-home-panel-height={panel.height}
       data-home-panel-stack-below={String(panel.stackedBelowPx)}
@@ -106,7 +106,7 @@ export function HomeProjectActivityPanel({
 
   return (
     <Panel
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(240,196,109,0.1),transparent_30%),linear-gradient(180deg,rgba(14,19,28,0.95),rgba(7,10,16,0.95))]"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--home-project-panel-bg)]"
       data-home-panel-density={panel.density}
       data-home-panel-height={panel.height}
       data-home-panel-stack-below={String(panel.stackedBelowPx)}
@@ -142,7 +142,7 @@ export function HomeProjectActivityPanel({
             return (
               <article
                 className={cx(
-                  "min-w-0 rounded-xl border border-[rgba(210,224,255,0.08)] bg-white/[0.024]",
+                  "min-w-0 rounded-xl border border-[var(--control-border-subtle)] bg-[var(--item-bg)]",
                   panel.density === "compact"
                     ? "px-2 py-2"
                     : "px-2.5 pb-2.5 pt-[9px]",
@@ -162,7 +162,7 @@ export function HomeProjectActivityPanel({
                 </div>
                 <div
                   className={cx(
-                    "mt-2 overflow-hidden rounded-full bg-[rgba(210,224,255,0.075)]",
+                    "mt-2 overflow-hidden rounded-full bg-[var(--track-bg)]",
                     showProjectMeta ? "my-[7px] h-2.5" : "h-2",
                   )}
                   title={`${formatProjectReference(project.name)}: ${formatHomeMetricValue(
@@ -300,7 +300,7 @@ export function HomeAdapterMixPanel({
               totals.find((entry) => entry.adapterId === adapterId)?.value ?? 0;
             return (
               <article
-                className="grid min-w-0 grid-cols-[10px_minmax(0,1fr)] items-center gap-x-2.5 gap-y-2 rounded-xl border border-[rgba(210,224,255,0.08)] bg-white/[0.024] px-2.5 py-[9px]"
+                className="grid min-w-0 grid-cols-[10px_minmax(0,1fr)] items-center gap-x-2.5 gap-y-2 rounded-xl border border-[var(--control-border-subtle)] bg-[var(--item-bg)] px-2.5 py-[9px]"
                 key={adapterId}
               >
                 <i
@@ -321,7 +321,7 @@ export function HomeAdapterMixPanel({
                 </div>
                 <div
                   className={cx(
-                    "col-start-2 grid grid-flow-col auto-cols-[minmax(5px,1fr)] items-end gap-[3px] rounded-[10px] bg-[rgba(210,224,255,0.045)]",
+                    "col-start-2 grid grid-flow-col auto-cols-[minmax(5px,1fr)] items-end gap-[3px] rounded-[10px] bg-[var(--track-bg)]",
                     panel.density === "compact" ? "h-[24px] p-1" : "h-[34px] p-[5px]",
                   )}
                   aria-hidden="true"
