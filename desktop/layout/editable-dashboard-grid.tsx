@@ -139,7 +139,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
             x: interaction.startPanel.x + deltaX,
             y: interaction.startPanel.y + deltaY,
           },
-          { columns },
+          { columns, rows },
         ),
       );
       return;
@@ -153,7 +153,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
           h: interaction.startPanel.h + deltaY,
           w: interaction.startPanel.w + deltaX,
         },
-        { columns, handle: "se" },
+        { columns, handle: "se", rows },
       ),
     );
   }
@@ -186,7 +186,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
           x: panelLayout.x + delta.x,
           y: panelLayout.y + delta.y,
         },
-        { columns },
+        { columns, rows },
       ),
     );
   }
@@ -209,7 +209,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
           h: panelLayout.h + delta.y,
           w: panelLayout.w + delta.x,
         },
-        { columns, handle: "se" },
+        { columns, handle: "se", rows },
       ),
     );
   }

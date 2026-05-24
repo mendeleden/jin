@@ -1,7 +1,7 @@
 ---
 title: Desktop Dynamic Layouts
 phase: W4 Desktop
-status: draft
+status: implementation-hardening
 created: 2026-05-23
 ---
 
@@ -11,9 +11,9 @@ created: 2026-05-23
 
 Jin Desktop is moving from a large renderer/CSS surface toward modular,
 surface-owned React components with Tailwind utilities and explicit layout
-models. W4-DESKTOP-08 created the first dynamic-layout seam: Home panels now
-render from a typed registry and `{ panelId, x, y, w, h }` layout data instead
-of hard-coded panel placement.
+models. W4-DESKTOP-09 owns the active dynamic-layout lane: Home panels now
+render from typed registry and `{ panelId, x, y, w, h }` layout data instead of
+hard-coded panel placement.
 
 The next step is to make Home panels user-adjustable without weakening the
 Desktop daemon boundary or reintroducing renderer inline-style/CSP regressions.
@@ -23,7 +23,7 @@ access.
 
 Relevant source material:
 
-- `docs/execution/tasks/W4-DESKTOP-08-modular-layout-foundation.md`
+- `docs/execution/tasks/W4-DESKTOP-09-home-dynamic-layout.md`
 - `docs/brainstorms/2026-05-22-desktop-modular-css-dynamic-layout.md`
 - `docs/blueprint/BP-11-desktop-daemon-boundary.md`
 - `docs/solutions/2026-05-11-desktop-csp-requires-class-based-renderer-visuals.md`
@@ -203,10 +203,24 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
    schema version in storage. Unknown panel IDs, invalid numbers, or old
    versions should fall back to defaults or migrate safely.
 
+   Completed on 2026-05-23 and hardened on 2026-05-24. Home layouts persist to
+   renderer `localStorage` under `jin.desktop.layouts.v1` after explicit Save.
+   The edit reducer keeps drafts local until Save, Cancel discards them without
+   storage writes, and corrupt or overlapping stored layouts normalize back to
+   defaults.
+
 7. **Validate visually and statically**
    Add static renderer tests for layout data and controls. Use Computer Use or
    browser-style screenshot checks for Home default, Home edit mode, resized
    chart panel, and reset behavior at desktop and narrow widths.
+
+   In progress. Static validation covers renderer isolation, row-budget
+   collision safety, storage fallback, explicit edit lifecycle, and stacked
+   render context. Computer Use can attach to Electron and confirms Home is
+   nonblank in read-only mode and exposes edit-mode controls in the
+   accessibility tree; screenshot capture is currently stale relative to the
+   accessibility tree during HMR, so resized-state screenshot evidence remains
+   a follow-up visual artifact rather than a code blocker.
 
 8. **Commit in small slices**
    Use one commit for the spike decision, one for preference/schema plumbing,
@@ -272,13 +286,28 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
 - [x] `bun run desktop:build`
 - [x] `git diff --check`
 
+### 2026-05-24 Review Finding Resolution Validation
+
+- [x] `bun run desktop:typecheck`
+- [x] `bun test test/desktop-layout-engine.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts`
+- [x] `bun run desktop:build`
+- [x] `git diff --check`
+- [x] Built renderer artifacts contain no `react-grid-layout`,
+      `react-draggable`, `react-resizable`, RGL layout style helper, or
+      `unsafe-inline` matches.
+- [x] Computer Use attached to the running Electron dev window and confirmed
+      Home read-only mode renders with populated chart/project/harness panels.
+- [x] Computer Use confirmed Home edit mode exposes Reset/Cancel/Save plus
+      move/resize handles in the accessibility tree.
+- [ ] Capture a resized-state screenshot once the stale Electron screenshot
+      issue is gone or a browser/Electron smoke path is added.
+
 ## Open Questions
 
-- Should Home layout changes save only after explicit Save, or autosave after
-  each drag/resize with undo?
+- Resolved for this lane: Home layout changes save only after explicit Save.
 - Should we expose layout reset in Home only, Settings only, or both?
-- Should layout preferences remain renderer `localStorage` for v1, or should we
-  design a narrow Electron user-data preference store before shipping?
+- Resolved for this lane: layout preferences remain renderer `localStorage` for
+  v1. A user-data preference store requires a separate BP-11 proposal.
 - Should mobile/narrow layout be user-customizable, or always derived from the
   desktop layout?
 - Is a 12-column snapped grid enough, or do we need pixel-level resizing for any
@@ -286,6 +315,6 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
 
 ## Approval Gate
 
-Do not implement dynamic dragging/resizing until this plan is approved or
-revised. The next implementation commit should be the package/CSP spike so the
-engine choice is evidence-based before we build persistence and product UI.
+The approval gate was satisfied by the 2026-05-23 spike and follow-up commits.
+Further work should stay packeted under W4-DESKTOP-09 or a successor packet and
+preserve the BP-11 renderer/daemon boundary.

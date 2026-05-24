@@ -1,5 +1,5 @@
 import { Check, Pencil, RotateCcw, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useReducer, type ReactNode } from "react";
 import { useDesktopLayoutPreferences } from "../../layout/preferences";
 import type { RendererState } from "../../renderer";
 import {
@@ -9,16 +9,16 @@ import {
 import type { DesktopShellActions } from "../../components/shell/actions";
 import { Button } from "../../ui/button";
 import { DashboardGrid } from "./dashboard-grid";
-import {
-  DEFAULT_HOME_PANEL_LAYOUT,
-  normalizeHomePanelLayout,
-  type HomePanelLayout,
-} from "./layout";
+import type { HomePanelLayout } from "./layout";
 import {
   HomeAdapterMixPanel,
   HomeProjectActivityPanel,
   HomePulsePanel,
 } from "./panels";
+import {
+  createHomeLayoutEditorState,
+  homeLayoutEditorReducer,
+} from "./layout-editor-state";
 
 export function HomeWorkspace({
   actions,
@@ -131,37 +131,34 @@ function HomeLayoutEditor({
   }): ReactNode;
 }) {
   const { homeLayout, setHomeLayout } = useDesktopLayoutPreferences();
-  const [editing, setEditing] = useState(false);
-  const [draftLayout, setDraftLayout] = useState<readonly HomePanelLayout[]>(
-    () => normalizeHomePanelLayout(homeLayout),
+  const [editorState, dispatchEditor] = useReducer(
+    homeLayoutEditorReducer,
+    homeLayout,
+    createHomeLayoutEditorState,
   );
 
   useEffect(() => {
-    if (!editing) {
-      setDraftLayout(normalizeHomePanelLayout(homeLayout));
-    }
-  }, [editing, homeLayout]);
+    dispatchEditor({ homeLayout, type: "sync" });
+  }, [homeLayout]);
 
   return children({
-    editing,
-    layout: editing ? draftLayout : homeLayout,
+    editing: editorState.editing,
+    layout: editorState.editing ? editorState.draftLayout : homeLayout,
     onCancel() {
-      setDraftLayout(normalizeHomePanelLayout(homeLayout));
-      setEditing(false);
+      dispatchEditor({ homeLayout, type: "cancel" });
     },
     onEdit() {
-      setDraftLayout(normalizeHomePanelLayout(homeLayout));
-      setEditing(true);
+      dispatchEditor({ homeLayout, type: "edit" });
     },
     onLayoutChange(nextLayout) {
-      setDraftLayout(normalizeHomePanelLayout(nextLayout));
+      dispatchEditor({ layout: nextLayout, type: "draft" });
     },
     onReset() {
-      setDraftLayout(normalizeHomePanelLayout(DEFAULT_HOME_PANEL_LAYOUT));
+      dispatchEditor({ type: "reset" });
     },
     onSave() {
-      setHomeLayout(draftLayout);
-      setEditing(false);
+      setHomeLayout(editorState.draftLayout);
+      dispatchEditor({ type: "saved" });
     },
   });
 }

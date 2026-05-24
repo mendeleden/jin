@@ -1,6 +1,7 @@
 export const HOME_LAYOUT_SCHEMA_VERSION = "home-grid-v1";
 export const HOME_GRID_COLUMNS = 12;
 export const HOME_GRID_ROWS = 12;
+export const HOME_GRID_STACK_BREAKPOINT_PX = 1220;
 
 export const HOME_PANEL_IDS = ["usage", "projects", "harnesses"] as const;
 
@@ -33,6 +34,7 @@ export interface HomePanelLayoutContext {
   density: HomePanelDensity;
   height: HomePanelHeight;
   layout: HomePanelLayout;
+  stackedBelowPx: number;
   width: HomePanelWidth;
 }
 
@@ -87,6 +89,7 @@ export function getHomePanelLayoutContext(
     density: getHomePanelDensity(layout, width, height),
     height,
     layout,
+    stackedBelowPx: HOME_GRID_STACK_BREAKPOINT_PX,
     width,
   };
 }
@@ -96,7 +99,7 @@ export function normalizeHomePanelLayout(
 ): HomePanelLayout[] {
   const layoutByPanel = new Map(layout.map((item) => [item.panelId, item]));
 
-  return HOME_PANEL_DEFINITIONS.map((definition) => {
+  const normalizedLayout = HOME_PANEL_DEFINITIONS.map((definition) => {
     const candidate = layoutByPanel.get(definition.id) ?? {
       panelId: definition.id,
       ...definition.defaultLayout,
@@ -114,6 +117,23 @@ export function normalizeHomePanelLayout(
       h,
     };
   });
+
+  if (!isHomePanelLayoutUsable(normalizedLayout)) {
+    return DEFAULT_HOME_PANEL_LAYOUT.map((item) => ({ ...item }));
+  }
+
+  return normalizedLayout;
+}
+
+export function isHomePanelLayoutUsable(
+  layout: readonly HomePanelLayout[],
+): boolean {
+  return layout.every((item) => isHomePanelWithinBoard(item)) &&
+    !layout.some((item, index) =>
+      layout
+        .slice(index + 1)
+        .some((candidate) => homePanelsOverlap(item, candidate)),
+    );
 }
 
 function getHomePanelWidth(width: number): HomePanelWidth {
@@ -148,6 +168,29 @@ function getHomePanelDensity(
     return "expanded";
   }
   return "standard";
+}
+
+function isHomePanelWithinBoard(item: HomePanelLayout): boolean {
+  return (
+    item.x >= 0 &&
+    item.y >= 0 &&
+    item.w >= 1 &&
+    item.h >= 1 &&
+    item.x + item.w <= HOME_GRID_COLUMNS &&
+    item.y + item.h <= HOME_GRID_ROWS
+  );
+}
+
+function homePanelsOverlap(
+  left: HomePanelLayout,
+  right: HomePanelLayout,
+): boolean {
+  return (
+    left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y
+  );
 }
 
 function clampGridValue(value: number, min: number, max: number): number {

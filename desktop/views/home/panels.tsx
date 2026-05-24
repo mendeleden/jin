@@ -54,6 +54,7 @@ export function HomePulsePanel({
       className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_4%,rgba(137,180,255,0.16),transparent_30%),radial-gradient(circle_at_78%_0%,rgba(137,212,161,0.1),transparent_28%),linear-gradient(180deg,rgba(14,20,31,0.95),rgba(7,10,16,0.95))]"
       data-home-panel-density={panel.density}
       data-home-panel-height={panel.height}
+      data-home-panel-stack-below={String(panel.stackedBelowPx)}
       data-home-panel-width={panel.width}
       span="none"
     >
@@ -108,6 +109,7 @@ export function HomeProjectActivityPanel({
       className="flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_0%,rgba(240,196,109,0.1),transparent_30%),linear-gradient(180deg,rgba(14,19,28,0.95),rgba(7,10,16,0.95))]"
       data-home-panel-density={panel.density}
       data-home-panel-height={panel.height}
+      data-home-panel-stack-below={String(panel.stackedBelowPx)}
       data-home-panel-width={panel.width}
       span="none"
     >
@@ -119,7 +121,10 @@ export function HomeProjectActivityPanel({
             onChange={setMetric}
           />
         }
-        className={panel.density === "compact" ? "mb-2 gap-2" : undefined}
+        className={cx(
+          "max-[1220px]:flex-col max-[1220px]:items-start",
+          panel.density === "compact" && "mb-2 gap-2",
+        )}
       >
         <Eyebrow>Projects</Eyebrow>
         <PanelTitle>Project Stacks</PanelTitle>
@@ -194,7 +199,7 @@ export function HomeProjectActivityPanel({
                   </div>
                 </div>
                 {showProjectMeta ? (
-                  <div className="flex flex-wrap gap-x-2.5 gap-y-[7px] text-[0.7rem] text-[var(--text-dim)]">
+                  <div className="flex flex-wrap gap-x-2.5 gap-y-[7px] text-[0.7rem] text-[var(--text-dim)] max-[1220px]:hidden">
                     <span>Last seen {formatDate(project.lastSeen)}</span>
                     <span>
                       {project.adapters.map((adapter) => adapter.adapterId).join(", ") ||
@@ -257,6 +262,7 @@ export function HomeAdapterMixPanel({
       className="flex h-full min-h-0 flex-col overflow-hidden"
       data-home-panel-density={panel.density}
       data-home-panel-height={panel.height}
+      data-home-panel-stack-below={String(panel.stackedBelowPx)}
       data-home-panel-width={panel.width}
       span="none"
     >
@@ -273,7 +279,10 @@ export function HomeAdapterMixPanel({
             values={["tokens", "conversations"]}
           />
         }
-        className={panel.density === "compact" ? "mb-2 gap-2" : undefined}
+        className={cx(
+          "max-[1220px]:flex-col max-[1220px]:items-start",
+          panel.density === "compact" && "mb-2 gap-2",
+        )}
       >
         <Eyebrow>Harnesses</Eyebrow>
         <PanelTitle>Harness Timeline</PanelTitle>
@@ -305,7 +314,7 @@ export function HomeAdapterMixPanel({
                     {adapterId}
                   </strong>
                   {showAdapterSubtitle ? (
-                    <span className="block truncate text-[0.7rem] text-[var(--text-dim)]">
+                    <span className="block truncate text-[0.7rem] text-[var(--text-dim)] max-[1220px]:hidden">
                       {formatHomeMetricValue(total, metric)} over current window
                     </span>
                   ) : null}

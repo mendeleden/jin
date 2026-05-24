@@ -7,6 +7,10 @@ import {
 } from "../desktop/layout/grid-engine";
 import { parseStoredDesktopLayouts } from "../desktop/layout/layout-storage";
 import { normalizeStoredHomeLayout } from "../desktop/layout/preferences";
+import {
+  isHomePanelLayoutUsable,
+  normalizeHomePanelLayout,
+} from "../desktop/views/home/layout";
 
 type PanelId = "usage" | "projects" | "harnesses";
 
@@ -69,6 +73,21 @@ describe("desktop grid engine", () => {
     expect(panel(clamped, "projects")).toMatchObject({ w: 4, h: 3 });
   });
 
+  test("respects a fixed row budget when resize would overflow neighbors", () => {
+    const next = resizeDesktopGridPanel(
+      DEFAULT_LAYOUT,
+      "usage",
+      { w: 12, h: 12 },
+      { columns: 12, rows: 12 },
+    );
+
+    expect(panel(next, "usage")).toMatchObject({ h: 9, x: 0, y: 0 });
+    expect(panel(next, "projects")).toMatchObject({ x: 0, y: 9, h: 3 });
+    expect(panel(next, "harnesses")).toMatchObject({ x: 7, y: 9, h: 3 });
+    expect(layoutFitsRows(next, 12)).toBe(true);
+    expect(layoutHasOverlaps(next)).toBe(false);
+  });
+
   test("keeps the RGL dependency behind the core adapter, not the renderer", () => {
     const engineSource = readFileSync(
       new URL("../desktop/layout/grid-engine.ts", import.meta.url),
@@ -114,6 +133,17 @@ describe("desktop grid engine", () => {
       y: 5,
     });
   });
+
+  test("home layout normalization rejects overlap created by row clamping", () => {
+    const overflowed = normalizeHomePanelLayout([
+      { panelId: "usage", x: 0, y: 0, w: 12, h: 12 },
+      { panelId: "projects", x: 0, y: 12, w: 7, h: 3 },
+      { panelId: "harnesses", x: 7, y: 12, w: 5, h: 3 },
+    ]);
+
+    expect(overflowed).toEqual(DEFAULT_LAYOUT.map(({ minH, minW, ...item }) => item));
+    expect(isHomePanelLayoutUsable(overflowed)).toBe(true);
+  });
 });
 
 function panel(
@@ -125,4 +155,31 @@ function panel(
     throw new Error(`Missing panel ${panelId}`);
   }
   return item;
+}
+
+function layoutFitsRows(
+  layout: readonly DesktopGridPanelLayout<PanelId>[],
+  rows: number,
+): boolean {
+  return layout.every((item) => item.y >= 0 && item.y + item.h <= rows);
+}
+
+function layoutHasOverlaps(
+  layout: readonly DesktopGridPanelLayout<PanelId>[],
+): boolean {
+  return layout.some((item, index) =>
+    layout.slice(index + 1).some((candidate) => panelsOverlap(item, candidate)),
+  );
+}
+
+function panelsOverlap(
+  left: DesktopGridPanelLayout<PanelId>,
+  right: DesktopGridPanelLayout<PanelId>,
+): boolean {
+  return (
+    left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y
+  );
 }

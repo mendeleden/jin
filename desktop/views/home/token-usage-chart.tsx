@@ -186,6 +186,7 @@ export function TokenUsageChart({
           "flex min-w-0 items-start justify-between gap-3",
           compactChrome && "gap-2",
           panel.width === "narrow" && "flex-col",
+          "max-[1220px]:flex-col max-[1220px]:gap-2",
         )}
       >
         <div>
@@ -198,7 +199,7 @@ export function TokenUsageChart({
             {title}
           </h3>
           {compactChrome ? null : (
-            <p className="m-0 mt-1 text-[0.76rem] text-[var(--text-dim)]">
+            <p className="m-0 mt-1 text-[0.76rem] text-[var(--text-dim)] max-[1220px]:hidden">
               {description}
             </p>
           )}
@@ -207,6 +208,7 @@ export function TokenUsageChart({
           className={cx(
             "flex min-w-0 flex-wrap items-center justify-end gap-2",
             compactChrome && "gap-1.5",
+            "max-[1220px]:justify-start max-[1220px]:gap-1.5",
           )}
           aria-label="Usage chart controls"
         >
@@ -242,6 +244,7 @@ export function TokenUsageChart({
               className={cx(
                 "min-w-[118px] max-w-[178px] truncate rounded-full border border-[rgba(210,224,255,0.1)] bg-white/[0.035] px-2.5 py-[7px] text-center",
                 compactChrome && "hidden",
+                "max-[1220px]:hidden",
               )}
               title={chart.windowLabel}
             >
@@ -263,6 +266,7 @@ export function TokenUsageChart({
         className={cx(
           "grid gap-[7px]",
           panel.width === "narrow" ? "grid-cols-1" : "grid-cols-3",
+          "max-[1220px]:grid-cols-1",
         )}
         data-usage-chart-kpis
       >
@@ -393,9 +397,11 @@ export function TokenUsageChart({
           </ComposedChart>
         </div>
       </div>
-      {showSessionRail ? <UsageSessionRail days={displayDays} /> : null}
+      {showSessionRail ? (
+        <UsageSessionRail className="max-[1220px]:hidden" days={displayDays} />
+      ) : null}
       {showLegend ? (
-        <div className="flex flex-wrap gap-x-3.5 gap-y-2 text-[0.8rem] text-[var(--text-soft)]">
+        <div className="flex flex-wrap gap-x-3.5 gap-y-2 text-[0.8rem] text-[var(--text-soft)] max-[1220px]:hidden">
           {series.map((adapter, index) => (
             <span className="inline-flex items-center gap-[7px]" key={adapter.key}>
               <i className={cx("h-[9px] w-[9px] rounded-full", usageColorClass(index))} />
@@ -514,7 +520,13 @@ function UsageChartTooltip({
   );
 }
 
-function UsageSessionRail({ days }: { days: UsageDisplayBucket[] }) {
+function UsageSessionRail({
+  className,
+  days,
+}: {
+  className?: string;
+  days: UsageDisplayBucket[];
+}) {
   if (days.length === 0) {
     return null;
   }
@@ -523,7 +535,10 @@ function UsageSessionRail({ days }: { days: UsageDisplayBucket[] }) {
 
   return (
     <div
-      className="grid h-[34px] grid-flow-col auto-cols-[minmax(6px,1fr)] items-end gap-[3px] rounded-[10px] border border-[rgba(210,224,255,0.08)] bg-white/[0.02] p-1.5"
+      className={cx(
+        "grid h-[34px] grid-flow-col auto-cols-[minmax(6px,1fr)] items-end gap-[3px] rounded-[10px] border border-[rgba(210,224,255,0.08)] bg-white/[0.02] p-1.5",
+        className,
+      )}
       aria-label="Conversation volume by day"
     >
       {days.map((day) => (

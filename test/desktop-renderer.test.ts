@@ -9,10 +9,25 @@ import {
 } from "../desktop/renderer";
 import type { JinDesktopBridge } from "../desktop/bridge";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
+import { DESKTOP_LAYOUT_STORAGE_KEY } from "../desktop/layout/layout-storage";
+import {
+  DesktopLayoutPreferencesProvider,
+  useDesktopLayoutPreferences,
+  type DesktopLayoutPreferences,
+} from "../desktop/layout/preferences";
 import {
   DashboardGrid,
   type DashboardGridItemContext,
 } from "../desktop/views/home/dashboard-grid";
+import {
+  DEFAULT_HOME_PANEL_LAYOUT,
+  HOME_LAYOUT_SCHEMA_VERSION,
+  type HomePanelLayout,
+} from "../desktop/views/home/layout";
+import {
+  createHomeLayoutEditorState,
+  homeLayoutEditorReducer,
+} from "../desktop/views/home/layout-editor-state";
 import {
   usageColorClassForColor,
   usageHeightClass,
@@ -357,10 +372,12 @@ describe("desktop renderer", () => {
     expect(editableGridSource).not.toContain("home-layout-");
     expect(panelsSource).not.toContain("min-h-[448px]");
     expect(panelsSource).toContain("data-home-panel-density");
+    expect(panelsSource).toContain("data-home-panel-stack-below");
     expect(panelsSource).toContain("homePanelItemLimit");
     expect(chartSource).toContain("h-[168px]");
     expect(chartSource).toContain("h-[252px]");
     expect(chartSource).toContain("h-[318px]");
+    expect(chartSource).toContain("max-[1220px]:grid-cols-1");
     expect(css).not.toContain(".usage-area-static-chart");
     expect(css).not.toContain(".usage-area-static-fill");
   });
@@ -455,6 +472,7 @@ describe("desktop renderer", () => {
                 "data-render-density": panel.density,
                 "data-render-height": panel.height,
                 "data-render-layout": `${panel.layout.w}x${panel.layout.h}`,
+                "data-render-stack-below": String(panel.stackedBelowPx),
                 "data-render-width": panel.width,
               }),
           },
@@ -465,6 +483,7 @@ describe("desktop renderer", () => {
 
     expect(html).toContain('data-render-density="compact"');
     expect(html).toContain('data-render-height="short"');
+    expect(html).toContain('data-render-stack-below="1220"');
     expect(html).toContain('data-render-width="narrow"');
     expect(html).toContain('data-render-layout="4x3"');
   });
@@ -489,6 +508,77 @@ describe("desktop renderer", () => {
     expect(html).toContain("Resize Token &amp; Cost Observatory");
     expect(html).not.toContain("style=");
     expect(html).not.toContain("react-grid-layout");
+  });
+
+  test("home layout editor keeps draft changes local until explicit save", () => {
+    withFakeWindowLocalStorage(null, (storage) => {
+      const preferences = renderLayoutPreferencesProbe();
+      const movedLayout: HomePanelLayout[] = [
+        { panelId: "usage", x: 0, y: 0, w: 12, h: 4 },
+        { panelId: "projects", x: 0, y: 4, w: 7, h: 3 },
+        { panelId: "harnesses", x: 7, y: 4, w: 5, h: 3 },
+      ];
+
+      let editor = createHomeLayoutEditorState(preferences.homeLayout);
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "edit",
+      });
+      editor = homeLayoutEditorReducer(editor, {
+        layout: movedLayout,
+        type: "draft",
+      });
+
+      expect(editor.editing).toBe(true);
+      expect(editor.draftLayout).toEqual(movedLayout);
+      expect(storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY)).toBeNull();
+
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "cancel",
+      });
+
+      expect(editor.editing).toBe(false);
+      expect(editor.draftLayout).toEqual(DEFAULT_HOME_PANEL_LAYOUT);
+      expect(storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY)).toBeNull();
+
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "edit",
+      });
+      editor = homeLayoutEditorReducer(editor, {
+        layout: movedLayout,
+        type: "draft",
+      });
+      preferences.setHomeLayout(editor.draftLayout);
+      editor = homeLayoutEditorReducer(editor, { type: "saved" });
+
+      const stored = JSON.parse(
+        storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY) ?? "{}",
+      );
+      expect(editor.editing).toBe(false);
+      expect(stored.home.schema).toBe(HOME_LAYOUT_SCHEMA_VERSION);
+      expect(stored.home.panels).toEqual(movedLayout);
+    });
+  });
+
+  test("home layout preferences reject overlapping stored layouts", () => {
+    withFakeWindowLocalStorage(
+      JSON.stringify({
+        home: {
+          panels: [
+            { panelId: "usage", x: 0, y: 0, w: 12, h: 12 },
+            { panelId: "projects", x: 0, y: 12, w: 7, h: 3 },
+            { panelId: "harnesses", x: 7, y: 12, w: 5, h: 3 },
+          ],
+          schema: HOME_LAYOUT_SCHEMA_VERSION,
+        },
+      }),
+      () => {
+        const preferences = renderLayoutPreferencesProbe();
+        expect(preferences.homeLayout).toEqual(DEFAULT_HOME_PANEL_LAYOUT);
+      },
+    );
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
@@ -1605,6 +1695,67 @@ function makeToolCall(
     durationMs: overrides.durationMs ?? 10,
     timestamp: overrides.timestamp ?? "2026-04-29T08:22:00.000Z",
   };
+}
+
+function renderLayoutPreferencesProbe(): DesktopLayoutPreferences {
+  let preferences: DesktopLayoutPreferences | null = null;
+
+  function CaptureLayoutPreferences() {
+    preferences = useDesktopLayoutPreferences();
+    return createElement("div", null, preferences.homeLayout.length);
+  }
+
+  renderToStaticMarkup(
+    createElement(
+      DesktopLayoutPreferencesProvider,
+      null,
+      createElement(CaptureLayoutPreferences),
+    ),
+  );
+
+  if (!preferences) {
+    throw new Error("Expected layout preferences to render");
+  }
+
+  return preferences;
+}
+
+function withFakeWindowLocalStorage(
+  initialValue: string | null,
+  callback: (storage: FakeLocalStorage) => void,
+): void {
+  const globalWithWindow = globalThis as typeof globalThis & {
+    window?: { localStorage: FakeLocalStorage };
+  };
+  const previousWindow = globalWithWindow.window;
+  const storage = new FakeLocalStorage(initialValue);
+
+  globalWithWindow.window = { localStorage: storage };
+  try {
+    callback(storage);
+  } finally {
+    if (previousWindow) {
+      globalWithWindow.window = previousWindow;
+    } else {
+      delete globalWithWindow.window;
+    }
+  }
+}
+
+class FakeLocalStorage {
+  private value: string | null;
+
+  constructor(value: string | null) {
+    this.value = value;
+  }
+
+  getItem() {
+    return this.value;
+  }
+
+  setItem(_key: string, value: string) {
+    this.value = value;
+  }
 }
 
 function makeStatus(
