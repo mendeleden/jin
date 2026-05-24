@@ -5,6 +5,7 @@ declare module "electron" {
     minWidth?: number;
     minHeight?: number;
     backgroundColor?: string;
+    icon?: string;
     titleBarStyle?: string;
     autoHideMenuBar?: boolean;
     webPreferences?: {

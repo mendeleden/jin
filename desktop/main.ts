@@ -12,6 +12,7 @@ import {
 import { resolveDesktopEntry } from "./entry";
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
+const DESKTOP_APP_ICON_FILE = "assets/jin-app-icon.png";
 
 async function createMainWindow(): Promise<BrowserWindow> {
   const window = new BrowserWindow({
@@ -20,6 +21,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: "#060e20",
+    icon: join(CURRENT_DIR, DESKTOP_APP_ICON_FILE),
     titleBarStyle: "hiddenInset",
     autoHideMenuBar: true,
     webPreferences: {

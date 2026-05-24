@@ -8,12 +8,12 @@ import {
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
-  Play,
+  Power,
+  PowerOff,
   RefreshCw,
-  RotateCw,
+  RotateCcw,
   Route,
   Settings,
-  Square,
 } from "lucide-react";
 import type { DesktopControlStatus } from "../../../src/contracts/desktop";
 import {
@@ -42,6 +42,8 @@ const NAV_ITEMS: Array<{
   { view: "logs", label: "Logs", Icon: FileText },
   { view: "settings", label: "Settings", Icon: Settings },
 ];
+
+const JIN_APP_ICON_SRC = "./assets/jin-app-icon.png";
 
 export function ShellFrame({
   actions,
@@ -84,7 +86,6 @@ function Sidebar({
   const runtimeState = state.snapshot?.status.runtime.state ?? "offline";
   const overview = state.snapshot?.data?.overview;
   const collapsed = state.sidebarCollapsed;
-  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
 
   return (
     <aside
@@ -95,28 +96,10 @@ function Sidebar({
       data-sidebar
       data-sidebar-collapsed={String(collapsed)}
     >
-      <div className="flex w-full items-center justify-center gap-2.5">
-        <button
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={cx(
-            "inline-flex h-8 min-w-9 flex-none cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-[var(--line)] bg-white/[0.03] px-2.5 text-[var(--text-soft)] hover:border-[var(--line-strong)] hover:text-[var(--text)]",
-            collapsed && "w-8 px-0",
-          )}
-          onClick={() => actions.toggleSidebar()}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          type="button"
-        >
-          <ToggleIcon aria-hidden="true" />
-          <span
-            className={cx(
-              "text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]",
-              collapsed && "hidden",
-            )}
-          >
-            {collapsed ? "Expand" : "Collapse"}
-          </span>
-        </button>
-      </div>
+      <SidebarBrand
+        collapsed={collapsed}
+        onToggleSidebar={() => actions.toggleSidebar()}
+      />
 
       <nav
         aria-label="Primary"
@@ -164,28 +147,35 @@ function Sidebar({
 
       <div className="mt-auto" />
 
-      <section
-        className={cx(
-          "mt-auto flex max-h-[460px] min-h-0 w-full flex-col gap-2.5 overflow-auto rounded-[var(--radius-panel)] border border-[var(--line)] bg-[var(--panel-subtle)] p-3",
-          collapsed && "items-center px-1.5 py-2.5",
-        )}
-        data-sidebar-runtime
-      >
+      {collapsed ? (
+        <section
+          aria-label={`Runtime ${runtimeState}`}
+          className="mt-auto flex h-10 w-10 flex-none items-center justify-center rounded-[11px] border border-[var(--line)] bg-[var(--panel-subtle)]"
+          data-sidebar-runtime-collapsed
+          title={`Runtime ${runtimeState}`}
+        >
+          <span
+            aria-hidden="true"
+            className={cx(
+              "h-2.5 w-2.5 rounded-full shadow-[0_0_18px_currentColor]",
+              runtimeIndicatorClass(runtimeState),
+            )}
+          />
+        </section>
+      ) : (
+        <section
+          className="mt-auto flex max-h-[460px] min-h-0 w-full flex-col gap-2.5 overflow-auto rounded-[var(--radius-panel)] border border-[var(--line)] bg-[var(--panel-subtle)] p-3"
+          data-sidebar-runtime
+        >
         <div
-          className={cx(
-            "text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]",
-            collapsed && "hidden",
-          )}
+          className="text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]"
         >
           Runtime
         </div>
         <div className="flex flex-col gap-2.5">
           <StatusBadge value={runtimeState} />
           <span
-            className={cx(
-              "text-[0.88rem] leading-[1.45] text-[var(--text-soft)]",
-              collapsed && "hidden",
-            )}
+            className="text-[0.88rem] leading-[1.45] text-[var(--text-soft)]"
           >
             {state.snapshot
               ? renderRuntimeHeading(state.snapshot.status)
@@ -193,7 +183,7 @@ function Sidebar({
           </span>
         </div>
         <div
-          className={cx("grid grid-cols-2 gap-[7px]", collapsed && "hidden")}
+          className="grid grid-cols-2 gap-[7px]"
           data-sidebar-metrics
         >
           {overview ? (
@@ -224,8 +214,75 @@ function Sidebar({
             </>
           )}
         </div>
-      </section>
+        </section>
+      )}
     </aside>
+  );
+}
+
+function SidebarBrand({
+  collapsed,
+  onToggleSidebar,
+}: {
+  collapsed: boolean;
+  onToggleSidebar(): void;
+}) {
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+
+  return (
+    <div
+      className={cx(
+        "flex w-full items-center gap-2",
+        collapsed ? "justify-center" : "justify-between",
+      )}
+      data-sidebar-brand
+    >
+      <div
+        className={cx(
+          "flex min-w-0 items-center gap-2.5",
+          collapsed && "hidden",
+        )}
+      >
+        <span className="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-[11px] border border-[rgba(210,224,255,0.14)] bg-[#f8fafc] shadow-[0_10px_26px_rgba(0,0,0,0.22)]">
+          <img
+            alt=""
+            className="h-full w-full object-cover"
+            draggable={false}
+            src={JIN_APP_ICON_SRC}
+          />
+        </span>
+        <span className="grid min-w-0 gap-0.5">
+          <strong className="truncate text-[0.9rem] leading-none text-[var(--text)]">
+            Jin
+          </strong>
+          <span className="truncate text-[0.66rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
+            Desktop
+          </span>
+        </span>
+      </div>
+      <button
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className={cx(
+          "inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-[11px] border border-[var(--line)] bg-white/[0.035] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-white/[0.055] hover:text-[var(--text)] focus-visible:border-[rgba(137,180,255,0.5)] focus-visible:outline-none",
+          collapsed &&
+            "bg-[#f8fafc] p-0 text-[#314255] shadow-[0_10px_26px_rgba(0,0,0,0.22)] hover:bg-white hover:text-[#26394a]",
+        )}
+        onClick={onToggleSidebar}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        type="button"
+      >
+        {collapsed ? (
+          <img
+            alt=""
+            className="h-full w-full rounded-[11px] object-cover"
+            draggable={false}
+            src={JIN_APP_ICON_SRC}
+          />
+        ) : (
+          <ToggleIcon aria-hidden="true" />
+        )}
+      </button>
+    </div>
   );
 }
 
@@ -308,6 +365,22 @@ function SidebarMetric({
   );
 }
 
+function runtimeIndicatorClass(value: string): string {
+  if (value === "running" || value === "healthy") {
+    return "bg-[var(--success)] text-[var(--success)]";
+  }
+
+  if (value === "degraded" || value === "stopping") {
+    return "bg-[var(--warning)] text-[var(--warning)]";
+  }
+
+  if (value === "stopped" || value === "starting") {
+    return "bg-[var(--danger)] text-[var(--danger)]";
+  }
+
+  return "bg-[var(--text-dim)] text-[var(--text-dim)]";
+}
+
 function Topbar({
   actions,
   state,
@@ -345,7 +418,9 @@ function Topbar({
           />
         ) : null}
         <Button
+          aria-label={state.refreshing ? "Refreshing shell" : "Refresh shell"}
           onClick={() => void actions.refreshShell()}
+          title={state.refreshing ? "Refreshing shell" : "Refresh shell"}
         >
           <RefreshCw aria-hidden="true" />
           {state.refreshing ? "Refreshing..." : "Refresh"}
@@ -367,11 +442,13 @@ function RuntimeActions({
   if (runtimeState === "stopped") {
     return (
       <Button
+        aria-label={state.busyAction === "start" ? "Starting Jin" : "Start Jin"}
         disabled={state.busyAction === "start"}
         onClick={() => void actions.runControlAction("start")}
+        title={state.busyAction === "start" ? "Starting Jin" : "Start Jin"}
         variant="primary"
       >
-        <Play aria-hidden="true" />
+        <Power aria-hidden="true" />
         {state.busyAction === "start" ? "Starting..." : "Start Jin"}
       </Button>
     );
@@ -384,17 +461,21 @@ function RuntimeActions({
   return (
     <>
       <Button
+        aria-label={state.busyAction === "restart" ? "Restarting Jin" : "Restart Jin"}
         disabled={state.busyAction === "restart"}
         onClick={() => void actions.runControlAction("restart")}
+        title={state.busyAction === "restart" ? "Restarting Jin" : "Restart Jin"}
       >
-        <RotateCw aria-hidden="true" />
+        <RotateCcw aria-hidden="true" />
         {state.busyAction === "restart" ? "Restarting..." : "Restart"}
       </Button>
       <Button
+        aria-label={state.busyAction === "stop" ? "Stopping Jin" : "Stop Jin"}
         disabled={state.busyAction === "stop"}
         onClick={() => void actions.runControlAction("stop")}
+        title={state.busyAction === "stop" ? "Stopping Jin" : "Stop Jin"}
       >
-        <Square aria-hidden="true" />
+        <PowerOff aria-hidden="true" />
         {state.busyAction === "stop" ? "Stopping..." : "Stop"}
       </Button>
     </>

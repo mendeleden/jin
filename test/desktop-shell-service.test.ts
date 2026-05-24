@@ -97,6 +97,27 @@ describe("desktop shell service", () => {
     expect(devHtml).toContain("http://localhost:*");
   });
 
+  test("desktop app branding assets are copied and wired into packaged windows", () => {
+    const buildScript = readFileSync(
+      new URL("../scripts/build-desktop.ts", import.meta.url),
+      "utf8",
+    );
+    const packageScript = readFileSync(
+      new URL("../scripts/package-desktop.ts", import.meta.url),
+      "utf8",
+    );
+    const mainSource = readFileSync(
+      new URL("../desktop/main.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(buildScript).toContain("copyDesktopAssets");
+    expect(buildScript).toContain('join(DIST_DIR, "assets")');
+    expect(mainSource).toContain('assets/jin-app-icon.png');
+    expect(packageScript).toContain("jin-app-icon.icns");
+    expect(packageScript).toContain("CFBundleIconFile");
+  });
+
   test("daemon client reads the typed desktop viewer route paths", async () => {
     const requests: Array<{
       method: string;

@@ -342,6 +342,7 @@ describe("desktop renderer", () => {
 
   test("desktop home styling is Tailwind-owned with only base CSS globals", () => {
     const css = readDesktopCssSource();
+    const theme = readDesktopThemeSource();
     const gridSource = readFileSync(
       new URL("../desktop/views/home/dashboard-grid.tsx", import.meta.url),
       "utf8",
@@ -360,7 +361,9 @@ describe("desktop renderer", () => {
     );
 
     expect(css).toContain('@import "tailwindcss"');
-    expect(css).toContain("--radius-panel");
+    expect(css).toContain('@import "./theme.css"');
+    expect(theme).toContain("--radius-panel");
+    expect(theme).toContain("--accent:");
     expect(css).not.toContain(".home-pulse-panel");
     expect(css).not.toContain(".dashboard-grid");
     expect(css).not.toContain(".usage-chart-controls");
@@ -782,6 +785,39 @@ describe("desktop renderer", () => {
     expect(source).toContain("[-webkit-app-region:no-drag]");
   });
 
+  test("desktop shell chrome uses the Jin app mark and semantic runtime icons", () => {
+    const source = readFileSync(
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
+      "utf8",
+    );
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+    const collapsedHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        sidebarCollapsed: true,
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+
+    expect(source).toContain('const JIN_APP_ICON_SRC = "./assets/jin-app-icon.png"');
+    expect(source).toContain("PowerOff");
+    expect(source).toContain("RotateCcw");
+    expect(html).toContain('data-sidebar-brand="true"');
+    expect(html).toContain('src="./assets/jin-app-icon.png"');
+    expect(html).toContain("Collapse sidebar");
+    expect(html).toContain('aria-label="Restart Jin"');
+    expect(html).toContain('aria-label="Stop Jin"');
+    expect(html).toContain('aria-label="Refresh shell"');
+    expect(collapsedHtml).toContain('data-sidebar-runtime-collapsed="true"');
+    expect(collapsedHtml).toContain('aria-label="Runtime running"');
+    expect(collapsedHtml).not.toContain('data-sidebar-metric="cost"');
+  });
+
   test("desktop shared UI primitives replace legacy global control classes", () => {
     const primitiveSources = [
       "../desktop/ui/button.tsx",
@@ -912,7 +948,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("Local-only conversations stay in project cards");
     expect(html).not.toContain("Dashed amber = unrouted conversations");
     expect(html).not.toContain("routing-flow-path muted");
-    expect(countText(html, "Refresh")).toBe(1);
+    expect(countText(html, ">Refresh<")).toBe(1);
     expect(extractTopbar(html)).toContain("Refresh");
     expect(extractRoutingWorkspace(html)).not.toContain("Refresh");
     const routingFlowStrokeWidths = Array.from(
@@ -1220,6 +1256,10 @@ function countText(html: string, text: string): number {
 
 function readDesktopCssSource(): string {
   return readFileSync(new URL("../desktop/styles.css", import.meta.url), "utf8");
+}
+
+function readDesktopThemeSource(): string {
+  return readFileSync(new URL("../desktop/theme.css", import.meta.url), "utf8");
 }
 
 function makeState(overrides: Partial<RendererState> = {}): RendererState {
