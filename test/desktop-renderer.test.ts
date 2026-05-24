@@ -366,6 +366,8 @@ describe("desktop renderer", () => {
     expect(css).not.toContain(".usage-chart-controls");
     expect(css.split("\n").length).toBeLessThan(90);
     expect(editableGridSource).toContain("auto-rows-[80px]");
+    expect(editableGridSource).toContain("data-layout-edit-grid");
+    expect(editableGridSource).toContain('size="icon"');
     expect(gridSource).toContain("col-start-1");
     expect(gridSource).toContain("row-span-5");
     expect(gridSource).not.toContain("home-layout-");
@@ -502,6 +504,10 @@ describe("desktop renderer", () => {
     );
 
     expect(html).toContain('data-layout-mode="edit"');
+    expect(html).toContain('data-layout-interaction-mode="idle"');
+    expect(html).toContain('data-layout-edit-grid="true"');
+    expect(html).toContain('data-layout-active-mode="idle"');
+    expect(html).toContain('data-layout-edit-active="false"');
     expect(html).toContain('data-layout-edit-handle="move"');
     expect(html).toContain('data-layout-edit-handle="resize"');
     expect(html).toContain("Move Token &amp; Cost Observatory");
