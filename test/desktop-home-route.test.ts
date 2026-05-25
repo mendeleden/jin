@@ -479,17 +479,64 @@ function seedManyDesktopConversations(
   store: SqliteConversationStore,
   count: number,
 ): void {
-  for (let index = 0; index < count; index += 1) {
-    const minute = String(index % 60).padStart(2, "0");
-    store.writeBundle(
-      makeBundle(`desktop-limit-${index}`, {
-        conversation: {
-          name: `Desktop limit fixture ${index}`,
-          startedAt: `2026-04-30T10:${minute}:00.000Z`,
-          endedAt: `2026-04-30T10:${minute}:30.000Z`,
-        },
-      }),
-    );
+  // This high-volume route fixture exercises list filtering, not staged writes.
+  const insertConversation = store.database.prepare(
+    `INSERT INTO conversations (
+      id,
+      trace_id,
+      parent_id,
+      relationship,
+      fork_point,
+      adapter_id,
+      name,
+      cwd,
+      git_remote,
+      branch,
+      model,
+      started_at,
+      ended_at,
+      source_path,
+      source_format,
+      duration_ms,
+      message_count,
+      tool_count,
+      turn_count,
+      input_tokens,
+      output_tokens,
+      cache_read,
+      cache_write,
+      est_cost
+    ) VALUES (?, ?, '', 'root', -1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'jsonl', 30000, 1, 0, 1, 10, 15, 0, 0, 0)`,
+  );
+
+  try {
+    store.database.exec("BEGIN IMMEDIATE");
+    for (let index = 0; index < count; index += 1) {
+      const id = `desktop-limit-${index}`;
+      const minute = String(index % 60).padStart(2, "0");
+      insertConversation.run(
+        id,
+        id,
+        "claude-code",
+        `Desktop limit fixture ${index}`,
+        "/Users/test/project",
+        "github.com/acme/jin",
+        "feature/desktop-shell",
+        "claude-opus",
+        `2026-04-30T10:${minute}:00.000Z`,
+        `2026-04-30T10:${minute}:30.000Z`,
+        `/tmp/${id}.jsonl`,
+      );
+    }
+
+    store.database.exec("COMMIT");
+  } catch (error) {
+    if (store.database.inTransaction) {
+      store.database.exec("ROLLBACK");
+    }
+    throw error;
+  } finally {
+    insertConversation.finalize();
   }
 }
 
