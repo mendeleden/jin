@@ -77,6 +77,30 @@
   --home-project-panel-bg:
     radial-gradient(circle at 18% 0%, rgba(240, 196, 109, 0.1), transparent 30%),
     linear-gradient(180deg, rgba(14, 19, 28, 0.95), rgba(7, 10, 16, 0.95));
+  --layout-edit-board-outline: rgba(137, 180, 255, 0.22);
+  --layout-edit-grid-bg:
+    linear-gradient(to right, rgba(137, 180, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(137, 180, 255, 0.08) 1px, transparent 1px);
+  --layout-edit-grid-opacity: 0.55;
+  --layout-edit-panel-outline: rgba(137, 180, 255, 0.24);
+  --layout-edit-panel-active-outline: rgba(137, 180, 255, 0.7);
+  --layout-edit-panel-active-shadow:
+    0 0 0 1px rgba(137, 180, 255, 0.22),
+    0 18px 44px rgba(0, 0, 0, 0.32);
+  --layout-edit-handle-bg: rgba(8, 12, 19, 0.92);
+  --layout-edit-handle-hover-bg: rgba(13, 19, 29, 0.96);
+  --layout-edit-handle-border: rgba(137, 180, 255, 0.28);
+  --layout-edit-handle-hover-border: rgba(137, 180, 255, 0.44);
+  --layout-edit-handle-focus-border: rgba(137, 180, 255, 0.58);
+  --layout-edit-handle-text: var(--text);
+  --layout-edit-handle-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+  --layout-edit-handle-active-bg: rgba(33, 52, 82, 0.96);
+  --layout-edit-handle-active-border: rgba(137, 180, 255, 0.7);
+  --layout-edit-handle-active-text: var(--text);
+  --layout-edit-handle-active-shadow:
+    0 0 0 1px rgba(137, 180, 255, 0.28),
+    0 12px 28px rgba(0, 0, 0, 0.34);
+  --layout-edit-handle-corner: rgba(210, 224, 255, 0.58);
   --conversation-toolbar-bg:
     radial-gradient(circle at 2% 0%, rgba(137, 180, 255, 0.1), transparent 26%),
     linear-gradient(180deg, rgba(14, 19, 29, 0.9), rgba(8, 12, 18, 0.9));
@@ -188,6 +212,30 @@
   --home-project-panel-bg:
     radial-gradient(circle at 18% 0%, rgba(154, 101, 18, 0.08), transparent 30%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(240, 247, 249, 0.9));
+  --layout-edit-board-outline: rgba(38, 124, 164, 0.28);
+  --layout-edit-grid-bg:
+    linear-gradient(to right, rgba(38, 124, 164, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(38, 124, 164, 0.1) 1px, transparent 1px);
+  --layout-edit-grid-opacity: 0.68;
+  --layout-edit-panel-outline: rgba(38, 124, 164, 0.28);
+  --layout-edit-panel-active-outline: rgba(8, 94, 126, 0.72);
+  --layout-edit-panel-active-shadow:
+    0 0 0 1px rgba(8, 94, 126, 0.14),
+    0 18px 44px rgba(30, 53, 73, 0.16);
+  --layout-edit-handle-bg: rgba(255, 255, 255, 0.94);
+  --layout-edit-handle-hover-bg: rgba(240, 249, 252, 0.98);
+  --layout-edit-handle-border: rgba(38, 124, 164, 0.28);
+  --layout-edit-handle-hover-border: rgba(38, 124, 164, 0.48);
+  --layout-edit-handle-focus-border: rgba(8, 94, 126, 0.62);
+  --layout-edit-handle-text: #0e4e70;
+  --layout-edit-handle-shadow: 0 10px 22px rgba(30, 53, 73, 0.16);
+  --layout-edit-handle-active-bg: var(--picker-selected-bg);
+  --layout-edit-handle-active-border: var(--picker-selected-border);
+  --layout-edit-handle-active-text: var(--picker-selected-text);
+  --layout-edit-handle-active-shadow:
+    0 0 0 1px rgba(8, 94, 126, 0.2),
+    0 12px 28px rgba(21, 75, 104, 0.24);
+  --layout-edit-handle-corner: rgba(14, 78, 112, 0.58);
   --conversation-toolbar-bg:
     radial-gradient(circle at 2% 0%, rgba(38, 124, 164, 0.09), transparent 26%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(238, 247, 250, 0.9));

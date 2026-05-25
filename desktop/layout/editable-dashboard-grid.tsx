@@ -199,7 +199,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
       className={cx(
         "grid min-h-0 flex-1 auto-rows-[80px] grid-cols-12 content-start gap-3 overflow-auto pb-0.5",
         editable &&
-          "relative rounded-[var(--radius-panel)] outline outline-1 outline-[rgba(137,180,255,0.22)] outline-offset-2",
+          "relative rounded-[var(--radius-panel)] outline outline-1 outline-[var(--layout-edit-board-outline)] outline-offset-2",
         className,
       )}
       data-dashboard-grid={surface}
@@ -213,7 +213,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
       {editable ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-0 rounded-[var(--radius-panel)] bg-[linear-gradient(to_right,rgba(137,180,255,0.1)_1px,transparent_1px),linear-gradient(to_bottom,rgba(137,180,255,0.08)_1px,transparent_1px)] bg-[length:8.333%_92px] opacity-55"
+          className="pointer-events-none absolute inset-0 z-0 rounded-[var(--radius-panel)] opacity-[var(--layout-edit-grid-opacity)] [background-image:var(--layout-edit-grid-bg)] [background-size:8.333%_92px]"
           data-layout-edit-grid="true"
         />
       ) : null}
@@ -231,9 +231,9 @@ export function EditableDashboardGrid<TPanelId extends string>({
             className={cx(
               "min-w-0",
               editable &&
-                "relative z-10 rounded-[var(--radius-panel)] outline outline-1 outline-[rgba(137,180,255,0.24)] outline-offset-1 transition-[outline-color,box-shadow,transform]",
+                "relative z-10 rounded-[var(--radius-panel)] outline outline-1 outline-[var(--layout-edit-panel-outline)] outline-offset-1 transition-[outline-color,box-shadow,transform]",
               isActive &&
-                "outline-[rgba(137,180,255,0.7)] shadow-[0_0_0_1px_rgba(137,180,255,0.22),0_18px_44px_rgba(0,0,0,0.32)]",
+                "outline-[var(--layout-edit-panel-active-outline)] shadow-[var(--layout-edit-panel-active-shadow)]",
               activeMode === "resize" && "cursor-se-resize",
               activeMode === "move" && "cursor-grabbing",
               panelClassName(panelLayout),
@@ -319,7 +319,7 @@ function PanelEditControls({
       />
       <EditHandleButton
         ariaLabel={`Resize ${title}`}
-        className="bottom-2 right-2 cursor-se-resize after:absolute after:bottom-2 after:right-2 after:h-3 after:w-3 after:rounded-br-[5px] after:border-b after:border-r after:border-[rgba(210,224,255,0.58)]"
+        className="bottom-2 right-2 cursor-se-resize after:absolute after:bottom-2 after:right-2 after:h-3 after:w-3 after:rounded-br-[5px] after:border-b after:border-r after:border-[var(--layout-edit-handle-corner)]"
         icon={Maximize2}
         isActive={activeMode === "resize"}
         onKeyDown={onResizeKeyDown}
@@ -356,10 +356,10 @@ function EditHandleButton({
     <button
       aria-label={ariaLabel}
       className={cx(
-        "absolute z-20 inline-flex max-w-[calc(100%-16px)] touch-none select-none items-center justify-center gap-1.5 rounded-[10px] border border-[rgba(137,180,255,0.28)] bg-[rgba(8,12,19,0.92)] text-[0.72rem] font-semibold text-[var(--text)] shadow-[0_10px_22px_rgba(0,0,0,0.28)] backdrop-blur-[12px] transition-[border-color,background,box-shadow,color,transform] hover:border-[rgba(137,180,255,0.44)] focus-visible:border-[rgba(137,180,255,0.58)] focus-visible:outline-none [&_svg]:h-3.5 [&_svg]:w-3.5",
+        "absolute z-20 inline-flex max-w-[calc(100%-16px)] touch-none select-none items-center justify-center gap-1.5 rounded-[10px] border border-[var(--layout-edit-handle-border)] bg-[var(--layout-edit-handle-bg)] text-[0.72rem] font-semibold text-[var(--layout-edit-handle-text)] shadow-[var(--layout-edit-handle-shadow)] backdrop-blur-[12px] transition-[border-color,background-color,box-shadow,color,transform] hover:border-[var(--layout-edit-handle-hover-border)] hover:bg-[var(--layout-edit-handle-hover-bg)] focus-visible:border-[var(--layout-edit-handle-focus-border)] focus-visible:outline-none [&_svg]:h-3.5 [&_svg]:w-3.5",
         size === "icon" ? "h-10 w-10 p-0" : "min-h-9 px-2.5 py-1.5",
         isActive &&
-          "border-[rgba(137,180,255,0.7)] bg-[rgba(33,52,82,0.96)] shadow-[0_0_0_1px_rgba(137,180,255,0.28),0_12px_28px_rgba(0,0,0,0.34)]",
+          "border-[var(--layout-edit-handle-active-border)] bg-[var(--layout-edit-handle-active-bg)] text-[var(--layout-edit-handle-active-text)] shadow-[var(--layout-edit-handle-active-shadow)]",
         className,
       )}
       data-layout-edit-active={isActive ? "true" : "false"}

@@ -186,6 +186,10 @@ describe("desktop renderer", () => {
   });
 
   test("home overview uses compact large numbers and keeps runtime paths in the sidebar", () => {
+    const homeWorkspaceSource = readFileSync(
+      new URL("../desktop/views/home/workspace.tsx", import.meta.url),
+      "utf8",
+    );
     const snapshot = makeSnapshot("running");
     if (!snapshot.data) {
       throw new Error("expected running snapshot data");
@@ -256,6 +260,8 @@ describe("desktop renderer", () => {
     expect(html).not.toContain('data-home-flow-graph="mission-control"');
     expect(html).toContain("data-home-layout-toolbar");
     expect(html).toContain("Edit layout");
+    expect(homeWorkspaceSource).toContain("<Button onClick={onSave}>");
+    expect(homeWorkspaceSource).not.toContain('<Button onClick={onSave} variant="primary">');
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
@@ -397,13 +403,19 @@ describe("desktop renderer", () => {
     expect(theme).toContain("--picker-selected-bg:");
     expect(theme).toContain("--control-selected-bg:");
     expect(theme).toContain("--home-usage-panel-bg:");
+    expect(theme).toContain("--layout-edit-handle-bg:");
+    expect(theme).toContain("--layout-edit-handle-text: #0e4e70");
     expect(css).not.toContain(".home-pulse-panel");
     expect(css).not.toContain(".dashboard-grid");
     expect(css).not.toContain(".usage-chart-controls");
     expect(css.split("\n").length).toBeLessThan(90);
     expect(editableGridSource).toContain("auto-rows-[80px]");
     expect(editableGridSource).toContain("data-layout-edit-grid");
+    expect(editableGridSource).toContain("--layout-edit-handle-bg");
+    expect(editableGridSource).toContain("--layout-edit-grid-bg");
     expect(editableGridSource).toContain('size="icon"');
+    expect(editableGridSource).not.toContain("bg-[rgba(8,12,19,0.92)]");
+    expect(editableGridSource).not.toContain("text-[var(--text)] shadow-[0_10px_22px_rgba");
     expect(gridSource).toContain("col-start-1");
     expect(gridSource).toContain("row-span-5");
     expect(gridSource).not.toContain("home-layout-");
@@ -527,6 +539,11 @@ describe("desktop renderer", () => {
   });
 
   test("dashboard grid edit mode exposes CSP-safe move and resize handles", () => {
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
     const html = renderToStaticMarkup(
       createElement(DashboardGrid, {
         editable: true,
@@ -548,6 +565,11 @@ describe("desktop renderer", () => {
     expect(html).toContain('data-layout-edit-handle="resize"');
     expect(html).toContain("Move Token &amp; Cost Observatory");
     expect(html).toContain("Resize Token &amp; Cost Observatory");
+    expect(html).toContain("bg-[var(--layout-edit-handle-bg)]");
+    expect(html).toContain("text-[var(--layout-edit-handle-text)]");
+    expect(editableGridSource).toContain("outline-[var(--layout-edit-panel-outline)]");
+    expect(editableGridSource).toContain("after:border-[var(--layout-edit-handle-corner)]");
+    expect(themeSource).toContain("--layout-edit-handle-active-bg");
     expect(html).not.toContain("style=");
     expect(html).not.toContain("react-grid-layout");
   });

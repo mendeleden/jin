@@ -191,7 +191,7 @@ function HomeLayoutToolbar({
             <X aria-hidden="true" />
             Cancel
           </Button>
-          <Button onClick={onSave} variant="primary">
+          <Button onClick={onSave}>
             <Check aria-hidden="true" />
             Save
           </Button>
