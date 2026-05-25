@@ -1,13 +1,12 @@
-import { Check, Pencil, RotateCcw, X } from "lucide-react";
 import { useEffect, useReducer, type ReactNode } from "react";
 import { useDesktopLayoutPreferences } from "../../layout/preferences";
+import { LayoutEditorToolbar } from "../../layout/layout-editor-toolbar";
 import type { RendererState } from "../../renderer";
 import {
   LifecycleState,
   RuntimeStateGate,
 } from "../../components/shell/status-panels";
 import type { DesktopShellActions } from "../../components/shell/actions";
-import { Button } from "../../ui/button";
 import { DashboardGrid } from "./dashboard-grid";
 import type { HomePanelLayout } from "./layout";
 import {
@@ -177,31 +176,13 @@ function HomeLayoutToolbar({
   onSave(): void;
 }) {
   return (
-    <div
-      className="flex flex-wrap items-center justify-end gap-2"
-      data-home-layout-toolbar
-    >
-      {editing ? (
-        <>
-          <Button onClick={onReset}>
-            <RotateCcw aria-hidden="true" />
-            Reset
-          </Button>
-          <Button onClick={onCancel}>
-            <X aria-hidden="true" />
-            Cancel
-          </Button>
-          <Button onClick={onSave}>
-            <Check aria-hidden="true" />
-            Save
-          </Button>
-        </>
-      ) : (
-        <Button onClick={onEdit}>
-          <Pencil aria-hidden="true" />
-          Edit layout
-        </Button>
-      )}
-    </div>
+    <LayoutEditorToolbar
+      editing={editing}
+      onCancel={onCancel}
+      onEdit={onEdit}
+      onReset={onReset}
+      onSave={onSave}
+      surface="home"
+    />
   );
 }

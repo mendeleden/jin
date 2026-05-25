@@ -5,6 +5,10 @@ export interface StoredDesktopLayouts {
     panels?: unknown;
     schema?: unknown;
   };
+  settings?: {
+    panels?: unknown;
+    schema?: unknown;
+  };
 }
 
 export function readStoredDesktopLayouts(): StoredDesktopLayouts {

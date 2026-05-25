@@ -31,6 +31,11 @@ import {
   type HomePanelLayout,
 } from "../desktop/views/home/layout";
 import {
+  DEFAULT_SETTINGS_PANEL_LAYOUT,
+  SETTINGS_LAYOUT_SCHEMA_VERSION,
+  type SettingsPanelLayout,
+} from "../desktop/views/settings/layout";
+import {
   createHomeLayoutEditorState,
   homeLayoutEditorReducer,
 } from "../desktop/views/home/layout-editor-state";
@@ -260,8 +265,8 @@ describe("desktop renderer", () => {
     expect(html).not.toContain('data-home-flow-graph="mission-control"');
     expect(html).toContain("data-home-layout-toolbar");
     expect(html).toContain("Edit layout");
-    expect(homeWorkspaceSource).toContain("<Button onClick={onSave}>");
-    expect(homeWorkspaceSource).not.toContain('<Button onClick={onSave} variant="primary">');
+    expect(homeWorkspaceSource).toContain("LayoutEditorToolbar");
+    expect(homeWorkspaceSource).toContain('surface="home"');
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
@@ -380,6 +385,10 @@ describe("desktop renderer", () => {
       new URL("../desktop/views/home/dashboard-grid.tsx", import.meta.url),
       "utf8",
     );
+    const gridPlacementSource = readFileSync(
+      new URL("../desktop/layout/grid-placement.ts", import.meta.url),
+      "utf8",
+    );
     const editableGridSource = readFileSync(
       new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
       "utf8",
@@ -416,8 +425,9 @@ describe("desktop renderer", () => {
     expect(editableGridSource).toContain('size="icon"');
     expect(editableGridSource).not.toContain("bg-[rgba(8,12,19,0.92)]");
     expect(editableGridSource).not.toContain("text-[var(--text)] shadow-[0_10px_22px_rgba");
-    expect(gridSource).toContain("col-start-1");
-    expect(gridSource).toContain("row-span-5");
+    expect(gridSource).toContain("desktopGridPanelPlacementClassName");
+    expect(gridPlacementSource).toContain("col-start-1");
+    expect(gridPlacementSource).toContain("row-span-5");
     expect(gridSource).not.toContain("home-layout-");
     expect(editableGridSource).not.toContain("home-layout-");
     expect(panelsSource).not.toContain("min-h-[448px]");
@@ -641,6 +651,86 @@ describe("desktop renderer", () => {
       () => {
         const preferences = renderLayoutPreferencesProbe();
         expect(preferences.homeLayout).toEqual(DEFAULT_HOME_PANEL_LAYOUT);
+      },
+    );
+  });
+
+  test("settings workspace uses the editable grid with side-by-side defaults", () => {
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const html = withFakeWindowLocalStorage(null, () =>
+      renderToStaticMarkup(
+        createElement(
+          DesktopPreferencesProvider,
+          null,
+          createElement(
+            DesktopLayoutPreferencesProvider,
+            null,
+            createElement(SettingsWorkspace, {
+              state: makeState({
+                activeView: "settings",
+                snapshot: makeSnapshot("running"),
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    expect(settingsSource).toContain("SettingsDashboardGrid");
+    expect(settingsSource).toContain("LayoutEditorToolbar");
+    expect(html).toContain('data-dashboard-grid="settings"');
+    expect(html).toContain('data-layout-schema="settings-grid-v1"');
+    expect(html).toContain('data-layout-columns="12"');
+    expect(html).toContain('data-layout-mode="view"');
+    expect(html).toContain('data-settings-layout-toolbar="true"');
+    expect(html).toContain('data-panel-id="theme"');
+    expect(html).toContain('data-panel-id="refresh"');
+    expect(html).toContain('data-panel-id="runtime"');
+    expect(html).toContain('data-panel-id="paths"');
+    expect(html).toContain("col-start-1 row-start-1 col-span-6 row-span-3");
+    expect(html).toContain("col-start-7 row-start-1 col-span-6 row-span-3");
+    expect(html).toContain("col-start-1 row-start-4 col-span-6 row-span-3");
+    expect(html).toContain("col-start-7 row-start-4 col-span-6 row-span-3");
+    expect(html).toContain("Edit layout");
+  });
+
+  test("settings layout preferences persist and reject overlapping layouts", () => {
+    withFakeWindowLocalStorage(null, (storage) => {
+      const preferences = renderLayoutPreferencesProbe();
+      const movedLayout: SettingsPanelLayout[] = [
+        { panelId: "theme", x: 0, y: 0, w: 4, h: 3 },
+        { panelId: "refresh", x: 4, y: 0, w: 4, h: 3 },
+        { panelId: "runtime", x: 8, y: 0, w: 4, h: 3 },
+        { panelId: "paths", x: 0, y: 3, w: 12, h: 3 },
+      ];
+
+      preferences.setSettingsLayout(movedLayout);
+
+      const stored = JSON.parse(
+        storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY) ?? "{}",
+      );
+      expect(stored.settings.schema).toBe(SETTINGS_LAYOUT_SCHEMA_VERSION);
+      expect(stored.settings.panels).toEqual(movedLayout);
+    });
+
+    withFakeWindowLocalStorage(
+      JSON.stringify({
+        settings: {
+          panels: [
+            { panelId: "theme", x: 0, y: 0, w: 6, h: 3 },
+            { panelId: "refresh", x: 0, y: 0, w: 6, h: 3 },
+            { panelId: "runtime", x: 0, y: 3, w: 6, h: 3 },
+            { panelId: "paths", x: 6, y: 3, w: 6, h: 3 },
+          ],
+          schema: SETTINGS_LAYOUT_SCHEMA_VERSION,
+        },
+      }),
+      () => {
+        const preferences = renderLayoutPreferencesProbe();
+        expect(preferences.settingsLayout).toEqual(DEFAULT_SETTINGS_PANEL_LAYOUT);
       },
     );
   });
@@ -1926,7 +2016,11 @@ function renderLayoutPreferencesProbe(): DesktopLayoutPreferences {
 
   function CaptureLayoutPreferences() {
     preferences = useDesktopLayoutPreferences();
-    return createElement("div", null, preferences.homeLayout.length);
+    return createElement(
+      "div",
+      null,
+      `${preferences.homeLayout.length}:${preferences.settingsLayout.length}`,
+    );
   }
 
   renderToStaticMarkup(

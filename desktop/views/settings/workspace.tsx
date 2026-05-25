@@ -1,4 +1,7 @@
 import { Moon, SunMedium } from "lucide-react";
+import { useEffect, useReducer, type ReactNode } from "react";
+import { LayoutEditorToolbar } from "../../layout/layout-editor-toolbar";
+import { useDesktopLayoutPreferences } from "../../layout/preferences";
 import {
   DESKTOP_REFRESH_INTERVAL_OPTIONS,
   DESKTOP_THEME_MODE_OPTIONS,
@@ -20,6 +23,12 @@ import {
   RuntimeField,
   SegmentedControl,
 } from "../../ui/primitives";
+import { SettingsDashboardGrid } from "./dashboard-grid";
+import type { SettingsPanelLayout } from "./layout";
+import {
+  createSettingsLayoutEditorState,
+  settingsLayoutEditorReducer,
+} from "./layout-editor-state";
 
 export function SettingsWorkspace({ state }: { state: RendererState }) {
   const {
@@ -36,74 +45,214 @@ export function SettingsWorkspace({ state }: { state: RendererState }) {
   const { status } = snapshot;
 
   return (
-    <section className="grid min-h-0 grid-cols-12 gap-3.5 overflow-auto pb-0.5">
-      <Panel span="span">
-        <PanelHeader>
-          <Eyebrow>Appearance</Eyebrow>
-          <PanelTitle>Theme</PanelTitle>
-        </PanelHeader>
-        <div className="grid gap-3">
-          <FieldGrid className="grid-cols-1">
-            <RuntimeField
-              label="Mode"
-              value={themeMode === "light" ? "Light" : "Dark"}
-            />
-          </FieldGrid>
-          <ThemeModeToggle onChange={setThemeMode} value={themeMode} />
-        </div>
-      </Panel>
-
-      <Panel span="span">
-        <PanelHeader>
-          <Eyebrow>Desktop</Eyebrow>
-          <PanelTitle>Shell refresh</PanelTitle>
-        </PanelHeader>
-        <div className="grid gap-3">
-          <FieldGrid className="grid-cols-1">
-            <RuntimeField
-              label="Auto-refresh"
-              value={`Every ${formatDesktopRefreshInterval(refreshIntervalMs)}`}
-            />
-          </FieldGrid>
-          <SegmentedControl
-            ariaLabel="Desktop auto-refresh interval"
-            buttonClassName="min-w-[60px] px-3"
-            onChange={setRefreshIntervalMs}
-            options={DESKTOP_REFRESH_INTERVAL_OPTIONS}
-            value={refreshIntervalMs}
+    <SettingsLayoutEditor>
+      {({
+        editing,
+        layout,
+        onCancel,
+        onEdit,
+        onLayoutChange,
+        onReset,
+        onSave,
+      }) => (
+        <div
+          className="flex min-h-0 flex-1 flex-col gap-3"
+          data-settings-layout-workspace
+        >
+          <LayoutEditorToolbar
+            editing={editing}
+            onCancel={onCancel}
+            onEdit={onEdit}
+            onReset={onReset}
+            onSave={onSave}
+            surface="settings"
+          />
+          <SettingsDashboardGrid
+            editable={editing}
+            items={[
+              {
+                panelId: "theme",
+                children: (
+                  <ThemeSettingsPanel
+                    onChange={setThemeMode}
+                    value={themeMode}
+                  />
+                ),
+              },
+              {
+                panelId: "refresh",
+                children: (
+                  <RefreshSettingsPanel
+                    onChange={setRefreshIntervalMs}
+                    refreshIntervalMs={refreshIntervalMs}
+                  />
+                ),
+              },
+              {
+                panelId: "runtime",
+                children: <RuntimeSettingsPanel status={status} />,
+              },
+              {
+                panelId: "paths",
+                children: <PathsSettingsPanel status={status} />,
+              },
+            ]}
+            layout={layout}
+            onLayoutChange={onLayoutChange}
           />
         </div>
-      </Panel>
+      )}
+    </SettingsLayoutEditor>
+  );
+}
 
-      <Panel span="span">
-        <PanelHeader actions={<StatusBadge value={status.runtime.state} />}>
-          <Eyebrow>Runtime</Eyebrow>
-          <PanelTitle>Daemon status</PanelTitle>
-        </PanelHeader>
-        <FieldGrid>
+function SettingsLayoutEditor({
+  children,
+}: {
+  children(props: {
+    editing: boolean;
+    layout: readonly SettingsPanelLayout[];
+    onCancel(): void;
+    onEdit(): void;
+    onLayoutChange(layout: readonly SettingsPanelLayout[]): void;
+    onReset(): void;
+    onSave(): void;
+  }): ReactNode;
+}) {
+  const { setSettingsLayout, settingsLayout } = useDesktopLayoutPreferences();
+  const [editorState, dispatchEditor] = useReducer(
+    settingsLayoutEditorReducer,
+    settingsLayout,
+    createSettingsLayoutEditorState,
+  );
+
+  useEffect(() => {
+    dispatchEditor({ settingsLayout, type: "sync" });
+  }, [settingsLayout]);
+
+  return children({
+    editing: editorState.editing,
+    layout: editorState.editing ? editorState.draftLayout : settingsLayout,
+    onCancel() {
+      dispatchEditor({ settingsLayout, type: "cancel" });
+    },
+    onEdit() {
+      dispatchEditor({ settingsLayout, type: "edit" });
+    },
+    onLayoutChange(nextLayout) {
+      dispatchEditor({ layout: nextLayout, type: "draft" });
+    },
+    onReset() {
+      dispatchEditor({ type: "reset" });
+    },
+    onSave() {
+      setSettingsLayout(editorState.draftLayout);
+      dispatchEditor({ type: "saved" });
+    },
+  });
+}
+
+function ThemeSettingsPanel({
+  onChange,
+  value,
+}: {
+  onChange(value: DesktopThemeMode): void;
+  value: DesktopThemeMode;
+}) {
+  return (
+    <Panel className="flex h-full min-h-0 flex-col overflow-auto" span="none">
+      <PanelHeader>
+        <Eyebrow>Appearance</Eyebrow>
+        <PanelTitle>Theme</PanelTitle>
+      </PanelHeader>
+      <div className="grid gap-3">
+        <FieldGrid className="grid-cols-1">
           <RuntimeField
-            label="Runtime owner"
-            value={status.runtime.owner?.mode ?? "none"}
+            label="Mode"
+            value={value === "light" ? "Light" : "Dark"}
           />
-          <RuntimeField label="Health" value={status.health.status} />
-          <RuntimeField label="Ingest" value={status.health.ingest} />
-          <RuntimeField label="Push" value={status.health.push} />
         </FieldGrid>
-      </Panel>
+        <ThemeModeToggle onChange={onChange} value={value} />
+      </div>
+    </Panel>
+  );
+}
 
-      <Panel span="span">
-        <PanelHeader>
-          <Eyebrow>Paths</Eyebrow>
-          <PanelTitle>Local files</PanelTitle>
-        </PanelHeader>
-        <FieldGrid>
-          <RuntimeField label="Config" value={status.paths.config} />
-          <RuntimeField label="Store" value={status.paths.store} />
-          <RuntimeField label="Socket" value={status.paths.socket} />
-          <RuntimeField label="Log" value={status.paths.log} />
+function RefreshSettingsPanel({
+  onChange,
+  refreshIntervalMs,
+}: {
+  onChange(value: (typeof DESKTOP_REFRESH_INTERVAL_OPTIONS)[number]["value"]): void;
+  refreshIntervalMs: (typeof DESKTOP_REFRESH_INTERVAL_OPTIONS)[number]["value"];
+}) {
+  return (
+    <Panel className="flex h-full min-h-0 flex-col overflow-auto" span="none">
+      <PanelHeader>
+        <Eyebrow>Desktop</Eyebrow>
+        <PanelTitle>Shell refresh</PanelTitle>
+      </PanelHeader>
+      <div className="grid gap-3">
+        <FieldGrid className="grid-cols-1">
+          <RuntimeField
+            label="Auto-refresh"
+            value={`Every ${formatDesktopRefreshInterval(refreshIntervalMs)}`}
+          />
         </FieldGrid>
-      </Panel>
-    </section>
+        <SegmentedControl
+          ariaLabel="Desktop auto-refresh interval"
+          buttonClassName="min-w-[60px] flex-1 px-3"
+          className="w-full"
+          onChange={onChange}
+          options={DESKTOP_REFRESH_INTERVAL_OPTIONS}
+          value={refreshIntervalMs}
+        />
+      </div>
+    </Panel>
+  );
+}
+
+function RuntimeSettingsPanel({
+  status,
+}: {
+  status: NonNullable<RendererState["snapshot"]>["status"];
+}) {
+  return (
+    <Panel className="flex h-full min-h-0 flex-col overflow-auto" span="none">
+      <PanelHeader actions={<StatusBadge value={status.runtime.state} />}>
+        <Eyebrow>Runtime</Eyebrow>
+        <PanelTitle>Daemon status</PanelTitle>
+      </PanelHeader>
+      <FieldGrid>
+        <RuntimeField
+          label="Runtime owner"
+          value={status.runtime.owner?.mode ?? "none"}
+        />
+        <RuntimeField label="Health" value={status.health.status} />
+        <RuntimeField label="Ingest" value={status.health.ingest} />
+        <RuntimeField label="Push" value={status.health.push} />
+      </FieldGrid>
+    </Panel>
+  );
+}
+
+function PathsSettingsPanel({
+  status,
+}: {
+  status: NonNullable<RendererState["snapshot"]>["status"];
+}) {
+  return (
+    <Panel className="flex h-full min-h-0 flex-col overflow-auto" span="none">
+      <PanelHeader>
+        <Eyebrow>Paths</Eyebrow>
+        <PanelTitle>Local files</PanelTitle>
+      </PanelHeader>
+      <FieldGrid>
+        <RuntimeField label="Config" value={status.paths.config} />
+        <RuntimeField label="Store" value={status.paths.store} />
+        <RuntimeField label="Socket" value={status.paths.socket} />
+        <RuntimeField label="Log" value={status.paths.log} />
+      </FieldGrid>
+    </Panel>
   );
 }
 

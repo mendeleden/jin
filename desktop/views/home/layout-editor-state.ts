@@ -3,11 +3,14 @@ import {
   normalizeHomePanelLayout,
   type HomePanelLayout,
 } from "./layout";
+import {
+  createDesktopLayoutEditorState,
+  reduceDesktopLayoutEditorState,
+  type DesktopLayoutEditorState,
+} from "../../layout/layout-editor-state";
 
-export interface HomeLayoutEditorState {
-  draftLayout: readonly HomePanelLayout[];
-  editing: boolean;
-}
+export type HomeLayoutEditorState =
+  DesktopLayoutEditorState<HomePanelLayout>;
 
 export type HomeLayoutEditorAction =
   | {
@@ -25,52 +28,21 @@ export type HomeLayoutEditorAction =
 export function createHomeLayoutEditorState(
   homeLayout: readonly HomePanelLayout[],
 ): HomeLayoutEditorState {
-  return {
-    draftLayout: normalizeHomePanelLayout(homeLayout),
-    editing: false,
-  };
+  return createDesktopLayoutEditorState(homeLayout, normalizeHomePanelLayout);
 }
 
 export function homeLayoutEditorReducer(
   state: HomeLayoutEditorState,
   action: HomeLayoutEditorAction,
 ): HomeLayoutEditorState {
-  if (action.type === "sync") {
-    return state.editing
-      ? state
-      : createHomeLayoutEditorState(action.homeLayout);
-  }
-
-  if (action.type === "edit") {
-    return {
-      draftLayout: normalizeHomePanelLayout(action.homeLayout),
-      editing: true,
-    };
-  }
-
-  if (action.type === "cancel") {
-    return createHomeLayoutEditorState(action.homeLayout);
-  }
-
-  if (action.type === "draft") {
-    return state.editing
-      ? { ...state, draftLayout: normalizeHomePanelLayout(action.layout) }
-      : state;
-  }
-
-  if (action.type === "reset") {
-    return {
-      ...state,
-      draftLayout: normalizeHomePanelLayout(DEFAULT_HOME_PANEL_LAYOUT),
-    };
-  }
-
-  if (action.type === "saved") {
-    return {
-      draftLayout: normalizeHomePanelLayout(state.draftLayout),
-      editing: false,
-    };
-  }
-
-  return state;
+  return reduceDesktopLayoutEditorState(
+    state,
+    "homeLayout" in action
+      ? { currentLayout: action.homeLayout, type: action.type }
+      : action,
+    {
+      defaultLayout: DEFAULT_HOME_PANEL_LAYOUT,
+      normalizeLayout: normalizeHomePanelLayout,
+    },
+  );
 }
