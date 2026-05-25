@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   DesktopRendererController,
   ESTIMATED_COST_HELP,
+  formatDate,
   type RendererState,
 } from "../desktop/renderer";
 import type { JinDesktopBridge } from "../desktop/bridge";
@@ -69,6 +70,13 @@ import {
 import { VERSION } from "../src/updater";
 
 describe("desktop renderer", () => {
+  test("formats desktop dates consistently across CI platforms", () => {
+    expect(formatDate("2026-04-29T08:30:00.000")).toBe("Apr 29 at 8:30 AM");
+    expect(formatDate("2026-04-29T13:05:00.000")).toBe("Apr 29 at 1:05 PM");
+    expect(formatDate("")).toBe("Unknown time");
+    expect(formatDate("not-a-date")).toBe("not-a-date");
+  });
+
   test("controller refreshes through injected preload bridge state", async () => {
     const snapshots: RendererState[] = [];
     const library = makeConversationListView();

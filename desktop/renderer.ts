@@ -797,13 +797,29 @@ export function formatDate(value: string): string {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  const month = MONTH_LABELS[date.getMonth()] ?? "";
+  const day = date.getDate();
+  const hour24 = date.getHours();
+  const hour = hour24 % 12 || 12;
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const period = hour24 >= 12 ? "PM" : "AM";
+  return `${month} ${day} at ${hour}:${minute} ${period}`;
 }
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
 
 export function formatDuration(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
