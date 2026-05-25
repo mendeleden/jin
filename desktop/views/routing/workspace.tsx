@@ -145,7 +145,7 @@ function RoutingSinksPanel({ routing }: { routing: DesktopRoutingView }) {
         {routing.sinks.length > 0 ? (
           routing.sinks.map((sink) => (
             <article
-              className="grid gap-[9px] rounded-[11px] border border-[var(--line)] bg-white/[0.03] px-[9px] py-2"
+              className="grid gap-[9px] rounded-[11px] border border-[var(--line)] bg-[var(--routing-item-bg)] px-[9px] py-2"
               key={sink.id}
             >
               <div className="flex min-w-0 items-center justify-between gap-2.5">
@@ -182,7 +182,7 @@ function RoutingRulesPanel({ routing }: { routing: DesktopRoutingView }) {
         {routing.routes.length > 0 ? (
           routing.routes.map((route) => (
             <article
-              className="grid gap-[9px] rounded-[11px] border border-[var(--line)] bg-white/[0.03] px-[9px] py-2"
+              className="grid gap-[9px] rounded-[11px] border border-[var(--line)] bg-[var(--routing-item-bg)] px-[9px] py-2"
               key={route.index}
             >
               <div className="flex min-w-0 items-center justify-between gap-2.5">
@@ -228,7 +228,7 @@ function RoutingFlowPanel({ children }: { children: ReactNode }) {
     <Panel
       className={cx(
         "flex min-h-0 flex-col overflow-visible",
-        "bg-[radial-gradient(circle_at_10%_12%,rgba(137,180,255,0.16),transparent_28%),radial-gradient(circle_at_82%_26%,rgba(137,212,161,0.12),transparent_30%),linear-gradient(180deg,rgba(16,22,34,0.98),rgba(8,12,18,0.96))]",
+        "bg-[var(--routing-flow-panel-bg)]",
       )}
       span="wide"
     >
@@ -239,7 +239,7 @@ function RoutingFlowPanel({ children }: { children: ReactNode }) {
 
 function RoutingMetaPill({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-full border border-[rgba(210,224,255,0.1)] bg-white/[0.03] px-[7px] py-[3px] text-[0.68rem] text-[var(--text-dim)]">
+    <span className="rounded-full border border-[var(--routing-pill-border)] bg-[var(--routing-pill-bg)] px-[7px] py-[3px] text-[0.68rem] text-[var(--text-dim)]">
       {children}
     </span>
   );

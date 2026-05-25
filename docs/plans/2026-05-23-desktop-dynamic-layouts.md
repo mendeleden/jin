@@ -222,6 +222,11 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
    accessibility tree during HMR, so resized-state screenshot evidence remains
    a follow-up visual artifact rather than a code blocker.
 
+   PR #62 CL follow-up on 2026-05-24 adds Windows-portable source assertions,
+   explicit CI/release layout-engine test wiring, reversible pointer gesture
+   coverage, CSP-safe tooltip cleanup, and local screenshot evidence now that
+   Computer Use screenshots are available again.
+
 8. **Commit in small slices**
    Use one commit for the spike decision, one for preference/schema plumbing,
    one for Home edit mode, one for interaction/persistence, and one for visual
@@ -301,6 +306,19 @@ Jin through CSS Grid/Tailwind classes so packaged Desktop does not need
       move/resize handles in the accessibility tree.
 - [ ] Capture a resized-state screenshot once the stale Electron screenshot
       issue is gone or a browser/Electron smoke path is added.
+
+### 2026-05-24 PR #62 CL Follow-Up Validation
+
+- [x] `bun test test/desktop-layout-engine.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts`
+- [x] Computer Use attached to the running Electron dev window.
+- [x] Baseline Home screenshot captured under
+      `ui-screenshots-local/2026-05-24-pr62-followup/`.
+- [x] `bun run desktop:typecheck`
+- [x] `bun run desktop:build`
+- [x] `bun run test`
+- [x] `git diff --check`
+- [x] Post-change Home/edit/light-mode screenshots captured under
+      `ui-screenshots-local/2026-05-24-pr62-followup/`.
 
 ## Open Questions
 

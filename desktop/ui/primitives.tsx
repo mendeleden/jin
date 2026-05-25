@@ -8,6 +8,13 @@ export interface SegmentedControlOption<TValue extends number | string> {
   value: TValue;
 }
 
+const SEGMENTED_BUTTON_BASE_CLASS =
+  "relative cursor-pointer border-0 border-l border-[var(--control-border-subtle)] px-2 py-[5px] text-[0.76rem] font-semibold text-[var(--control-text)] transition-[background-color,color,box-shadow] first:border-l-0 disabled:cursor-default disabled:opacity-45";
+const SEGMENTED_BUTTON_INTERACTION_CLASS =
+  "hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)]";
+const SEGMENTED_BUTTON_SELECTED_CLASS =
+  "data-[selected=true]:z-[1] data-[selected=true]:bg-[var(--picker-selected-bg)] data-[selected=true]:font-bold data-[selected=true]:text-[var(--picker-selected-text)] data-[selected=true]:shadow-[var(--picker-selected-shadow),0_0_0_1px_var(--picker-selected-border)] data-[selected=true]:hover:bg-[var(--picker-selected-bg)] data-[selected=true]:hover:text-[var(--picker-selected-text)]";
+
 export function SegmentedControl<TValue extends number | string>({
   ariaLabel,
   buttonClassName,
@@ -38,10 +45,10 @@ export function SegmentedControl<TValue extends number | string>({
           <button
             aria-pressed={selected}
             className={cx(
-              "relative cursor-pointer border-0 border-l border-[var(--control-border-subtle)] bg-transparent px-2 py-[5px] text-[0.76rem] font-semibold text-[var(--control-text)] transition-[background-color,color,box-shadow] first:border-l-0 hover:text-[var(--text-soft)] disabled:cursor-default disabled:opacity-45",
+              SEGMENTED_BUTTON_BASE_CLASS,
+              SEGMENTED_BUTTON_INTERACTION_CLASS,
+              SEGMENTED_BUTTON_SELECTED_CLASS,
               buttonClassName,
-              selected &&
-                "z-[1] bg-[var(--control-selected-bg)] font-bold text-[var(--control-selected-text)] shadow-[var(--control-selected-shadow)] hover:text-[var(--control-selected-text)]",
             )}
             data-selected={selected ? "true" : undefined}
             disabled={option.disabled}

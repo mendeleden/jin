@@ -131,7 +131,7 @@ function ThemeModeToggle({
               "group relative inline-flex min-w-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-[12px] border border-transparent px-3 py-2 text-[0.86rem] font-bold text-[var(--control-text)] transition-[background,border-color,box-shadow,color,transform]",
               "hover:border-[var(--control-border-hover)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)]",
               selected &&
-                "border-[var(--control-selected-border)] bg-[var(--control-selected-bg)] text-[var(--control-selected-text)] shadow-[var(--control-selected-shadow)] hover:text-[var(--control-selected-text)]",
+                "border-[var(--picker-selected-border)] bg-[var(--picker-selected-bg)] text-[var(--picker-selected-text)] shadow-[var(--picker-selected-shadow)] hover:text-[var(--picker-selected-text)]",
             )}
             data-selected={selected ? "true" : undefined}
             key={option.value}
@@ -142,7 +142,7 @@ function ThemeModeToggle({
               className={cx(
                 "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-[var(--control-border-subtle)] bg-[var(--control-bg-subtle)] text-current transition-colors [&_svg]:h-[15px] [&_svg]:w-[15px]",
                 selected &&
-                  "border-[var(--control-selected-border)] bg-[var(--control-selected-icon-bg)]",
+                  "border-[var(--picker-selected-border)] bg-[var(--picker-selected-icon-bg)]",
               )}
             >
               <Icon aria-hidden="true" />

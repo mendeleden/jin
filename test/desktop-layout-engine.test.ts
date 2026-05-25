@@ -5,6 +5,7 @@ import {
   resizeDesktopGridPanel,
   type DesktopGridPanelLayout,
 } from "../desktop/layout/grid-engine";
+import { applyDesktopGridInteractionDelta } from "../desktop/layout/grid-interaction";
 import { parseStoredDesktopLayouts } from "../desktop/layout/layout-storage";
 import { normalizeStoredHomeLayout } from "../desktop/layout/preferences";
 import {
@@ -86,6 +87,56 @@ describe("desktop grid engine", () => {
     expect(panel(next, "harnesses")).toMatchObject({ x: 7, y: 9, h: 3 });
     expect(layoutFitsRows(next, 12)).toBe(true);
     expect(layoutHasOverlaps(next)).toBe(false);
+  });
+
+  test("pointer move gestures can return to their start layout", () => {
+    const interaction = {
+      mode: "move" as const,
+      panelId: "harnesses" as const,
+      startLayout: DEFAULT_LAYOUT,
+      startPanel: panel(DEFAULT_LAYOUT, "harnesses"),
+    };
+
+    const moved = applyDesktopGridInteractionDelta(interaction, {
+      columns: 12,
+      deltaX: -7,
+      deltaY: 0,
+      rows: 12,
+    });
+    const restored = applyDesktopGridInteractionDelta(interaction, {
+      columns: 12,
+      deltaX: 0,
+      deltaY: 0,
+      rows: 12,
+    });
+
+    expect(panel(moved, "harnesses")).toMatchObject({ x: 0, y: 5 });
+    expect(restored).toEqual(DEFAULT_LAYOUT);
+  });
+
+  test("pointer resize gestures can return to their start layout", () => {
+    const interaction = {
+      mode: "resize" as const,
+      panelId: "projects" as const,
+      startLayout: DEFAULT_LAYOUT,
+      startPanel: panel(DEFAULT_LAYOUT, "projects"),
+    };
+
+    const resized = applyDesktopGridInteractionDelta(interaction, {
+      columns: 12,
+      deltaX: 2,
+      deltaY: 1,
+      rows: 12,
+    });
+    const restored = applyDesktopGridInteractionDelta(interaction, {
+      columns: 12,
+      deltaX: 0,
+      deltaY: 0,
+      rows: 12,
+    });
+
+    expect(panel(resized, "projects")).toMatchObject({ h: 4, w: 9 });
+    expect(restored).toEqual(DEFAULT_LAYOUT);
   });
 
   test("keeps the RGL dependency behind the core adapter, not the renderer", () => {

@@ -169,6 +169,20 @@ describe("desktop renderer", () => {
     expect(html).toContain("Trace ID");
     expect(html).toContain("Spawned project summary");
     expect(html).toContain("Conversation index");
+
+    const conversationsSource = readFileSync(
+      new URL("../desktop/views/conversations/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
+    expect(conversationsSource).toContain("--conversation-toolbar-bg");
+    expect(conversationsSource).toContain("--conversation-inspector-bg");
+    expect(conversationsSource).toContain("--conversation-row-selected-bg");
+    expect(conversationsSource).toContain("bg-[var(--control-bg)]");
+    expect(conversationsSource).not.toContain("bg-white/[0.03]");
+    expect(conversationsSource).not.toContain("rgba(18,25,29,0.98)");
+    expect(themeSource).toContain("--conversation-toolbar-bg");
+    expect(themeSource).toContain("--conversation-row-selected-shadow");
   });
 
   test("home overview uses compact large numbers and keeps runtime paths in the sidebar", () => {
@@ -214,6 +228,7 @@ describe("desktop renderer", () => {
     expect(countText(html, 'data-selected="true"')).toBeGreaterThanOrEqual(2);
     expect(html).toContain("Previous usage window");
     expect(html).toContain("Next usage window");
+    expect(html).toContain('data-usage-window-label="true"');
     expect(html).not.toContain("usage-area-static-chart");
     expect(html).not.toContain("usage-area-static-fill");
     expect(html).toContain("Daily token usage by adapter");
@@ -267,6 +282,12 @@ describe("desktop renderer", () => {
     expect(html).toContain("244");
     expect(html).toContain("Snapshot-derived token usage by adapter");
     expect(html).toContain("recharts-wrapper");
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(chartSource).not.toContain("Tooltip as RechartsTooltip");
+    expect(chartSource).not.toContain("<RechartsTooltip");
     expect(html).toContain('title="Snapshot: 3 conversations"');
     expect(html).toContain('title="Current: 3 conversations"');
     expect(html).not.toContain("usage-area-static-layer");
@@ -373,6 +394,7 @@ describe("desktop renderer", () => {
     expect(theme).toContain("--accent:");
     expect(theme).toContain(':root[data-theme="light"]');
     expect(theme).toContain("--sidebar-bg:");
+    expect(theme).toContain("--picker-selected-bg:");
     expect(theme).toContain("--control-selected-bg:");
     expect(theme).toContain("--home-usage-panel-bg:");
     expect(css).not.toContain(".home-pulse-panel");
@@ -778,7 +800,7 @@ describe("desktop renderer", () => {
     expect(rendererSource).toContain("preserveMessage: true");
     expect(rendererSource).toContain("window.clearInterval");
     expect(rendererSource).not.toContain("DESKTOP_LIFECYCLE_REFRESH_MS");
-    expect(preferencesSource).toContain(
+    expect(normalizeSourceText(preferencesSource)).toContain(
       "DEFAULT_DESKTOP_REFRESH_INTERVAL_MS: DesktopRefreshIntervalMs =\n  30_000",
     );
     expect(preferencesSource).toContain("localStorage");
@@ -852,7 +874,7 @@ describe("desktop renderer", () => {
     expect(source).toContain("[-webkit-app-region:no-drag]");
   });
 
-  test("desktop shell chrome uses the Jin app mark and semantic runtime icons", () => {
+  test("desktop shell chrome keeps branding out of the sidebar and uses semantic runtime icons", () => {
     const source = readFileSync(
       new URL("../desktop/components/shell/frame.tsx", import.meta.url),
       "utf8",
@@ -871,11 +893,17 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(source).toContain('const JIN_APP_ICON_SRC = "./assets/jin-app-icon.png"');
-    expect(source).toContain("PowerOff");
+    const sidebar = extractReactSidebar(html);
+
+    expect(source).not.toContain("JIN_APP_ICON_SRC");
+    expect(source).toContain("PanelLeftDashed");
+    expect(source).toContain("CircleStop");
+    expect(source).not.toContain("PowerOff");
     expect(source).toContain("RotateCcw");
     expect(html).toContain('data-sidebar-brand="true"');
-    expect(html).toContain('src="./assets/jin-app-icon.png"');
+    expect(sidebar).not.toContain('src="./assets/jin-app-icon.png"');
+    expect(sidebar).not.toContain(">Jin</strong>");
+    expect(sidebar).not.toContain(">Desktop</span>");
     expect(html).toContain("Collapse sidebar");
     expect(html).toContain('aria-label="Restart Jin"');
     expect(html).toContain('aria-label="Stop Jin"');
@@ -902,11 +930,25 @@ describe("desktop renderer", () => {
       "../desktop/views/home/token-usage-chart.tsx",
     ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
     const css = readDesktopCssSource();
+    const themeCss = readDesktopThemeSource();
 
     expect(primitiveSources.join("\n")).toContain("function StatusBadge");
     expect(primitiveSources.join("\n")).toContain("function PanelHeader");
     expect(primitiveSources.join("\n")).toContain("function FieldGrid");
     expect(primitiveSources.join("\n")).toContain("function SegmentedControl");
+    expect(primitiveSources.join("\n")).toContain("data-[selected=true]:bg-[var(--picker-selected-bg)]");
+    expect(primitiveSources.join("\n")).toContain("data-[selected=true]:text-[var(--picker-selected-text)]");
+    expect(primitiveSources.join("\n")).toContain("0_0_0_1px_var(--picker-selected-border)");
+    expect(primitiveSources.join("\n")).toContain("bg-[var(--picker-selected-bg)]");
+    expect(primitiveSources.join("\n")).not.toContain("bg-transparent");
+    expect(migratedSources.join("\n")).toContain("bg-[var(--picker-selected-bg)]");
+    expect(migratedSources.join("\n")).not.toContain("text-[var(--control-selected-text)]");
+    expect(themeCss).toContain("--picker-selected-border");
+    expect(themeCss).toContain("--picker-selected-bg");
+    expect(themeCss).not.toContain("--picker-selected-bg: linear-gradient");
+    expect(themeCss).toContain("--picker-selected-text: #ffffff");
+    expect(themeCss).toContain("--control-selected-border");
+    expect(themeCss).toContain("--control-selected-bg: var(--picker-selected-bg)");
 
     for (const source of migratedSources) {
       expect(source).not.toContain("toolbar-button");
@@ -942,18 +984,37 @@ describe("desktop renderer", () => {
     expect(costMetric).toContain("Cost (estimated)");
     expect(costMetric).toContain("$1,234,567.89");
     expect(costMetric).toContain('data-cost-popover-trigger="estimated-cost"');
+    expect(costMetric).toContain('data-floating-tooltip-trigger="true"');
     expect(costMetric).toContain(ESTIMATED_COST_HELP);
     expect(html).not.toContain("sidebar-cost-tooltip-content");
     const css = readDesktopCssSource();
+    const themeCss = readDesktopThemeSource();
+    expect(themeCss).toContain("--tooltip-border");
+    expect(themeCss).toContain("--tooltip-shadow");
     expect(css).not.toContain(".sidebar-cost-tooltip-content");
     expect(css).not.toContain(".sidebar-cost-tooltip-arrow");
     const source = readFileSync(
       new URL("../desktop/components/shell/frame.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("@radix-ui/react-tooltip");
-    expect(source).toContain("RadixTooltip.Content");
-    expect(source).toContain("data-cost-popover");
+    expect(source).not.toContain("@radix-ui/react-tooltip");
+    expect(source).not.toContain("RadixTooltip");
+    expect(source).toContain("FloatingTooltip");
+    expect(source).not.toContain("left-full");
+    expect(source).not.toContain("group-focus-within:block");
+    const tooltipSource = readFileSync(
+      new URL("../desktop/ui/tooltip.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(tooltipSource).toContain("createPortal");
+    expect(tooltipSource).toContain("fixed z-[10000]");
+    expect(tooltipSource).toContain('window.addEventListener("scroll"');
+    expect(tooltipSource).toContain("data-floating-tooltip");
+    const packageJson = readFileSync(
+      new URL("../package.json", import.meta.url),
+      "utf8",
+    );
+    expect(packageJson).not.toContain("@radix-ui/react-tooltip");
     expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
       costMetric.indexOf("$1,234,567.89"),
     );
@@ -1029,6 +1090,30 @@ describe("desktop renderer", () => {
     expect(html).toContain("Route rules");
     expect(html).toContain("remote=github.com/acme/*");
     expect(html).toContain("enabled");
+  });
+
+  test("routing workspace colors are delegated to desktop theme tokens", () => {
+    const workspaceSource = readFileSync(
+      new URL("../desktop/views/routing/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const graphSource = readFileSync(
+      new URL("../desktop/graph-components.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
+    const routingSources = `${workspaceSource}\n${graphSource}`;
+
+    expect(routingSources).toContain("--routing-flow-panel-bg");
+    expect(routingSources).toContain("--routing-graph-bg");
+    expect(routingSources).toContain("--routing-node-bg");
+    expect(routingSources).toContain("--routing-tooltip-bg");
+    expect(routingSources).toContain("--routing-pill-bg");
+    expect(routingSources).not.toContain("bg-white/[0.03]");
+    expect(routingSources).not.toContain("rgba(8,12,19,0.97)");
+    expect(themeSource).toContain(":root[data-theme=\"light\"]");
+    expect(themeSource).toContain("--routing-flow-panel-bg");
+    expect(themeSource).toContain("--routing-tooltip-shadow");
   });
 
   test("routing graph bounds long project and sink labels with detail affordances", () => {
@@ -1327,6 +1412,10 @@ function readDesktopCssSource(): string {
 
 function readDesktopThemeSource(): string {
   return readFileSync(new URL("../desktop/theme.css", import.meta.url), "utf8");
+}
+
+function normalizeSourceText(source: string): string {
+  return source.replace(/\r\n/g, "\n");
 }
 
 function makeState(overrides: Partial<RendererState> = {}): RendererState {

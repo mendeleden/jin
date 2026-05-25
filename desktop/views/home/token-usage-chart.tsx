@@ -5,7 +5,6 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
-  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -28,7 +27,6 @@ import {
   formatUsageDisplayDay,
   usageMetricUsageLabel,
   type HomeBreakdownMetric,
-  type UsageChartDatum,
   type UsageChartPeriod,
   type UsageDisplayBucket,
   type UsageWindowedChartModel,
@@ -36,7 +34,6 @@ import {
 import type { HomePanelLayoutContext } from "./layout";
 import {
   usageColorClass,
-  usageColorClassForColor,
   usageHeightClass,
 } from "./usage-visuals";
 
@@ -233,7 +230,7 @@ export function TokenUsageChart({
           >
             <Button
               aria-label="Previous usage window"
-              className="h-[30px] w-[30px] border-[var(--control-selected-border)] bg-[var(--accent-soft)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--accent-softer)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
+              className="h-[30px] w-[30px] border-[var(--control-border)] bg-[var(--control-bg)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--control-bg-hover)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
               disabled={!chart.canGoPrevious}
               onClick={onPreviousWindow}
               title="Previous window"
@@ -242,17 +239,17 @@ export function TokenUsageChart({
             </Button>
             <span
               className={cx(
-                "min-w-[118px] max-w-[178px] truncate rounded-full border border-[var(--control-border)] bg-[var(--field-bg)] px-2.5 py-[7px] text-center",
-                compactChrome && "hidden",
-                "max-[1220px]:hidden",
+                "min-w-[112px] max-w-[178px] truncate rounded-[var(--radius-control)] border border-[var(--control-border)] bg-[var(--control-bg)] px-2.5 py-[7px] text-center font-semibold text-[var(--control-text)] shadow-[inset_0_1px_0_var(--control-highlight)]",
+                compactChrome && "min-w-[92px] max-w-[132px] px-2 text-[0.7rem]",
               )}
+              data-usage-window-label
               title={chart.windowLabel}
             >
               {chart.rangeLabel}
             </span>
             <Button
               aria-label="Next usage window"
-              className="h-[30px] w-[30px] border-[var(--control-selected-border)] bg-[var(--accent-soft)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--accent-softer)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
+              className="h-[30px] w-[30px] border-[var(--control-border)] bg-[var(--control-bg)] p-0 text-[var(--text)] hover:border-[var(--control-border-hover)] hover:bg-[var(--control-bg-hover)] disabled:cursor-default disabled:border-[var(--control-border-subtle)] disabled:bg-[var(--field-bg)] disabled:text-[var(--text-dim)] disabled:opacity-60"
               disabled={!chart.canGoNext}
               onClick={onNextWindow}
               title="Next window"
@@ -364,10 +361,6 @@ export function TokenUsageChart({
               tickLine={false}
               width={64}
             />
-            <RechartsTooltip
-              content={<UsageChartTooltip metric={metric} />}
-              cursor={{ stroke: "var(--chart-cursor)", strokeDasharray: "6 6" }}
-            />
             {series.map((adapter) =>
               useWeeklyBars ? (
                 <Bar
@@ -451,75 +444,6 @@ function getUsageChartSize(panel: HomePanelLayoutContext): {
   };
 }
 
-function UsageChartTooltip({
-  active,
-  label,
-  metric,
-  payload,
-}: {
-  active?: boolean;
-  label?: string | number;
-  metric: HomeBreakdownMetric;
-  payload?: Array<{
-    color?: string;
-    dataKey?: string | number;
-    name?: string;
-    payload?: UsageChartDatum;
-    value?: number | string;
-  }>;
-}) {
-  if (!active || !payload || payload.length === 0) {
-    return null;
-  }
-
-  const rows = payload
-    .filter((entry) => Number(entry.value) > 0)
-    .sort((left, right) => Number(right.value) - Number(left.value));
-
-  return (
-    <div className="pointer-events-none static grid min-w-[190px] gap-2 rounded-xl border border-[var(--line-strong)] bg-[var(--tooltip-bg)] p-3 shadow-[var(--shadow)] backdrop-blur-[14px]">
-      <strong className="text-[0.92rem] text-[var(--text)]">{label}</strong>
-      {rows[0]?.payload ? (
-        <>
-          <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
-            tokens
-            <b className="font-semibold text-[var(--text)]">
-              {formatMetricNumber(rows[0].payload.totalTokens).display}
-            </b>
-          </span>
-          <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
-            conversations
-            <b className="font-semibold text-[var(--text)]">
-              {formatNumber(rows[0].payload.totalSessions)}
-            </b>
-          </span>
-          <span className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]">
-            <i className="h-[9px] w-[9px] rounded-full bg-[var(--text-dim)]" />
-            est. cost
-            <b className="font-semibold text-[var(--text)]">
-              {formatCost(rows[0].payload.totalCost)}
-            </b>
-          </span>
-        </>
-      ) : null}
-      {rows.slice(0, 6).map((entry) => (
-        <span
-          className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-[0.82rem] text-[var(--text-soft)]"
-          key={entry.name}
-        >
-          <i className={cx("h-[9px] w-[9px] rounded-full", usageTooltipMarkerClass(entry))} />
-          {entry.name}
-          <b className="font-semibold text-[var(--text)]">
-            {formatHomeMetricValue(Number(entry.value), metric)}
-          </b>
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function UsageSessionRail({
   className,
   days,
@@ -559,18 +483,4 @@ function UsageSessionRail({
       ))}
     </div>
   );
-}
-
-function usageTooltipMarkerClass(entry: {
-  color?: string;
-  dataKey?: string | number;
-}): string {
-  if (typeof entry.dataKey === "string") {
-    const match = /^adapter_(\d+)$/.exec(entry.dataKey);
-    if (match?.[1]) {
-      return usageColorClass(Number(match[1]));
-    }
-  }
-
-  return usageColorClassForColor(entry.color);
 }

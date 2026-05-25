@@ -75,7 +75,7 @@ export function RoutingFlowGraph({
   );
   return (
     <div
-      className="min-h-[306px] min-w-0 flex-1 overflow-auto rounded-xl border border-[rgba(210,224,255,0.09)] bg-[linear-gradient(180deg,rgba(255,255,255,0.032),rgba(255,255,255,0.012)),rgba(5,8,13,0.52)]"
+      className="min-h-[306px] min-w-0 flex-1 overflow-auto rounded-xl border border-[var(--routing-graph-stroke)] bg-[var(--routing-graph-bg)]"
       data-routing-graph="project-to-sink"
     >
       <svg
@@ -94,7 +94,7 @@ export function RoutingFlowGraph({
           </filter>
         </defs>
         <rect
-          className="fill-[rgba(255,255,255,0.018)] stroke-[rgba(210,224,255,0.06)]"
+          className="fill-[var(--routing-graph-frame)] stroke-[var(--routing-graph-stroke)]"
           x="0"
           y="0"
           width={ROUTING_GRAPH_WIDTH}
@@ -123,7 +123,7 @@ export function RoutingFlowGraph({
             return (
               <path
                 key={`${project.id}-${flow.sinkId}-${flowIndex}`}
-                className="fill-none stroke-[rgba(137,180,255,0.58)] opacity-[0.82] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke]"
+                className="fill-none stroke-[var(--routing-flow-stroke)] opacity-[0.82] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke]"
                 data-routing-flow-path
                 d={flowPath(
                   [ROUTING_FLOW_START_X, startY],
@@ -162,7 +162,7 @@ export function RoutingFlowGraph({
             >
               <title>{tooltipLines.join("\n")}</title>
               <rect
-                className="fill-[rgba(255,255,255,0.038)] stroke-[rgba(210,224,255,0.12)] transition-colors group-focus:fill-[rgba(137,180,255,0.08)] group-focus:stroke-[rgba(137,180,255,0.24)] group-hover:fill-[rgba(137,180,255,0.08)] group-hover:stroke-[rgba(137,180,255,0.24)]"
+                className="fill-[var(--routing-node-bg)] stroke-[var(--routing-node-border)] transition-colors group-focus:fill-[var(--routing-node-hover-bg)] group-focus:stroke-[var(--routing-node-hover-border)] group-hover:fill-[var(--routing-node-hover-bg)] group-hover:stroke-[var(--routing-node-hover-border)]"
                 x={ROUTING_PROJECT_CARD_X}
                 y={y - ROUTING_PROJECT_LABEL_HEIGHT / 2}
                 width={ROUTING_PROJECT_CARD_WIDTH}
@@ -170,7 +170,7 @@ export function RoutingFlowGraph({
                 rx="12"
               />
               <circle
-                className={cx(graphFillClass(index), "stroke-[rgba(7,9,15,0.82)] stroke-2")}
+                className={cx(graphFillClass(index), "stroke-[var(--routing-node-ring)] stroke-2")}
                 cx={ROUTING_PROJECT_NODE_X}
                 cy={y}
                 r="17"
@@ -202,7 +202,7 @@ export function RoutingFlowGraph({
                 height={tooltipHeight}
                 aria-hidden="true"
               >
-                <div className="min-h-full w-full rounded-xl border border-[rgba(210,224,255,0.18)] bg-[rgba(8,12,19,0.97)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[0_18px_38px_rgba(0,0,0,0.38)] [overflow-wrap:anywhere]">
+                <div className="min-h-full w-full rounded-xl border border-[var(--routing-tooltip-border)] bg-[var(--routing-tooltip-bg)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[var(--routing-tooltip-shadow)] [overflow-wrap:anywhere]">
                   {tooltipLines.map((line, lineIndex) => (
                     <div
                       key={`${project.id}-tooltip-${lineIndex}`}
@@ -241,7 +241,7 @@ export function RoutingFlowGraph({
             >
               <title>{tooltipLines.join("\n")}</title>
               <rect
-                className="fill-[rgba(255,255,255,0.038)] stroke-[rgba(210,224,255,0.12)] transition-colors group-focus:fill-[rgba(137,180,255,0.08)] group-focus:stroke-[rgba(137,180,255,0.24)] group-hover:fill-[rgba(137,180,255,0.08)] group-hover:stroke-[rgba(137,180,255,0.24)]"
+                className="fill-[var(--routing-node-bg)] stroke-[var(--routing-node-border)] transition-colors group-focus:fill-[var(--routing-node-hover-bg)] group-focus:stroke-[var(--routing-node-hover-border)] group-hover:fill-[var(--routing-node-hover-bg)] group-hover:stroke-[var(--routing-node-hover-border)]"
                 x={ROUTING_SINK_CARD_X}
                 y={y - ROUTING_SINK_LABEL_HEIGHT / 2}
                 width={ROUTING_SINK_CARD_WIDTH}
@@ -280,7 +280,7 @@ export function RoutingFlowGraph({
                 height={tooltipHeight}
                 aria-hidden="true"
               >
-                <div className="min-h-full w-full rounded-xl border border-[rgba(210,224,255,0.18)] bg-[rgba(8,12,19,0.97)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[0_18px_38px_rgba(0,0,0,0.38)] [overflow-wrap:anywhere]">
+                <div className="min-h-full w-full rounded-xl border border-[var(--routing-tooltip-border)] bg-[var(--routing-tooltip-bg)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[var(--routing-tooltip-shadow)] [overflow-wrap:anywhere]">
                   {tooltipLines.map((line, lineIndex) => (
                     <div
                       key={`${sink.id}-tooltip-${lineIndex}`}
@@ -295,7 +295,7 @@ export function RoutingFlowGraph({
           );
         })}
       </svg>
-      <div className="flex flex-wrap gap-x-3.5 gap-y-2 border-t border-[rgba(210,224,255,0.08)] px-3 py-2.5 text-[0.78rem] text-[var(--text-dim)]">
+      <div className="flex flex-wrap gap-x-3.5 gap-y-2 border-t border-[var(--routing-legend-border)] px-3 py-2.5 text-[0.78rem] text-[var(--text-dim)]">
         <span>Solid blue = routed sink path</span>
         <span>Local-only conversations stay in project cards</span>
         <span>Left = indexed git project</span>

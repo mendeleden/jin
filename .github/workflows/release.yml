@@ -118,7 +118,7 @@ jobs:
       - run: bun install
 
       - name: Validate Desktop command and renderer
-        run: bun test test/desktop-command.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts test/desktop-home-route.test.ts test/cli-surface-cleanup.test.ts
+        run: bun test test/desktop-command.test.ts test/desktop-layout-engine.test.ts test/desktop-renderer.test.ts test/desktop-shell-service.test.ts test/desktop-home-route.test.ts test/cli-surface-cleanup.test.ts
 
       - name: Typecheck Desktop
         run: bun run desktop:typecheck

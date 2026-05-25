@@ -114,6 +114,7 @@ describe("desktop shell service", () => {
     expect(buildScript).toContain("copyDesktopAssets");
     expect(buildScript).toContain('join(DIST_DIR, "assets")');
     expect(mainSource).toContain('assets/jin-app-icon.png');
+    expect(mainSource).toContain("app.dock?.setIcon");
     expect(packageScript).toContain("jin-app-icon.icns");
     expect(packageScript).toContain("CFBundleIconFile");
   });

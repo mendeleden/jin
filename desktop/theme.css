@@ -42,12 +42,19 @@
   --control-border-subtle: rgba(210, 224, 255, 0.08);
   --control-border-hover: rgba(137, 180, 255, 0.28);
   --control-highlight: rgba(255, 255, 255, 0.04);
-  --control-text: rgba(164, 175, 196, 0.72);
-  --control-selected-bg: linear-gradient(180deg, rgba(58, 75, 101, 0.98), rgba(43, 60, 84, 0.98));
-  --control-selected-border: rgba(137, 180, 255, 0.32);
-  --control-selected-icon-bg: rgba(137, 180, 255, 0.12);
-  --control-selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075);
-  --control-selected-text: #f6f8fd;
+  --control-text: rgba(210, 220, 238, 0.78);
+  --picker-selected-bg: #3c669e;
+  --picker-selected-border: rgba(157, 199, 255, 0.78);
+  --picker-selected-icon-bg: rgba(246, 248, 253, 0.14);
+  --picker-selected-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --picker-selected-text: #f8fbff;
+  --control-selected-bg: var(--picker-selected-bg);
+  --control-selected-border: var(--picker-selected-border);
+  --control-selected-icon-bg: var(--picker-selected-icon-bg);
+  --control-selected-shadow: var(--picker-selected-shadow);
+  --control-selected-text: var(--picker-selected-text);
   --field-bg: rgba(255, 255, 255, 0.03);
   --item-bg: rgba(255, 255, 255, 0.024);
   --placeholder-bg: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
@@ -59,6 +66,8 @@
   --chart-cursor: rgba(246, 248, 253, 0.5);
   --tooltip-bg: rgba(17, 22, 32, 0.86);
   --tooltip-arrow: rgba(8, 12, 19, 0.98);
+  --tooltip-border: rgba(210, 224, 255, 0.18);
+  --tooltip-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
   --brand-tile-bg: #f8fafc;
   --brand-tile-text: #314255;
   --home-usage-panel-bg:
@@ -68,6 +77,41 @@
   --home-project-panel-bg:
     radial-gradient(circle at 18% 0%, rgba(240, 196, 109, 0.1), transparent 30%),
     linear-gradient(180deg, rgba(14, 19, 28, 0.95), rgba(7, 10, 16, 0.95));
+  --conversation-toolbar-bg:
+    radial-gradient(circle at 2% 0%, rgba(137, 180, 255, 0.1), transparent 26%),
+    linear-gradient(180deg, rgba(14, 19, 29, 0.9), rgba(8, 12, 18, 0.9));
+  --conversation-inspector-bg:
+    linear-gradient(180deg, rgba(13, 18, 27, 0.96), rgba(7, 10, 16, 0.96)),
+    linear-gradient(90deg, rgba(137, 180, 255, 0.08), transparent 22%);
+  --conversation-row-selected-bg:
+    linear-gradient(90deg, rgba(137, 212, 161, 0.1), rgba(137, 180, 255, 0.035)),
+    linear-gradient(180deg, rgba(18, 25, 29, 0.98), rgba(12, 18, 23, 0.98));
+  --conversation-row-selected-border: rgba(137, 212, 161, 0.28);
+  --conversation-row-selected-shadow:
+    inset 2px 0 0 rgba(137, 212, 161, 0.78),
+    0 8px 20px rgba(0, 0, 0, 0.16);
+  --routing-flow-panel-bg:
+    radial-gradient(circle at 10% 12%, rgba(137, 180, 255, 0.16), transparent 28%),
+    radial-gradient(circle at 82% 26%, rgba(137, 212, 161, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(16, 22, 34, 0.98), rgba(8, 12, 18, 0.96));
+  --routing-graph-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.012)),
+    rgba(5, 8, 13, 0.52);
+  --routing-graph-frame: rgba(255, 255, 255, 0.018);
+  --routing-graph-stroke: rgba(210, 224, 255, 0.09);
+  --routing-flow-stroke: rgba(137, 180, 255, 0.58);
+  --routing-node-bg: rgba(255, 255, 255, 0.038);
+  --routing-node-border: rgba(210, 224, 255, 0.12);
+  --routing-node-hover-bg: rgba(137, 180, 255, 0.08);
+  --routing-node-hover-border: rgba(137, 180, 255, 0.24);
+  --routing-node-ring: rgba(7, 9, 15, 0.82);
+  --routing-tooltip-bg: rgba(8, 12, 19, 0.97);
+  --routing-tooltip-border: rgba(210, 224, 255, 0.18);
+  --routing-tooltip-shadow: 0 18px 38px rgba(0, 0, 0, 0.38);
+  --routing-legend-border: rgba(210, 224, 255, 0.08);
+  --routing-item-bg: rgba(255, 255, 255, 0.03);
+  --routing-pill-bg: rgba(255, 255, 255, 0.03);
+  --routing-pill-border: rgba(210, 224, 255, 0.1);
 }
 
 :root[data-theme="light"],
@@ -109,12 +153,19 @@
   --control-border-subtle: rgba(31, 49, 67, 0.1);
   --control-border-hover: rgba(38, 124, 164, 0.28);
   --control-highlight: rgba(255, 255, 255, 0.82);
-  --control-text: rgba(38, 55, 73, 0.68);
-  --control-selected-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(220, 239, 244, 0.96));
-  --control-selected-border: rgba(38, 124, 164, 0.3);
-  --control-selected-icon-bg: rgba(38, 124, 164, 0.1);
-  --control-selected-shadow: 0 8px 20px rgba(36, 73, 95, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.92);
-  --control-selected-text: #153044;
+  --control-text: rgba(28, 43, 59, 0.8);
+  --picker-selected-bg: #0a6f95;
+  --picker-selected-border: rgba(8, 94, 126, 0.92);
+  --picker-selected-icon-bg: rgba(255, 255, 255, 0.16);
+  --picker-selected-shadow:
+    0 10px 24px rgba(21, 75, 104, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  --picker-selected-text: #ffffff;
+  --control-selected-bg: var(--picker-selected-bg);
+  --control-selected-border: var(--picker-selected-border);
+  --control-selected-icon-bg: var(--picker-selected-icon-bg);
+  --control-selected-shadow: var(--picker-selected-shadow);
+  --control-selected-text: var(--picker-selected-text);
   --field-bg: rgba(255, 255, 255, 0.76);
   --item-bg: rgba(255, 255, 255, 0.72);
   --placeholder-bg: linear-gradient(90deg, rgba(31, 49, 67, 0.035), rgba(255, 255, 255, 0.84), rgba(31, 49, 67, 0.035));
@@ -126,6 +177,8 @@
   --chart-cursor: rgba(23, 35, 49, 0.42);
   --tooltip-bg: rgba(255, 255, 255, 0.92);
   --tooltip-arrow: rgba(255, 255, 255, 0.92);
+  --tooltip-border: rgba(31, 49, 67, 0.16);
+  --tooltip-shadow: 0 18px 42px rgba(30, 53, 73, 0.18);
   --brand-tile-bg: #ffffff;
   --brand-tile-text: #27465a;
   --home-usage-panel-bg:
@@ -135,4 +188,39 @@
   --home-project-panel-bg:
     radial-gradient(circle at 18% 0%, rgba(154, 101, 18, 0.08), transparent 30%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(240, 247, 249, 0.9));
+  --conversation-toolbar-bg:
+    radial-gradient(circle at 2% 0%, rgba(38, 124, 164, 0.09), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(238, 247, 250, 0.9));
+  --conversation-inspector-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(239, 247, 250, 0.9)),
+    linear-gradient(90deg, rgba(38, 124, 164, 0.055), transparent 22%);
+  --conversation-row-selected-bg:
+    linear-gradient(90deg, rgba(22, 122, 83, 0.12), rgba(38, 124, 164, 0.055)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(236, 246, 249, 0.92));
+  --conversation-row-selected-border: rgba(22, 122, 83, 0.28);
+  --conversation-row-selected-shadow:
+    inset 2px 0 0 rgba(22, 122, 83, 0.5),
+    0 8px 20px rgba(30, 53, 73, 0.1);
+  --routing-flow-panel-bg:
+    radial-gradient(circle at 10% 12%, rgba(38, 124, 164, 0.12), transparent 28%),
+    radial-gradient(circle at 82% 26%, rgba(22, 122, 83, 0.09), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(239, 247, 250, 0.9));
+  --routing-graph-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(239, 247, 250, 0.64)),
+    rgba(255, 255, 255, 0.52);
+  --routing-graph-frame: rgba(255, 255, 255, 0.42);
+  --routing-graph-stroke: rgba(31, 49, 67, 0.12);
+  --routing-flow-stroke: rgba(38, 124, 164, 0.54);
+  --routing-node-bg: rgba(255, 255, 255, 0.7);
+  --routing-node-border: rgba(31, 49, 67, 0.14);
+  --routing-node-hover-bg: rgba(38, 124, 164, 0.09);
+  --routing-node-hover-border: rgba(38, 124, 164, 0.26);
+  --routing-node-ring: rgba(255, 255, 255, 0.9);
+  --routing-tooltip-bg: rgba(255, 255, 255, 0.96);
+  --routing-tooltip-border: rgba(31, 49, 67, 0.16);
+  --routing-tooltip-shadow: 0 18px 38px rgba(30, 53, 73, 0.16);
+  --routing-legend-border: rgba(31, 49, 67, 0.1);
+  --routing-item-bg: rgba(255, 255, 255, 0.64);
+  --routing-pill-bg: rgba(255, 255, 255, 0.68);
+  --routing-pill-border: rgba(31, 49, 67, 0.12);
 }

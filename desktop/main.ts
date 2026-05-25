@@ -14,14 +14,23 @@ import { resolveDesktopEntry } from "./entry";
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 const DESKTOP_APP_ICON_FILE = "assets/jin-app-icon.png";
 
+function desktopAppIconPath(): string {
+  return join(CURRENT_DIR, DESKTOP_APP_ICON_FILE);
+}
+
+function applyDesktopAppIcon(): void {
+  app.dock?.setIcon(desktopAppIconPath());
+}
+
 async function createMainWindow(): Promise<BrowserWindow> {
+  const appIconPath = desktopAppIconPath();
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: "#060e20",
-    icon: join(CURRENT_DIR, DESKTOP_APP_ICON_FILE),
+    icon: appIconPath,
     titleBarStyle: "hiddenInset",
     autoHideMenuBar: true,
     webPreferences: {
@@ -47,6 +56,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
 }
 
 async function bootstrap(): Promise<void> {
+  applyDesktopAppIcon();
   registerDesktopIpcHandlers(ipcMain, createDesktopShellService());
   await createMainWindow();
 }

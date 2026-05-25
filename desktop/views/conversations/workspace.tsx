@@ -46,13 +46,13 @@ const TREE_DEPTH_CLASS_MAX = 12;
 const SURFACE_CLASS =
   "rounded-[var(--radius-panel)] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] shadow-[var(--shadow)]";
 const SELECT_FIELD_CLASS =
-  "w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.03] px-2 py-1.5 text-[var(--text)] transition-colors hover:border-[var(--line-strong)]";
+  "w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] px-2 py-1.5 text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] transition-colors hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none [&_option]:bg-[var(--bg-elevated)] [&_option]:text-[var(--text)]";
 const FILTER_FIELD_CLASS =
   "flex flex-col gap-1.5 text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]";
 const ROW_BASE_CLASS =
   "grid w-full cursor-pointer content-start overflow-hidden rounded-[11px] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] px-[9px] py-2 text-left shadow-none";
 const ROW_SELECTED_CLASS =
-  "border-[rgba(137,212,161,0.28)] bg-[linear-gradient(90deg,rgba(137,212,161,0.1),rgba(255,255,255,0.025)),linear-gradient(180deg,rgba(18,25,29,0.98),rgba(12,18,23,0.98))] shadow-[inset_2px_0_0_rgba(137,212,161,0.78),0_8px_20px_rgba(0,0,0,0.16)]";
+  "border-[var(--conversation-row-selected-border)] bg-[var(--conversation-row-selected-bg)] shadow-[var(--conversation-row-selected-shadow)]";
 const ROW_TOP_CLASS = "flex min-w-0 items-start justify-between gap-2.5";
 const ROW_TITLE_CLASS =
   "line-clamp-2 min-w-0 overflow-hidden text-[0.8rem] font-semibold leading-[1.22] tracking-normal";
@@ -61,9 +61,9 @@ const ROW_META_CLASS =
 const ROW_FOOT_CLASS =
   "mt-[5px] grid grid-cols-[auto_minmax(0,1fr)] gap-x-[9px] gap-y-1.5 text-[0.68rem] text-[var(--text-dim)]";
 const CHIP_CLASS =
-  "inline-flex flex-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--line)] bg-white/[0.03] px-2 py-[5px] text-[0.72rem] text-[var(--text-soft)]";
+  "inline-flex flex-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--line)] bg-[var(--item-bg)] px-2 py-[5px] text-[0.72rem] text-[var(--text-soft)]";
 const ICON_BUTTON_CLASS =
-  "inline-flex h-8 min-w-8 flex-none cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-[var(--line)] bg-white/[0.03] p-0 text-[var(--text-soft)] hover:border-[var(--line-strong)] hover:text-[var(--text)] [&_svg]:h-[15px] [&_svg]:w-[15px]";
+  "inline-flex h-8 min-w-8 flex-none cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--field-bg)] p-0 text-[var(--text-soft)] hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] [&_svg]:h-[15px] [&_svg]:w-[15px]";
 const TREE_DEPTH_CLASSES = [
   "pl-3",
   "pl-[30px]",
@@ -155,8 +155,8 @@ export function ConversationsWorkspace({
           ) : (
             <aside
               className={cx(
-                SURFACE_CLASS,
-                "flex h-full min-h-0 flex-col overflow-hidden border-[rgba(216,226,244,0.12)] bg-[linear-gradient(180deg,rgba(13,18,27,0.96),rgba(7,10,16,0.96)),linear-gradient(90deg,rgba(137,180,255,0.08),transparent_22%)] p-2 max-[880px]:h-auto max-[880px]:min-h-[180px]",
+                "rounded-[var(--radius-panel)] border border-[var(--line)] bg-[var(--conversation-inspector-bg)] shadow-[var(--shadow)]",
+                "flex h-full min-h-0 flex-col overflow-hidden p-2 max-[880px]:h-auto max-[880px]:min-h-[180px]",
               )}
               data-inspector-panel
             >
@@ -186,7 +186,7 @@ function ConversationWorkspaceToolbar({
   return (
     <div
       className={cx(
-        "col-span-full grid min-w-0 grid-cols-[minmax(190px,1fr)_minmax(300px,auto)_minmax(280px,auto)] items-center gap-2.5 rounded-[13px] border border-[var(--line)] bg-[linear-gradient(180deg,rgba(14,19,29,0.88),rgba(8,12,18,0.88))] px-2.5 py-2 shadow-[var(--shadow)] max-[1220px]:grid-cols-[minmax(180px,1fr)_minmax(260px,1fr)] max-[880px]:grid-cols-1",
+        "col-span-full grid min-w-0 grid-cols-[minmax(190px,1fr)_minmax(300px,auto)_minmax(280px,auto)] items-center gap-2.5 rounded-[13px] border border-[var(--line)] bg-[var(--conversation-toolbar-bg)] px-2.5 py-2 shadow-[var(--shadow)] max-[1220px]:grid-cols-[minmax(180px,1fr)_minmax(260px,1fr)] max-[880px]:grid-cols-1",
       )}
       data-conversation-toolbar
     >
@@ -501,9 +501,9 @@ function SubviewTab({
     <button
       aria-selected={selected}
       className={cx(
-        "cursor-pointer rounded-[var(--radius-control)] border border-[var(--line)] bg-white/[0.03] px-2 py-[5px] text-[0.78rem] text-[var(--text)] transition-colors hover:border-[var(--line-strong)]",
+        "cursor-pointer rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--control-bg)] px-2 py-[5px] text-[0.78rem] text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)]",
         selected &&
-          "border-[rgba(137,180,255,0.24)] bg-[rgba(137,180,255,0.1)] text-[var(--accent-strong)]",
+          "border-[var(--picker-selected-border)] bg-[var(--picker-selected-bg)] font-semibold text-[var(--picker-selected-text)] shadow-[var(--picker-selected-shadow),0_0_0_1px_var(--picker-selected-border)]",
       )}
       onClick={() => actions.selectSubview(value)}
       role="tab"
@@ -598,7 +598,7 @@ function MessageCard({ message }: { message: Message }) {
 
 function ThinkingBlock({ message }: { message: Message }) {
   return (
-    <details className="mt-0 rounded-[10px] border border-[var(--line)] bg-white/[0.025] px-2.5 py-2">
+    <details className="mt-0 rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-2.5 py-2">
       <summary className="cursor-pointer text-[0.86rem] font-semibold text-[var(--text)]">
         Thinking {message.thinkingTokens > 0 ? `(${formatNumber(message.thinkingTokens)} tok)` : ""}
       </summary>
@@ -623,7 +623,7 @@ function ToolCallBlock({
   return (
     <details
       className={cx(
-        "rounded-[10px] border border-[var(--line)] bg-white/[0.025] px-2.5 py-2",
+        "rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-2.5 py-2",
         isError && "border-[rgba(255,143,132,0.22)]",
       )}
     >
@@ -950,7 +950,7 @@ function InspectorRail({ actions }: { actions: DesktopShellActions }) {
     >
       <button
         aria-label="Expand metadata inspector"
-        className="inline-flex h-auto min-h-28 w-full min-w-0 flex-col items-center justify-center gap-[7px] rounded-xl border border-[var(--line)] bg-white/[0.03] px-1 py-2 text-[var(--text-soft)] hover:border-[var(--line-strong)] hover:text-[var(--text)] max-[880px]:min-h-[52px] [&_svg]:h-[15px] [&_svg]:w-[15px]"
+        className="inline-flex h-auto min-h-28 w-full min-w-0 flex-col items-center justify-center gap-[7px] rounded-xl border border-[var(--line)] bg-[var(--field-bg)] px-1 py-2 text-[var(--text-soft)] hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] max-[880px]:min-h-[52px] [&_svg]:h-[15px] [&_svg]:w-[15px]"
         onClick={() => actions.toggleInspector()}
         title="Expand metadata inspector"
         type="button"
@@ -1070,7 +1070,7 @@ function relationshipChipClass(relationship: string): string {
       relationship !== "compacted" &&
       relationship !== "spawned" &&
       relationship !== "forked" &&
-      "bg-white/[0.03] text-[var(--text-soft)]",
+      "bg-[var(--item-bg)] text-[var(--text-soft)]",
   );
 }
 

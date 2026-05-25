@@ -23,6 +23,9 @@ declare module "electron" {
   }
 
   export const app: {
+    dock?: {
+      setIcon(path: string): void;
+    };
     whenReady(): Promise<void>;
     on(event: string, listener: (...args: unknown[]) => void): void;
     quit(): void;

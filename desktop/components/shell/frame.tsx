@@ -1,15 +1,14 @@
 import type { ReactNode } from "react";
-import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   FileText,
   Home,
   Info,
   type LucideIcon,
   MessageSquare,
-  PanelLeftClose,
+  CircleStop,
+  PanelLeftDashed,
   PanelLeftOpen,
   Power,
-  PowerOff,
   RefreshCw,
   RotateCcw,
   Route,
@@ -29,6 +28,7 @@ import {
 import { StatusBadge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { cx } from "../../ui/classnames";
+import { FloatingTooltip } from "../../ui/tooltip";
 import type { DesktopShellActions } from "./actions";
 
 const NAV_ITEMS: Array<{
@@ -42,8 +42,6 @@ const NAV_ITEMS: Array<{
   { view: "logs", label: "Logs", Icon: FileText },
   { view: "settings", label: "Settings", Icon: Settings },
 ];
-
-const JIN_APP_ICON_SRC = "./assets/jin-app-icon.png";
 
 export function ShellFrame({
   actions,
@@ -227,60 +225,28 @@ function SidebarBrand({
   collapsed: boolean;
   onToggleSidebar(): void;
 }) {
-  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftDashed;
 
   return (
     <div
       className={cx(
-        "flex w-full items-center gap-2",
-        collapsed ? "justify-center" : "justify-between",
+        "flex w-full items-center",
+        collapsed ? "justify-center" : "justify-end",
       )}
       data-sidebar-brand
     >
-      <div
-        className={cx(
-          "flex min-w-0 items-center gap-2.5",
-          collapsed && "hidden",
-        )}
-      >
-        <span className="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-[11px] border border-[var(--control-border)] bg-[var(--brand-tile-bg)] shadow-[var(--shadow)]">
-          <img
-            alt=""
-            className="h-full w-full object-cover"
-            draggable={false}
-            src={JIN_APP_ICON_SRC}
-          />
-        </span>
-        <span className="grid min-w-0 gap-0.5">
-          <strong className="truncate text-[0.9rem] leading-none text-[var(--text)]">
-            Jin
-          </strong>
-          <span className="truncate text-[0.66rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
-            Desktop
-          </span>
-        </span>
-      </div>
       <button
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         className={cx(
-          "inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-[11px] border border-[var(--line)] bg-[var(--field-bg)] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none",
+          "inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-[11px] border border-[var(--line)] bg-[var(--field-bg)] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none [&_svg]:h-[18px] [&_svg]:w-[18px]",
           collapsed &&
-            "bg-[var(--brand-tile-bg)] p-0 text-[var(--brand-tile-text)] shadow-[var(--shadow)] hover:bg-[var(--brand-tile-bg)] hover:text-[var(--brand-tile-text)]",
+            "h-10 w-10 border-[var(--control-border)] bg-[var(--control-bg)] text-[var(--text)] shadow-[var(--shadow)] hover:bg-[var(--control-bg-hover)]",
         )}
         onClick={onToggleSidebar}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         type="button"
       >
-        {collapsed ? (
-          <img
-            alt=""
-            className="h-full w-full rounded-[11px] object-cover"
-            draggable={false}
-            src={JIN_APP_ICON_SRC}
-          />
-        ) : (
-          <ToggleIcon aria-hidden="true" />
-        )}
+        <ToggleIcon aria-hidden="true" />
       </button>
     </div>
   );
@@ -324,31 +290,16 @@ function SidebarMetric({
       >
         {labelCopy}
         {estimatedCost ? (
-          <RadixTooltip.Provider delayDuration={80} skipDelayDuration={0}>
-            <RadixTooltip.Root>
-              <RadixTooltip.Trigger asChild>
-                <button
-                  aria-label={ESTIMATED_COST_HELP}
-                  className="inline-flex h-[17px] w-[17px] cursor-pointer items-center justify-center rounded-full border border-[var(--control-border)] bg-[var(--accent-softer)] p-0 text-[var(--accent-strong)] outline-none hover:border-[var(--control-border-hover)] focus-visible:border-[var(--control-border-hover)] data-[state=delayed-open]:border-[var(--control-selected-border)] data-[state=delayed-open]:bg-[var(--accent-soft)] data-[state=instant-open]:border-[var(--control-selected-border)] data-[state=instant-open]:bg-[var(--accent-soft)] [&_svg]:h-[11px] [&_svg]:w-[11px]"
-                  data-cost-popover-trigger="estimated-cost"
-                  type="button"
-                >
-                  <Info aria-hidden="true" />
-                </button>
-              </RadixTooltip.Trigger>
-              <RadixTooltip.Portal>
-                <RadixTooltip.Content
-                  className="z-[1000] w-[260px] max-w-[min(260px,calc(100vw-36px))] rounded-[10px] border border-[var(--line-strong)] bg-[var(--tooltip-bg)] px-2.5 py-[9px] text-[0.74rem] leading-[1.4] text-[var(--text-soft)] shadow-[var(--shadow)] max-[880px]:w-auto max-[880px]:max-w-[calc(100vw-36px)]"
-                  data-cost-popover="estimated-cost"
-                  side="right"
-                  sideOffset={8}
-                >
-                  {ESTIMATED_COST_HELP}
-                  <RadixTooltip.Arrow className="fill-[var(--tooltip-arrow)]" />
-                </RadixTooltip.Content>
-              </RadixTooltip.Portal>
-            </RadixTooltip.Root>
-          </RadixTooltip.Provider>
+          <FloatingTooltip content={ESTIMATED_COST_HELP} id="sidebar-cost-help">
+            <button
+              aria-label={ESTIMATED_COST_HELP}
+              className="inline-flex h-[17px] w-[17px] cursor-pointer items-center justify-center rounded-full border border-[var(--control-border)] bg-[var(--accent-softer)] p-0 text-[var(--accent-strong)] outline-none hover:border-[var(--control-border-hover)] focus-visible:border-[var(--control-border-hover)] focus-visible:bg-[var(--accent-soft)] [&_svg]:h-[11px] [&_svg]:w-[11px]"
+              data-cost-popover-trigger="estimated-cost"
+              type="button"
+            >
+              <Info aria-hidden="true" />
+            </button>
+          </FloatingTooltip>
         ) : null}
       </span>
       <strong
@@ -475,7 +426,7 @@ function RuntimeActions({
         onClick={() => void actions.runControlAction("stop")}
         title={state.busyAction === "stop" ? "Stopping Jin" : "Stop Jin"}
       >
-        <PowerOff aria-hidden="true" />
+        <CircleStop aria-hidden="true" />
         {state.busyAction === "stop" ? "Stopping..." : "Stop"}
       </Button>
     </>

@@ -18,8 +18,10 @@ import {
   resizeDesktopGridPanel,
   type DesktopGridPanelLayout,
 } from "./grid-engine";
-
-type GridInteractionMode = "move" | "resize";
+import {
+  applyDesktopGridInteractionDelta,
+  type DesktopGridInteractionMode,
+} from "./grid-interaction";
 
 interface EditableDashboardGridItem<TPanelId extends string> {
   children: ReactNode;
@@ -28,7 +30,7 @@ interface EditableDashboardGridItem<TPanelId extends string> {
 }
 
 interface GridInteraction<TPanelId extends string> {
-  mode: GridInteractionMode;
+  mode: DesktopGridInteractionMode;
   panelId: TPanelId;
   pointerId: number;
   startClientX: number;
@@ -82,7 +84,7 @@ export function EditableDashboardGrid<TPanelId extends string>({
   function startInteraction(
     event: ReactPointerEvent<HTMLElement>,
     panelLayout: DesktopGridPanelLayout<TPanelId>,
-    mode: GridInteractionMode,
+    mode: DesktopGridInteractionMode,
   ) {
     if (!editable) {
       return;
@@ -126,35 +128,13 @@ export function EditableDashboardGrid<TPanelId extends string>({
       (event.clientY - interaction.startClientY) / interaction.yUnit,
     );
 
-    if (deltaX === 0 && deltaY === 0) {
-      return;
-    }
-
-    if (interaction.mode === "move") {
-      applyLayout(
-        moveDesktopGridPanel(
-          interaction.startLayout,
-          interaction.panelId,
-          {
-            x: interaction.startPanel.x + deltaX,
-            y: interaction.startPanel.y + deltaY,
-          },
-          { columns, rows },
-        ),
-      );
-      return;
-    }
-
     applyLayout(
-      resizeDesktopGridPanel(
-        interaction.startLayout,
-        interaction.panelId,
-        {
-          h: interaction.startPanel.h + deltaY,
-          w: interaction.startPanel.w + deltaX,
-        },
-        { columns, handle: "se", rows },
-      ),
+      applyDesktopGridInteractionDelta(interaction, {
+        columns,
+        deltaX,
+        deltaY,
+        rows,
+      }),
     );
   }
 
@@ -309,7 +289,7 @@ function PanelEditControls({
   onResizePointerUp,
   title,
 }: {
-  activeMode: GridInteractionMode | "idle";
+  activeMode: DesktopGridInteractionMode | "idle";
   onMoveKeyDown(event: KeyboardEvent<HTMLButtonElement>): void;
   onMovePointerCancel(event: ReactPointerEvent<HTMLButtonElement>): void;
   onMovePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void;
