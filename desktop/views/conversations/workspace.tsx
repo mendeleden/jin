@@ -1,9 +1,20 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type KeyboardEvent,
 } from "react";
-import { GitBranch, Search, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  GitBranch,
+  Search,
+  X,
+} from "lucide-react";
 import type { Conversation, Message } from "../../../src/contracts/conversations";
 import type {
   DesktopConversationDetailView,
@@ -18,6 +29,7 @@ import {
   formatNumber,
   hasConversationLibraryTotal,
   shortId,
+  type DesktopConversationSubview,
   type RendererState,
 } from "../../renderer";
 import { RuntimeStateGate } from "../../components/shell/status-panels";
@@ -36,8 +48,18 @@ import {
 import {
   EmptyState,
   ListPlaceholder,
+  SegmentedControl,
 } from "../../ui/primitives";
 import { formatProjectReference } from "../../ui/project-reference";
+
+const DETAIL_TABS: Array<{
+  label: string;
+  value: DesktopConversationSubview;
+}> = [
+  { label: "Messages", value: "timeline" },
+  { label: "Trace", value: "trace" },
+  { label: "Tree", value: "tree" },
+];
 
 const TIME_FILTERS: Array<{ label: string; value: string }> = [
   { label: "All time", value: "" },
@@ -49,9 +71,15 @@ const TREE_DEPTH_CLASS_MAX = 12;
 const SURFACE_CLASS =
   "rounded-[var(--radius-panel)] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] shadow-[var(--shadow)]";
 const SELECT_FIELD_CLASS =
-  "w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] px-2 py-1.5 text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] transition-colors hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none [&_option]:bg-[var(--bg-elevated)] [&_option]:text-[var(--text)]";
+  "h-9 w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] px-2 text-[0.82rem] font-semibold text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] transition-colors hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none [&_option]:bg-[var(--bg-elevated)] [&_option]:text-[var(--text)]";
 const FILTER_FIELD_CLASS =
-  "flex flex-col gap-1.5 text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]";
+  "flex flex-col gap-1 text-[0.66rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]";
+const TABLE_HEAD_CELL_CLASS =
+  "px-2.5 py-2 text-[0.66rem] font-semibold uppercase tracking-normal";
+const TABLE_HEAD_NUMERIC_CELL_CLASS = `${TABLE_HEAD_CELL_CLASS} text-right`;
+const TABLE_CELL_CLASS =
+  "border-b border-[var(--line)] px-2.5 py-2 align-top";
+const TABLE_NUMERIC_CELL_CLASS = `${TABLE_CELL_CLASS} text-right`;
 const ROW_BASE_CLASS =
   "grid w-full cursor-pointer content-start overflow-hidden rounded-[11px] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] px-[9px] py-2 text-left shadow-none";
 const ROW_SELECTED_CLASS =
@@ -95,10 +123,12 @@ export function ConversationsWorkspace({
     () => filterConversationIndex(conversations, searchQuery, relationshipFilter),
     [conversations, relationshipFilter, searchQuery],
   );
+  const detailRoute = state.conversationRoute === "detail";
   const trayOpen = Boolean(
-    state.detail ||
-      state.selectedConversationLoading ||
-      state.selectedConversationError,
+    !detailRoute &&
+      (state.detail ||
+        state.selectedConversationLoading ||
+        state.selectedConversationError),
   );
 
   return (
@@ -124,19 +154,25 @@ export function ConversationsWorkspace({
             trayOpen && "pb-[348px] max-[880px]:pb-[372px]",
           )}
           data-conversation-workspace
-          data-conversation-surface="ops-index"
+          data-conversation-surface={detailRoute ? "detail" : "ops-index"}
           data-tray-state={trayOpen ? "open" : "closed"}
         >
-          <ConversationIndexPanel
-            actions={actions}
-            relationshipFilter={relationshipFilter}
-            searchQuery={searchQuery}
-            setRelationshipFilter={setRelationshipFilter}
-            setSearchQuery={setSearchQuery}
-            state={state}
-            visibleConversations={visibleConversations}
-          />
-          <ConversationBottomTray actions={actions} state={state} />
+          {detailRoute ? (
+            <ConversationDetailRoute actions={actions} state={state} />
+          ) : (
+            <>
+              <ConversationIndexPanel
+                actions={actions}
+                relationshipFilter={relationshipFilter}
+                searchQuery={searchQuery}
+                setRelationshipFilter={setRelationshipFilter}
+                setSearchQuery={setSearchQuery}
+                state={state}
+                visibleConversations={visibleConversations}
+              />
+              <ConversationBottomTray actions={actions} state={state} />
+            </>
+          )}
         </section>
       )}
     </RuntimeStateGate>
@@ -183,18 +219,18 @@ function ConversationIndexPanel({
         <PanelMeta>{totalLabel}</PanelMeta>
       </PanelHeader>
       <div
-        className="grid grid-cols-[minmax(260px,1fr)_minmax(420px,auto)] gap-2.5 border-b border-[var(--line)] bg-[var(--conversation-toolbar-bg)] p-3 max-[1180px]:grid-cols-1"
+        className="grid grid-cols-[minmax(280px,1fr)_minmax(390px,auto)] items-end gap-2.5 border-b border-[var(--line)] bg-[var(--conversation-toolbar-bg)] px-3 py-2.5 max-[1180px]:grid-cols-1"
         data-conversation-toolbar
       >
         <label className="relative min-w-0">
           <span className="sr-only">Search conversation index</span>
           <Search
             aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-dim)]"
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-dim)]"
           />
           <input
             aria-label="Search conversation index"
-            className="h-10 w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] pl-9 pr-3 text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] outline-none transition-colors placeholder:text-[var(--text-dim)] hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)]"
+            className="h-9 w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] pl-8 pr-3 text-[0.9rem] text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] outline-none transition-colors placeholder:text-[var(--text-dim)] hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)]"
             onChange={(event) => setSearchQuery(event.currentTarget.value)}
             placeholder="Search name, project, trace, model..."
             value={searchQuery}
@@ -236,7 +272,7 @@ function ConversationFilters({
   const sinceValue = state.libraryRequest.since ?? "";
 
   return (
-    <div className="grid grid-cols-[repeat(3,minmax(130px,1fr))] gap-[7px] max-[880px]:grid-cols-1">
+    <div className="grid grid-cols-[repeat(3,minmax(120px,1fr))] gap-2 max-[880px]:grid-cols-1">
       <label className={FILTER_FIELD_CLASS}>
         <span>Adapter</span>
         <select
@@ -376,18 +412,19 @@ function ConversationIndexTable({
       data-conversation-list
       data-search-active={String(searchQuery.trim().length > 0)}
     >
-      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-[0.82rem]">
-        <thead className="sticky top-0 z-10 bg-[var(--panel-alt)] text-[0.68rem] uppercase tracking-normal text-[var(--text-dim)] shadow-[0_1px_0_var(--line)]">
+      <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-left text-[0.8rem]">
+        <thead className="sticky top-0 z-10 bg-[var(--panel-alt)] text-[var(--text-dim)] shadow-[0_1px_0_var(--line)]">
           <tr>
-            <th className="px-3 py-2 font-semibold">Conversation</th>
-            <th className="px-3 py-2 font-semibold">Project</th>
-            <th className="px-3 py-2 font-semibold">Relationship</th>
-            <th className="px-3 py-2 font-semibold">Adapter</th>
-            <th className="px-3 py-2 text-right font-semibold">Messages</th>
-            <th className="px-3 py-2 text-right font-semibold">Tools</th>
-            <th className="px-3 py-2 text-right font-semibold">Tokens</th>
-            <th className="px-3 py-2 text-right font-semibold">Cost</th>
-            <th className="px-3 py-2 font-semibold">Ended</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Conversation</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Project</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Relationship</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Adapter</th>
+            <th className={TABLE_HEAD_NUMERIC_CELL_CLASS}>Messages</th>
+            <th className={TABLE_HEAD_NUMERIC_CELL_CLASS}>Tools</th>
+            <th className={TABLE_HEAD_NUMERIC_CELL_CLASS}>Tokens</th>
+            <th className={TABLE_HEAD_NUMERIC_CELL_CLASS}>Cost</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Started</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Ended</th>
           </tr>
         </thead>
         <tbody>
@@ -395,7 +432,7 @@ function ConversationIndexTable({
             <ConversationTableRow
               conversation={conversation}
               key={conversation.id}
-              onOpen={actions.openConversation}
+              onOpen={actions.previewConversation}
               selected={conversation.id === state.selectedConversationId}
             />
           ))}
@@ -437,7 +474,7 @@ function ConversationTableRow({
       role="button"
       tabIndex={0}
     >
-      <td className="max-w-[360px] border-b border-[var(--line)] px-3 py-2.5 align-top">
+      <td className={cx(TABLE_CELL_CLASS, "max-w-[340px]")}>
         <div
           className="line-clamp-2 font-semibold leading-tight text-[var(--text)]"
           title={conversation.name}
@@ -448,35 +485,38 @@ function ConversationTableRow({
           {shortId(conversation.id)}
         </div>
       </td>
-      <td className="max-w-[260px] border-b border-[var(--line)] px-3 py-2.5 align-top text-[var(--text-soft)]">
+      <td className={cx(TABLE_CELL_CLASS, "max-w-[230px] text-[var(--text-soft)]")}>
         <span className="line-clamp-2">
           {formatProjectReference(conversation.gitRemote || conversation.cwd)}
         </span>
       </td>
-      <td className="border-b border-[var(--line)] px-3 py-2.5 align-top">
+      <td className={TABLE_CELL_CLASS}>
         <span className={relationshipChipClass(conversation.relationship)}>
           {conversation.relationship}
         </span>
       </td>
-      <td className="border-b border-[var(--line)] px-3 py-2.5 align-top text-[var(--text-soft)]">
+      <td className={cx(TABLE_CELL_CLASS, "text-[var(--text-soft)]")}>
         {conversation.adapterId}
       </td>
-      <td className="border-b border-[var(--line)] px-3 py-2.5 text-right align-top text-[var(--text-soft)]">
+      <td className={cx(TABLE_NUMERIC_CELL_CLASS, "text-[var(--text-soft)]")}>
         {formatNumber(conversation.messageCount)}
       </td>
-      <td className="border-b border-[var(--line)] px-3 py-2.5 text-right align-top text-[var(--text-soft)]">
+      <td className={cx(TABLE_NUMERIC_CELL_CLASS, "text-[var(--text-soft)]")}>
         {formatNumber(conversation.toolCount)}
       </td>
       <td
-        className="border-b border-[var(--line)] px-3 py-2.5 text-right align-top text-[var(--text-soft)]"
+        className={cx(TABLE_NUMERIC_CELL_CLASS, "text-[var(--text-soft)]")}
         title={`${formatNumber(totalTokens(conversation))} tokens`}
       >
         {formatMetricNumber(totalTokens(conversation)).display}
       </td>
-      <td className="border-b border-[var(--line)] px-3 py-2.5 text-right align-top text-[var(--text-soft)]">
+      <td className={cx(TABLE_NUMERIC_CELL_CLASS, "text-[var(--text-soft)]")}>
         {formatCost(conversation.estCost)}
       </td>
-      <td className="whitespace-nowrap border-b border-[var(--line)] px-3 py-2.5 align-top text-[var(--text-dim)]">
+      <td className={cx(TABLE_CELL_CLASS, "whitespace-nowrap text-[var(--text-dim)]")}>
+        {formatDate(conversation.startedAt)}
+      </td>
+      <td className={cx(TABLE_CELL_CLASS, "whitespace-nowrap text-[var(--text-dim)]")}>
         {formatDate(conversation.endedAt || conversation.startedAt)}
       </td>
     </tr>
@@ -566,12 +606,9 @@ function ConversationBottomTray({
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5 max-[980px]:justify-start">
-          <Button onClick={() => actions.selectSubview("timeline")}>
-            Messages
-          </Button>
-          <Button onClick={() => actions.selectSubview("trace")}>
-            <GitBranch aria-hidden="true" />
-            Open trace
+          <Button onClick={() => void actions.openConversation(conversation.id)}>
+            <ExternalLink aria-hidden="true" />
+            Open conversation
           </Button>
           <Button onClick={() => actions.closeConversation()}>
             <X aria-hidden="true" />
@@ -613,10 +650,163 @@ function ConversationBottomTray({
         ) : null}
 
         <div className="min-h-0">
-          <SelectedTrayContent actions={actions} state={state} />
+          <ConversationSubviewContent
+            actions={actions}
+            mode="preview"
+            state={state}
+          />
         </div>
       </div>
     </aside>
+  );
+}
+
+function ConversationDetailRoute({
+  actions,
+  state,
+}: {
+  actions: DesktopShellActions;
+  state: RendererState;
+}) {
+  if (state.selectedConversationLoading && !state.detail) {
+    return (
+      <section
+        className={cx(SURFACE_CLASS, "grid min-h-0 place-items-center p-6")}
+        data-conversation-detail-route
+        data-detail-loading="true"
+      >
+        <EmptyState title="Loading conversation">
+          <p>
+            Fetching the selected conversation, trace graph, and tree from the
+            local daemon.
+          </p>
+        </EmptyState>
+      </section>
+    );
+  }
+
+  if (state.selectedConversationError && !state.detail) {
+    return (
+      <section
+        className={cx(SURFACE_CLASS, "grid min-h-0 place-items-center p-6")}
+        data-conversation-detail-route
+        data-detail-error="true"
+      >
+        <EmptyState title="Conversation detail unavailable">
+          <p>{state.selectedConversationError}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => actions.showConversationIndex()}>
+              <ArrowLeft aria-hidden="true" />
+              Back to index
+            </Button>
+            {state.selectedConversationId ? (
+              <Button
+                onClick={() =>
+                  void actions.openConversation(state.selectedConversationId!)
+                }
+                variant="primary"
+              >
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        </EmptyState>
+      </section>
+    );
+  }
+
+  if (!state.detail) {
+    return (
+      <section
+        className={cx(SURFACE_CLASS, "grid min-h-0 place-items-center p-6")}
+        data-conversation-detail-route
+      >
+        <EmptyState title="No conversation selected">
+          <p>Select a row from the index before opening a conversation tab.</p>
+          <Button onClick={() => actions.showConversationIndex()}>
+            <ArrowLeft aria-hidden="true" />
+            Back to index
+          </Button>
+        </EmptyState>
+      </section>
+    );
+  }
+
+  const conversation = state.detail.conversation;
+
+  return (
+    <section
+      className={cx(
+        SURFACE_CLASS,
+        "grid min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)] overflow-hidden",
+      )}
+      data-conversation-detail-route
+    >
+      <header className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-b border-[var(--line)] px-4 py-3 max-[980px]:grid-cols-1">
+        <Button onClick={() => actions.showConversationIndex()}>
+          <ArrowLeft aria-hidden="true" />
+          Index
+        </Button>
+        <div className="min-w-0">
+          <Eyebrow>Open Conversation</Eyebrow>
+          <h2
+            className="m-0 mt-1 truncate text-[1.18rem] leading-tight tracking-normal text-[var(--text)]"
+            title={conversation.name}
+          >
+            {formatConversationTitle(conversation.name)}
+          </h2>
+          <p className="m-0 mt-1 text-[0.78rem] text-[var(--text-dim)]">
+            {renderConversationHeaderSummary(state.detail)}
+          </p>
+        </div>
+        <Button onClick={() => actions.closeConversation()}>
+          <X aria-hidden="true" />
+          Close
+        </Button>
+      </header>
+
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--line)] bg-[var(--conversation-toolbar-bg)] px-4 py-3 max-[980px]:grid-cols-1">
+        <section
+          aria-label="Conversation metadata"
+          className="grid min-w-0 grid-cols-6 gap-2 max-[1320px]:grid-cols-3 max-[760px]:grid-cols-2"
+        >
+          <MetadataBox label="Relationship" value={conversation.relationship} />
+          <MetadataBox label="Adapter" value={conversation.adapterId} />
+          <MetadataBox
+            label="Messages"
+            value={formatNumber(conversation.messageCount)}
+          />
+          <MetadataBox
+            label="Tools"
+            value={formatNumber(conversation.toolCount)}
+          />
+          <MetadataBox
+            label="Tokens"
+            title={`${formatNumber(totalTokens(conversation))} tokens`}
+            value={formatMetricNumber(totalTokens(conversation)).display}
+          />
+          <MetadataBox
+            label="Estimated cost"
+            value={formatCost(conversation.estCost)}
+          />
+        </section>
+        <SegmentedControl
+          ariaLabel="Conversation detail tabs"
+          className="justify-self-end max-[980px]:justify-self-start"
+          onChange={(value) => actions.selectSubview(value)}
+          options={DETAIL_TABS}
+          value={state.selectedSubview}
+        />
+      </div>
+
+      <div className="border-b border-[var(--line)] px-4 py-3">
+        <ConversationCopyStrip detail={state.detail} />
+      </div>
+
+      <div className="min-h-0 overflow-auto p-4" data-conversation-detail-tab>
+        <ConversationSubviewContent actions={actions} mode="detail" state={state} />
+      </div>
+    </section>
   );
 }
 
@@ -646,17 +836,19 @@ function MetadataBox({
 
 function bottomTrayClassName(sidebarCollapsed: boolean): string {
   return cx(
-    "fixed bottom-4 right-4 z-30 grid max-h-[47vh] min-h-[340px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[var(--picker-selected-border)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] shadow-[0_-18px_50px_rgba(0,0,0,0.34),0_0_0_1px_var(--control-highlight)_inset]",
+    "fixed bottom-4 right-4 z-30 grid max-h-[47vh] min-h-[340px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[18px] border border-[var(--picker-selected-border)] [background:var(--overlay-panel-bg)] shadow-[0_-18px_50px_rgba(0,0,0,0.34),0_0_0_1px_var(--control-highlight)_inset]",
     sidebarCollapsed ? "left-[82px]" : "left-[238px]",
     "max-[880px]:bottom-3 max-[880px]:left-3 max-[880px]:right-3 max-[880px]:min-h-[360px]",
   );
 }
 
-function SelectedTrayContent({
+function ConversationSubviewContent({
   actions,
+  mode,
   state,
 }: {
   actions: DesktopShellActions;
+  mode: "detail" | "preview";
   state: RendererState;
 }) {
   if (state.selectedSubview === "trace") {
@@ -667,7 +859,11 @@ function SelectedTrayContent({
     return <TreeSubview actions={actions} state={state} />;
   }
 
-  return <ConversationPreview detail={state.detail!} />;
+  return mode === "detail" ? (
+    <ConversationMessagesView detail={state.detail!} />
+  ) : (
+    <ConversationPreview detail={state.detail!} />
+  );
 }
 
 function ConversationPreview({
@@ -675,14 +871,66 @@ function ConversationPreview({
 }: {
   detail: DesktopConversationDetailView;
 }) {
-  const previewMessages = detail.messages.slice(0, 3);
+  return (
+    <section className="grid min-h-0 gap-2">
+      {detail.messages.length > 0 ? (
+        detail.messages.map((message) => (
+          <MessagePreviewCard key={message.id} message={message} />
+        ))
+      ) : (
+        <EmptyState title="No messages recorded">
+          <p>
+            This conversation exists in the trace graph but currently has no
+            stored message timeline.
+          </p>
+        </EmptyState>
+      )}
+      <ToolActivityCard detail={detail} />
+    </section>
+  );
+}
+
+function ConversationMessagesView({
+  detail,
+}: {
+  detail: DesktopConversationDetailView;
+}) {
+  const [collapsedMessageIds, setCollapsedMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  useEffect(() => {
+    setCollapsedMessageIds(new Set());
+  }, [detail.conversation.id]);
+
+  const toggleMessage = (messageId: string) => {
+    setCollapsedMessageIds((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
 
   return (
-    <section className="grid min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-3 max-[980px]:grid-cols-1">
-      <div className="grid content-start gap-2">
-        {previewMessages.length > 0 ? (
-          previewMessages.map((message) => (
-            <MessagePreviewCard key={message.id} message={message} />
+    <section
+      className="grid min-h-0 gap-3"
+      data-conversation-messages-view
+    >
+      <MessageRoleSummary messages={detail.messages} />
+      <div className="grid min-w-0 content-start gap-2">
+        {detail.messages.length > 0 ? (
+          detail.messages.map((message) => (
+            <MessagePreviewCard
+              collapsed={collapsedMessageIds.has(message.id)}
+              key={message.id}
+              message={message}
+              onToggleCollapsed={() => toggleMessage(message.id)}
+              variant="detail"
+            />
           ))
         ) : (
           <EmptyState title="No messages recorded">
@@ -692,79 +940,255 @@ function ConversationPreview({
             </p>
           </EmptyState>
         )}
-        {detail.toolCalls.length > 0 ? (
-          <article className="rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.72rem] font-bold uppercase tracking-normal text-[var(--warning)]">
-                Tool activity
-              </span>
-              <span className="text-[0.72rem] text-[var(--text-dim)]">
-                {formatNumber(detail.toolCalls.length)} calls
-              </span>
-            </div>
-            <p className="m-0 mt-1.5 line-clamp-2 text-[0.82rem] leading-normal text-[var(--text-soft)]">
-              Recent calls include {previewToolNames(detail.toolCalls)}.
-            </p>
-          </article>
-        ) : null}
+        <ToolActivityCard detail={detail} />
       </div>
-      <TraceSummaryPanel detail={detail} />
     </section>
   );
 }
 
-function MessagePreviewCard({ message }: { message: Message }) {
-  const metadata = messageMetadata(message);
+function ConversationCopyStrip({
+  detail,
+}: {
+  detail: DesktopConversationDetailView;
+}) {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const items = useMemo(
+    () =>
+      [
+        {
+          key: "conversation-id",
+          label: "Conversation ID",
+          value: detail.conversation.id,
+        },
+        {
+          key: "trace-id",
+          label: "Trace ID",
+          value: detail.trace.traceId,
+        },
+        detail.parent
+          ? {
+              key: "parent-id",
+              label: "Parent ID",
+              value: detail.parent.id,
+            }
+          : null,
+        {
+          key: "source-path",
+          label: "Source",
+          value: detail.conversation.sourcePath,
+        },
+      ].filter((item): item is { key: string; label: string; value: string } =>
+        Boolean(item?.value),
+      ),
+    [detail],
+  );
+
+  const copyValue = async (key: string, value: string) => {
+    await copyTextToClipboard(value);
+    setCopiedKey(key);
+    globalThis.setTimeout(() => {
+      setCopiedKey((current) => (current === key ? null : current));
+    }, 1400);
+  };
 
   return (
-    <article className="rounded-[10px] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] px-3 py-2.5">
+    <div
+      className="grid gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2"
+      data-conversation-copy-strip
+    >
+      <span className="text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
+        Identifiers
+      </span>
+      <div className="grid gap-1.5 min-[980px]:grid-cols-2">
+        {items.map((item) => {
+          const copied = copiedKey === item.key;
+          return (
+            <button
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] px-2.5 py-2 text-left transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none"
+              data-copy-field={item.key}
+              key={item.key}
+              onClick={() => void copyValue(item.key, item.value)}
+              title={`Copy ${item.label}: ${item.value}`}
+              type="button"
+            >
+              <span className="grid min-w-0 gap-1">
+                <span className="text-[0.64rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
+                  {item.label}
+                </span>
+                <code className="truncate [font-family:var(--mono)] text-[0.72rem] text-[var(--text-soft)]">
+                  {item.value}
+                </code>
+              </span>
+              {copied ? (
+                <Check
+                  aria-hidden="true"
+                  className="h-4 w-4 text-[var(--success)]"
+                />
+              ) : (
+                <Copy
+                  aria-hidden="true"
+                  className="h-4 w-4 text-[var(--text-dim)]"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MessageRoleSummary({ messages }: { messages: Message[] }) {
+  const counts = countMessagesByRole(messages);
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2"
+      data-message-role-summary
+    >
+      <span className="text-[0.72rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
+        Timeline
+      </span>
+      <div className="flex flex-wrap gap-1.5 text-[0.72rem] text-[var(--text-soft)]">
+        <MessageRoleChip label="total" value={messages.length} />
+        <MessageRoleChip label="user" value={counts.user} />
+        <MessageRoleChip label="assistant" value={counts.assistant} />
+        <MessageRoleChip label="system" value={counts.system} />
+      </div>
+    </div>
+  );
+}
+
+function MessageRoleChip({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <span className="rounded-full border border-[var(--line)] bg-[var(--control-bg)] px-2 py-0.5">
+      <strong className="text-[var(--text)]">{formatNumber(value)}</strong>{" "}
+      {label}
+    </span>
+  );
+}
+
+function ToolActivityCard({
+  detail,
+}: {
+  detail: DesktopConversationDetailView;
+}) {
+  if (detail.toolCalls.length === 0) {
+    return null;
+  }
+
+  return (
+    <article className="rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className={messageRoleClass(message.role)}>{message.role}</span>
+        <span className="text-[0.72rem] font-bold uppercase tracking-normal text-[var(--warning)]">
+          Tool activity
+        </span>
+        <span className="text-[0.72rem] text-[var(--text-dim)]">
+          {formatNumber(detail.toolCalls.length)} calls
+        </span>
+      </div>
+      <p className="m-0 mt-1.5 line-clamp-2 text-[0.82rem] leading-normal text-[var(--text-soft)]">
+        Recent calls include {previewToolNames(detail.toolCalls)}.
+      </p>
+    </article>
+  );
+}
+
+function MessagePreviewCard({
+  collapsed = false,
+  message,
+  onToggleCollapsed,
+  variant = "preview",
+}: {
+  collapsed?: boolean;
+  message: Message;
+  onToggleCollapsed?(): void;
+  variant?: "detail" | "preview";
+}) {
+  const metadata = messageMetadata(message);
+  const canCollapse = variant === "detail" && onToggleCollapsed;
+
+  return (
+    <article
+      className="min-w-0 rounded-[10px] border border-[var(--line)] bg-[linear-gradient(180deg,var(--panel-alt),var(--panel))] px-3 py-2.5"
+      data-message-card={message.id}
+      data-message-collapsed={String(collapsed)}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {canCollapse ? (
+            <button
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? "Expand message" : "Collapse message"}
+              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] text-[var(--text-soft)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--control-bg-hover)] hover:text-[var(--text)] focus-visible:border-[var(--control-border-hover)] focus-visible:outline-none [&_svg]:h-4 [&_svg]:w-4"
+              onClick={onToggleCollapsed}
+              title={collapsed ? "Expand message" : "Collapse message"}
+              type="button"
+            >
+              {collapsed ? (
+                <ChevronRight aria-hidden="true" />
+              ) : (
+                <ChevronDown aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
+          <span className={messageRoleClass(message.role)}>{message.role}</span>
+        </div>
         {metadata.length > 0 ? (
           <span className="truncate text-[0.72rem] text-[var(--text-dim)]">
             {metadata.join(" · ")}
           </span>
         ) : null}
       </div>
-      <p className="m-0 mt-2 line-clamp-3 text-[0.86rem] leading-normal text-[var(--text-soft)]">
+      <p
+        className={cx(
+          "m-0 mt-2 text-[0.86rem] leading-normal text-[var(--text-soft)]",
+          collapsed
+            ? "line-clamp-1"
+            : variant === "detail"
+              ? "whitespace-pre-wrap break-words"
+              : "line-clamp-3",
+        )}
+      >
         {message.content || "(empty message)"}
       </p>
     </article>
   );
 }
 
-function TraceSummaryPanel({
-  detail,
-}: {
-  detail: DesktopConversationDetailView;
-}) {
-  const conversation = detail.conversation;
-  return (
-    <aside className="grid content-start gap-2">
-      <div className="rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2.5">
-        <div className="text-[0.66rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
-          Source
-        </div>
-        <p className="m-0 mt-1.5 break-words text-[0.82rem] leading-normal text-[var(--text-soft)]">
-          {conversation.cwd || conversation.sourcePath}
-        </p>
-      </div>
-      <div className="rounded-[10px] border border-[var(--line)] bg-[var(--item-bg)] px-3 py-2.5">
-        <div className="text-[0.66rem] font-semibold uppercase tracking-normal text-[var(--text-dim)]">
-          Trace summary
-        </div>
-        <p className="m-0 mt-1.5 text-[0.82rem] leading-normal text-[var(--text-soft)]">
-          {formatNumber(detail.trace.conversationCount)} conversations in trace.
-          Current row is {conversation.relationship}
-          {detail.children.length > 0
-            ? ` with ${formatNumber(detail.children.length)} child conversation${
-                detail.children.length === 1 ? "" : "s"
-              }.`
-            : " with no child conversations."}
-        </p>
-      </div>
-    </aside>
-  );
+async function copyTextToClipboard(value: string): Promise<void> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch {
+    // Fall through to the textarea copy path below.
+  }
+
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function TraceSubview({
@@ -795,20 +1219,32 @@ function TraceSubview({
         const conversation = entry.conversation;
         const selected = conversation.id === state.selectedConversationId;
         return (
-          <button
-            className={cx(ROW_BASE_CLASS, "min-h-[70px]", selected && ROW_SELECTED_CLASS)}
+          <article
+            className={cx(
+              ROW_BASE_CLASS,
+              "min-h-[70px] cursor-default",
+              selected && ROW_SELECTED_CLASS,
+            )}
             data-trace-row={conversation.id}
+            data-trace-row-selected={String(selected)}
             key={conversation.id}
-            onClick={() => void actions.openConversation(conversation.id)}
-            type="button"
           >
             <div className={ROW_TOP_CLASS}>
               <div className={ROW_TITLE_CLASS} title={conversation.name}>
                 {formatConversationTitle(conversation.name)}
               </div>
-              <span className={relationshipChipClass(conversation.relationship)}>
-                {conversation.relationship}
-              </span>
+              <div className="flex flex-none flex-wrap items-center justify-end gap-1.5">
+                <span className={relationshipChipClass(conversation.relationship)}>
+                  {conversation.relationship}
+                </span>
+                <Button
+                  data-trace-action={conversation.id}
+                  onClick={() => void actions.openConversation(conversation.id)}
+                >
+                  <ExternalLink aria-hidden="true" />
+                  View conversation
+                </Button>
+              </div>
             </div>
             <div className={ROW_META_CLASS}>
               <span>{conversation.adapterId}</span>
@@ -820,7 +1256,7 @@ function TraceSubview({
               <span className="[font-family:var(--mono)]">{shortId(conversation.id)}</span>
               <span>{conversation.model || "unknown model"}</span>
             </div>
-          </button>
+          </article>
         );
       })}
     </div>
@@ -1079,6 +1515,18 @@ function relationshipChipClass(relationship: string): string {
       relationship !== "spawned" &&
       relationship !== "forked" &&
       "bg-[var(--item-bg)] text-[var(--text-soft)]",
+  );
+}
+
+function countMessagesByRole(
+  messages: readonly Message[],
+): Record<Message["role"], number> {
+  return messages.reduce<Record<Message["role"], number>>(
+    (counts, message) => {
+      counts[message.role] += 1;
+      return counts;
+    },
+    { assistant: 0, system: 0, user: 0 },
   );
 }
 

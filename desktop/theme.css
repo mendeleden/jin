@@ -14,6 +14,8 @@
   --panel: rgba(9, 13, 20, 0.9);
   --panel-alt: rgba(14, 19, 29, 0.86);
   --panel-subtle: rgba(255, 255, 255, 0.018);
+  --overlay-panel-bg:
+    linear-gradient(180deg, #0a0f17, #070a10);
   --line: rgba(216, 226, 244, 0.085);
   --line-strong: rgba(216, 226, 244, 0.16);
   --text: #f6f8fd;
@@ -153,6 +155,8 @@
   --panel: rgba(255, 255, 255, 0.9);
   --panel-alt: rgba(248, 251, 253, 0.94);
   --panel-subtle: rgba(255, 255, 255, 0.62);
+  --overlay-panel-bg:
+    linear-gradient(180deg, #ffffff, #f6fbfd);
   --line: rgba(31, 49, 67, 0.12);
   --line-strong: rgba(31, 49, 67, 0.22);
   --text: #172331;

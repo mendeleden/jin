@@ -10,11 +10,13 @@ export type MaybePromise = void | Promise<void>;
 export interface DesktopShellActions {
   closeConversation(): void;
   openConversation(conversationId: string): MaybePromise;
+  previewConversation(conversationId: string): MaybePromise;
   refreshShell(): MaybePromise;
   runControlAction(action: DesktopControlAction): MaybePromise;
   selectSubview(subview: DesktopConversationSubview): void;
   setAdapterFilter(value: string): MaybePromise;
   setSinceFilter(value: string): MaybePromise;
+  showConversationIndex(): void;
   switchView(view: DesktopNavigationView): MaybePromise;
   toggleHomePanel(panel: DesktopHomePanel): void;
   toggleInspector(): void;
@@ -24,11 +26,13 @@ export interface DesktopShellActions {
 export const noopDesktopShellActions: DesktopShellActions = {
   closeConversation() {},
   openConversation() {},
+  previewConversation() {},
   refreshShell() {},
   runControlAction() {},
   selectSubview() {},
   setAdapterFilter() {},
   setSinceFilter() {},
+  showConversationIndex() {},
   switchView() {},
   toggleHomePanel() {},
   toggleInspector() {},

@@ -21,11 +21,13 @@ export type DesktopNavigationView =
   | "routing"
   | "logs"
   | "settings";
+export type DesktopConversationRoute = "index" | "detail";
 export type DesktopConversationSubview = "timeline" | "trace" | "tree";
 export type DesktopHomePanel = "harness" | "models" | "usage";
 
 export interface RendererState {
   activeView: DesktopNavigationView;
+  conversationRoute: DesktopConversationRoute;
   selectedSubview: DesktopConversationSubview;
   sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
@@ -68,6 +70,7 @@ export function createInitialRendererState(
 ): RendererState {
   return {
     activeView: "home",
+    conversationRoute: "index",
     selectedSubview: "timeline",
     sidebarCollapsed: false,
     inspectorCollapsed: false,
@@ -149,6 +152,12 @@ export class DesktopRendererController {
 
   selectSubview(subview: DesktopConversationSubview): void {
     this.state.selectedSubview = subview;
+    this.notify();
+  }
+
+  showConversationIndex(): void {
+    this.state.activeView = "conversations";
+    this.state.conversationRoute = "index";
     this.notify();
   }
 
@@ -362,6 +371,7 @@ export class DesktopRendererController {
 
       if (!nextConversationId) {
         clearSelectedConversation(this.state);
+        this.state.conversationRoute = "index";
         return;
       }
 
@@ -383,6 +393,7 @@ export class DesktopRendererController {
 
       this.state.libraryError = formatError(error);
       clearSelectedConversation(this.state);
+      this.state.conversationRoute = "index";
     } finally {
       if (requestToken === this.libraryRequestToken) {
         this.state.libraryLoading = false;
@@ -391,14 +402,25 @@ export class DesktopRendererController {
     }
   }
 
+  async previewConversation(conversationId: string): Promise<void> {
+    this.state.activeView = "conversations";
+    this.state.conversationRoute = "index";
+    this.state.selectedSubview = "timeline";
+    this.state.selectedConversationId = conversationId;
+    this.notify();
+    await this.loadConversationWorkspace(conversationId);
+  }
+
   async openConversation(conversationId: string): Promise<void> {
     this.state.activeView = "conversations";
+    this.state.conversationRoute = "detail";
     this.state.selectedConversationId = conversationId;
     this.notify();
     await this.loadConversationWorkspace(conversationId);
   }
 
   closeConversation(): void {
+    this.state.conversationRoute = "index";
     clearSelectedConversation(this.state);
     this.notify();
   }
@@ -436,9 +458,16 @@ export class DesktopRendererController {
 
   private async loadConversationWorkspace(conversationId: string): Promise<void> {
     const requestToken = ++this.detailRequestToken;
+    const conversationChanged =
+      this.state.detail?.conversation.id !== conversationId;
     this.state.selectedConversationId = conversationId;
     this.state.selectedConversationLoading = true;
     this.state.selectedConversationError = null;
+    if (conversationChanged) {
+      this.state.detail = null;
+      this.state.trace = null;
+      this.state.tree = null;
+    }
     this.notify();
 
     try {
@@ -508,6 +537,7 @@ function clearConversationWorkspace(state: RendererState): void {
   state.library = null;
   state.libraryError = null;
   state.libraryLoading = false;
+  state.conversationRoute = "index";
   clearSelectedConversation(state);
 }
 
@@ -621,25 +651,7 @@ function renderConversationSubtitle(currentState: RendererState): string {
     return "Loading the daemon-backed conversation library.";
   }
 
-  const visibleConversations = library.conversations.length;
-  const totalConversations = conversationLibraryTotalCount(library);
-  const indexSummary =
-    hasConversationLibraryTotal(library)
-      ? `${formatNumber(visibleConversations)} visible of ${formatNumber(
-          totalConversations,
-        )} conversations`
-      : `${formatNumber(visibleConversations)} conversations loaded`;
-  const selected = currentState.detail?.conversation;
-  if (!selected) {
-    return indexSummary;
-  }
-
-  const tokens =
-    selected.inputTokens +
-    selected.outputTokens +
-    selected.cacheRead +
-    selected.cacheWrite;
-  return `${indexSummary} - ${selected.adapterId} - ${formatMetricNumber(tokens).display} tokens`;
+  return "";
 }
 
 export function conversationLibraryTotalCount(

@@ -88,6 +88,9 @@ function DesktopReactAppContent({
     openConversation(conversationId) {
       return controllerRef.current?.openConversation(conversationId);
     },
+    previewConversation(conversationId) {
+      return controllerRef.current?.previewConversation(conversationId);
+    },
     refreshShell() {
       return controllerRef.current?.refreshShell({ preserveSelection: true });
     },
@@ -102,6 +105,9 @@ function DesktopReactAppContent({
     },
     setSinceFilter(value) {
       return controllerRef.current?.setSinceFilter(value);
+    },
+    showConversationIndex() {
+      controllerRef.current?.showConversationIndex();
     },
     switchView(view) {
       return controllerRef.current?.switchView(view);

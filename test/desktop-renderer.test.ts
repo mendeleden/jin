@@ -125,10 +125,17 @@ describe("desktop renderer", () => {
     expect(finalSnapshot?.snapshot?.status.runtime.state).toBe("running");
     expect(finalSnapshot?.library?.conversations[0]?.id).toBe("desktop-child");
     expect(finalSnapshot?.detail).toBeNull();
+    expect(finalSnapshot?.conversationRoute).toBe("index");
+
+    await controller.previewConversation("desktop-child");
+
+    expect(snapshots.at(-1)?.detail?.conversation.id).toBe("desktop-child");
+    expect(snapshots.at(-1)?.conversationRoute).toBe("index");
 
     await controller.openConversation("desktop-child");
 
     expect(snapshots.at(-1)?.detail?.conversation.id).toBe("desktop-child");
+    expect(snapshots.at(-1)?.conversationRoute).toBe("detail");
   });
 
   test("stopping runtime in conversations view renders a paused workbench state", () => {
@@ -176,14 +183,16 @@ describe("desktop renderer", () => {
     expect(html).toContain("All relationships");
     expect(html).toContain("All time");
     expect(html).toContain("Messages");
-    expect(html).toContain("Open trace");
+    expect(html).toContain("Open conversation");
     expect(html).toContain("Selected conversation metadata");
-    expect(html).toContain("Trace summary");
     expect(html).toContain("Tool activity");
     expect(html).toContain("Spawned project summary");
     expect(html).toContain("Conversation");
     expect(html).toContain("Project");
     expect(html).toContain("Relationship");
+    expect(html).toContain("Started");
+    expect(html).toContain("Ended");
+    expect(html).toContain("Apr 29 at 8:30 AM");
 
     const conversationsSource = readFileSync(
       new URL("../desktop/views/conversations/workspace.tsx", import.meta.url),
@@ -192,11 +201,57 @@ describe("desktop renderer", () => {
     const themeSource = readDesktopThemeSource();
     expect(conversationsSource).toContain("--conversation-toolbar-bg");
     expect(conversationsSource).toContain("--conversation-row-selected-bg");
+    expect(conversationsSource).toContain("--overlay-panel-bg");
+    expect(conversationsSource).toContain("[background:var(--overlay-panel-bg)]");
+    expect(conversationsSource).toContain("TABLE_HEAD_CELL_CLASS");
     expect(conversationsSource).toContain("bg-[var(--field-bg)]");
     expect(conversationsSource).not.toContain("bg-white/[0.03]");
     expect(conversationsSource).not.toContain("rgba(18,25,29,0.98)");
     expect(themeSource).toContain("--conversation-toolbar-bg");
     expect(themeSource).toContain("--conversation-row-selected-shadow");
+  });
+
+  test("open conversation route renders nested detail tabs", () => {
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        conversationRoute: "detail",
+        selectedSubview: "timeline",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+        selectedConversationId: "desktop-child",
+        detail: makeConversationDetailView(),
+        trace: makeTraceView(),
+        tree: makeTreeView(),
+      }),
+    );
+
+    expect(html).toContain('data-conversation-surface="detail"');
+    expect(html).toContain("data-conversation-detail-route");
+    expect(html).toContain("Open Conversation");
+    expect(html).toContain("Conversation detail tabs");
+    expect(html).toContain("Messages");
+    expect(html).toContain("Trace");
+    expect(html).toContain("Tree");
+    expect(html).toContain("data-conversation-messages-view");
+    expect(html).toContain("data-message-role-summary");
+    expect(html).toContain("data-conversation-copy-strip");
+    expect(html).toContain('data-copy-field="conversation-id"');
+    expect(html).toContain('data-copy-field="trace-id"');
+    expect(html).toContain('data-copy-field="parent-id"');
+    expect(html).toContain('data-copy-field="source-path"');
+    expect(html).toContain("/tmp/desktop-child.jsonl");
+    expect(html).toContain('data-message-card="desktop-child-m1"');
+    expect(html).toContain('data-message-collapsed="false"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html.indexOf("data-conversation-copy-strip")).toBeLessThan(
+      html.indexOf("data-conversation-detail-tab"),
+    );
+    expect(html).toMatch(/<strong[^>]*>1<\/strong> user/);
+    expect(html).toMatch(/<strong[^>]*>1<\/strong> assistant/);
+    expect(html).toContain("Index");
+    expect(html).not.toContain("Trace summary");
+    expect(html).not.toContain("data-conversation-bottom-tray");
   });
 
   test("conversation index labels loaded rows when no aggregate total is available", () => {
@@ -208,8 +263,8 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("3 conversations loaded");
     expect(html).toContain("3 loaded");
+    expect(html).not.toContain("3 conversations loaded");
     expect(html).not.toContain("data-conversation-stats");
     expect(html).not.toContain("conversations indexed");
   });
@@ -230,8 +285,8 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("3 visible of 1,990 conversations");
     expect(html).toContain("3 visible of 1,990");
+    expect(html).not.toContain("3 visible of 1,990 conversations");
     expect(html).toContain("<strong>929</strong>");
     expect(html).toContain("<strong>584</strong>");
     expect(html).not.toContain("data-conversation-stats");
@@ -1432,6 +1487,33 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("data-inspector-rail");
   });
 
+  test("conversation bottom tray renders the full selected message timeline", () => {
+    const detail = makeConversationDetailView();
+    detail.messages = Array.from({ length: 7 }, (_, index) =>
+      makeMessage(`desktop-child-m${index + 1}`, {
+        content: `Tray message ${index + 1}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        sequence: index + 1,
+      }),
+    );
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+        selectedConversationId: "desktop-child",
+        detail,
+        trace: makeTraceView(),
+        tree: makeTreeView(),
+      }),
+    );
+
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("Tray message 1");
+    expect(html).toContain("Tray message 7");
+  });
+
   test("home omits legacy collapsible stats bars from the primary dashboard", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
@@ -1471,6 +1553,9 @@ describe("desktop renderer", () => {
     expect(html).toContain("Spawned project summary");
     expect(html).toContain("forked");
     expect(html).toContain("data-trace-row");
+    expect(html).toContain("data-trace-action");
+    expect(html).toContain("View conversation");
+    expect(html).toContain('data-trace-row-selected="true"');
   });
 
   test("incompatible desktop protocol renders an update-first state", () => {
@@ -1580,6 +1665,7 @@ function normalizeSourceText(source: string): string {
 function makeState(overrides: Partial<RendererState> = {}): RendererState {
   return {
     activeView: "home",
+    conversationRoute: "index",
     selectedSubview: "timeline",
     sidebarCollapsed: false,
     inspectorCollapsed: false,
