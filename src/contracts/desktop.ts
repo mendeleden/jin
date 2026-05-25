@@ -202,7 +202,7 @@ export interface DesktopLogsRequest {
 export interface DesktopConversationListFilters {
   adapterId: string | null;
   since: string | null;
-  limit: number;
+  limit: number | null;
 }
 
 export interface DesktopConversationListView {

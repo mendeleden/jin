@@ -59,7 +59,6 @@ export interface FormattedMetric {
   exact?: string;
 }
 
-const DEFAULT_CONVERSATION_LIMIT = 48;
 const DEFAULT_LOG_LIMIT = 240;
 export const ESTIMATED_COST_HELP =
   "Calculated from API pricing estimates; not subscription usage or billing-plan spend.";
@@ -91,9 +90,7 @@ export function createInitialRendererState(
     routing: null,
     routingLoading: false,
     routingError: null,
-    libraryRequest: {
-      limit: DEFAULT_CONVERSATION_LIMIT,
-    },
+    libraryRequest: {},
     library: null,
     libraryLoading: false,
     libraryError: null,
@@ -355,7 +352,7 @@ export class DesktopRendererController {
       this.state.libraryRequest = {
         adapterId: library.filters.adapterId ?? undefined,
         since: library.filters.since ?? undefined,
-        limit: library.filters.limit,
+        limit: library.filters.limit ?? undefined,
       };
       this.state.libraryError = null;
 

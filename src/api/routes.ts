@@ -60,7 +60,6 @@ import {
 type Handler = (req: Request, params: Record<string, string>) => Response | Promise<Response>;
 type QueryStore = ReturnType<typeof getStore>;
 
-export const DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT = 48;
 export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
 export const DESKTOP_LOGS_DEFAULT_LIMIT = 240;
 export const DESKTOP_LOGS_MAX_LIMIT = 2_000;
@@ -543,7 +542,7 @@ export function buildDesktopConversationListView(
   const conversations = listConversations(queryStore.database, {
     adapterId: filters.adapterId ?? undefined,
     since,
-    limit: filters.limit,
+    limit: filters.limit ?? undefined,
   });
 
   return {
@@ -881,16 +880,24 @@ function normalizeDesktopConversationListRequest(
   };
 }
 
-function normalizeDesktopConversationLimit(value: unknown): number {
+function normalizeDesktopConversationLimit(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
   const limit =
     typeof value === "number"
       ? value
       : typeof value === "string" && value.trim().length > 0
         ? Number(value)
-        : DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT;
+        : null;
+
+  if (limit === null) {
+    return null;
+  }
 
   if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
-    return DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT;
+    return null;
   }
 
   return Math.min(limit, DESKTOP_CONVERSATION_LIST_MAX_LIMIT);

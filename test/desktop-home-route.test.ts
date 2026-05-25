@@ -4,7 +4,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createApiFetchHandler } from "../src/api/server";
 import {
-  DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
   DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
   buildDesktopLogsView,
 } from "../src/api/routes";
@@ -346,11 +345,22 @@ describe("desktop viewer routes", () => {
     expect(treePayload.tree.children[0].conversation.id).toBe("desktop-child");
   });
 
-  test("clamps malformed desktop conversation list limits before querying", async () => {
+  test("desktop conversation list has no default limit and caps explicit limits", async () => {
     const { store } = createQueryEnv();
-    seedManyDesktopConversations(store, DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT + 12);
+    seedManyDesktopConversations(store, DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12);
 
     const handler = createApiFetchHandler({ queryStore: store });
+    const unboundedResponse = await handler(
+      new Request("http://localhost/api/desktop/conversations"),
+    );
+    const unboundedPayload = await readJson<DesktopConversationListView>(
+      unboundedResponse,
+    );
+
+    expect(unboundedPayload.filters.limit).toBeNull();
+    expect(unboundedPayload.conversations).toHaveLength(
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
+    );
 
     for (const limit of ["abc", "0", "-5", "12.5"]) {
       const response = await handler(
@@ -358,9 +368,9 @@ describe("desktop viewer routes", () => {
       );
       const payload = await readJson<DesktopConversationListView>(response);
 
-      expect(payload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT);
+      expect(payload.filters.limit).toBeNull();
       expect(payload.conversations).toHaveLength(
-        DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+        DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
       );
     }
 
@@ -373,7 +383,7 @@ describe("desktop viewer routes", () => {
 
     expect(cappedPayload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
     expect(cappedPayload.conversations).toHaveLength(
-      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT + 12,
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
     );
   });
 });

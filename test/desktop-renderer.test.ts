@@ -1555,9 +1555,7 @@ function makeState(overrides: Partial<RendererState> = {}): RendererState {
     routing: null,
     routingLoading: false,
     routingError: null,
-    libraryRequest: {
-      limit: 48,
-    },
+    libraryRequest: {},
     library: null,
     libraryLoading: false,
     libraryError: null,
@@ -1794,7 +1792,7 @@ function makeConversationListView(): DesktopConversationListView {
     filters: {
       adapterId: null,
       since: null,
-      limit: 48,
+      limit: null,
     },
     availableAdapters: ["claude-code", "codex"],
     relationshipMix: [
