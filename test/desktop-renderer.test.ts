@@ -124,7 +124,11 @@ describe("desktop renderer", () => {
     const finalSnapshot = snapshots.at(-1);
     expect(finalSnapshot?.snapshot?.status.runtime.state).toBe("running");
     expect(finalSnapshot?.library?.conversations[0]?.id).toBe("desktop-child");
-    expect(finalSnapshot?.detail?.conversation.id).toBe("desktop-child");
+    expect(finalSnapshot?.detail).toBeNull();
+
+    await controller.openConversation("desktop-child");
+
+    expect(snapshots.at(-1)?.detail?.conversation.id).toBe("desktop-child");
   });
 
   test("stopping runtime in conversations view renders a paused workbench state", () => {
@@ -145,7 +149,7 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Conversation library unavailable");
   });
 
-  test("conversation workbench renders library, tabs, and metadata inspector", () => {
+  test("conversation workbench renders an index table and bottom tray", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
@@ -159,21 +163,27 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("Conversation index");
+    expect(html).toContain("Conversation Index");
+    expect(html).toContain("All conversations");
     expect(html).toContain("data-conversation-toolbar");
     expect(html.indexOf("data-conversation-toolbar")).toBeLessThan(
-      html.indexOf("data-library-panel"),
+      html.indexOf("data-conversation-list"),
     );
+    expect(html).toContain("data-conversation-index-panel");
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("Search conversation index");
     expect(html).toContain("All adapters");
+    expect(html).toContain("All relationships");
     expect(html).toContain("All time");
-    expect(html).toContain("Timeline");
-    expect(html).toContain("Trace");
-    expect(html).toContain("Tree");
-    expect(html).toContain("Metadata");
-    expect(html).toContain("Conversation ID");
-    expect(html).toContain("Trace ID");
+    expect(html).toContain("Messages");
+    expect(html).toContain("Open trace");
+    expect(html).toContain("Selected conversation metadata");
+    expect(html).toContain("Trace summary");
+    expect(html).toContain("Tool activity");
     expect(html).toContain("Spawned project summary");
-    expect(html).toContain("Conversation index");
+    expect(html).toContain("Conversation");
+    expect(html).toContain("Project");
+    expect(html).toContain("Relationship");
 
     const conversationsSource = readFileSync(
       new URL("../desktop/views/conversations/workspace.tsx", import.meta.url),
@@ -181,13 +191,50 @@ describe("desktop renderer", () => {
     );
     const themeSource = readDesktopThemeSource();
     expect(conversationsSource).toContain("--conversation-toolbar-bg");
-    expect(conversationsSource).toContain("--conversation-inspector-bg");
     expect(conversationsSource).toContain("--conversation-row-selected-bg");
-    expect(conversationsSource).toContain("bg-[var(--control-bg)]");
+    expect(conversationsSource).toContain("bg-[var(--field-bg)]");
     expect(conversationsSource).not.toContain("bg-white/[0.03]");
     expect(conversationsSource).not.toContain("rgba(18,25,29,0.98)");
     expect(themeSource).toContain("--conversation-toolbar-bg");
     expect(themeSource).toContain("--conversation-row-selected-shadow");
+  });
+
+  test("conversation index labels loaded rows when no aggregate total is available", () => {
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+      }),
+    );
+
+    expect(html).toContain("3 conversations loaded");
+    expect(html).toContain("3 loaded");
+    expect(html).not.toContain("data-conversation-stats");
+    expect(html).not.toContain("conversations indexed");
+  });
+
+  test("conversation index uses visible of total copy for aggregate totals", () => {
+    const library = makeConversationListView();
+    library.relationshipMix = [
+      { relationship: "root", conversations: 477 },
+      { relationship: "spawned", conversations: 929 },
+      { relationship: "compacted", conversations: 584 },
+    ];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library,
+      }),
+    );
+
+    expect(html).toContain("3 visible of 1,990 conversations");
+    expect(html).toContain("3 visible of 1,990");
+    expect(html).toContain("<strong>929</strong>");
+    expect(html).toContain("<strong>584</strong>");
+    expect(html).not.toContain("data-conversation-stats");
   });
 
   test("home overview uses compact large numbers and keeps runtime paths in the sidebar", () => {
@@ -837,8 +884,8 @@ describe("desktop renderer", () => {
     for (const html of [conversationsHtml, logsHtml, settingsHtml]) {
       expect(html).not.toContain("data-legacy-html-view");
     }
-    expect(conversationsHtml).toContain("Conversation index");
-    expect(conversationsHtml).toContain("Metadata");
+    expect(conversationsHtml).toContain("Conversation Index");
+    expect(conversationsHtml).toContain("Selected conversation metadata");
     expect(logsHtml).toContain("Daemon log tail");
     expect(settingsHtml).toContain("Shell refresh");
     expect(settingsHtml).toContain("Every 30s");
@@ -1365,11 +1412,11 @@ describe("desktop renderer", () => {
     expect(renderDesktopReactShellToStaticMarkup(snapshots.at(-1)!)).toContain("Restart Jin Desktop");
   });
 
-  test("conversation inspector can render as a collapsed side rail", () => {
+  test("conversation bottom tray uses the collapsed sidebar offset", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
-        inspectorCollapsed: true,
+        sidebarCollapsed: true,
         snapshot: makeSnapshot("running"),
         library: makeConversationListView(),
         selectedConversationId: "desktop-child",
@@ -1379,10 +1426,10 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain('data-inspector-state="collapsed"');
-    expect(html).toContain("data-inspector-rail");
-    expect(html).toContain("Expand metadata inspector");
-    expect(html).toContain("Metadata");
+    expect(html).toContain('data-conversation-surface="ops-index"');
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("left-[82px]");
+    expect(html).not.toContain("data-inspector-rail");
   });
 
   test("home omits legacy collapsible stats bars from the primary dashboard", () => {

@@ -8,6 +8,7 @@ import type {
 export type MaybePromise = void | Promise<void>;
 
 export interface DesktopShellActions {
+  closeConversation(): void;
   openConversation(conversationId: string): MaybePromise;
   refreshShell(): MaybePromise;
   runControlAction(action: DesktopControlAction): MaybePromise;
@@ -21,6 +22,7 @@ export interface DesktopShellActions {
 }
 
 export const noopDesktopShellActions: DesktopShellActions = {
+  closeConversation() {},
   openConversation() {},
   refreshShell() {},
   runControlAction() {},

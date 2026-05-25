@@ -82,6 +82,9 @@ function DesktopReactAppContent({
   }, [bridge, refreshIntervalMs]);
 
   const actions: DesktopShellActions = {
+    closeConversation() {
+      controllerRef.current?.closeConversation();
+    },
     openConversation(conversationId) {
       return controllerRef.current?.openConversation(conversationId);
     },

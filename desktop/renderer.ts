@@ -356,10 +356,9 @@ export class DesktopRendererController {
       };
       this.state.libraryError = null;
 
-      const nextConversationId = pickConversationId(
-        library.conversations,
-        options.preserveSelection ? this.state.selectedConversationId : null,
-      );
+      const nextConversationId = options.preserveSelection
+        ? pickConversationId(library.conversations, this.state.selectedConversationId)
+        : null;
 
       if (!nextConversationId) {
         clearSelectedConversation(this.state);
@@ -397,6 +396,11 @@ export class DesktopRendererController {
     this.state.selectedConversationId = conversationId;
     this.notify();
     await this.loadConversationWorkspace(conversationId);
+  }
+
+  closeConversation(): void {
+    clearSelectedConversation(this.state);
+    this.notify();
   }
 
   async runControlAction(action: DesktopControlAction): Promise<void> {
@@ -617,9 +621,17 @@ function renderConversationSubtitle(currentState: RendererState): string {
     return "Loading the daemon-backed conversation library.";
   }
 
+  const visibleConversations = library.conversations.length;
+  const totalConversations = conversationLibraryTotalCount(library);
+  const indexSummary =
+    hasConversationLibraryTotal(library)
+      ? `${formatNumber(visibleConversations)} visible of ${formatNumber(
+          totalConversations,
+        )} conversations`
+      : `${formatNumber(visibleConversations)} conversations loaded`;
   const selected = currentState.detail?.conversation;
   if (!selected) {
-    return `${formatNumber(library.conversations.length)} conversations indexed`;
+    return indexSummary;
   }
 
   const tokens =
@@ -627,7 +639,27 @@ function renderConversationSubtitle(currentState: RendererState): string {
     selected.outputTokens +
     selected.cacheRead +
     selected.cacheWrite;
-  return `${formatNumber(library.conversations.length)} conversations indexed - ${selected.adapterId} - ${formatMetricNumber(tokens).display} tokens`;
+  return `${indexSummary} - ${selected.adapterId} - ${formatMetricNumber(tokens).display} tokens`;
+}
+
+export function conversationLibraryTotalCount(
+  library: DesktopConversationListView,
+): number {
+  const relationshipTotal = library.relationshipMix.reduce(
+    (total, entry) => total + entry.conversations,
+    0,
+  );
+  return Math.max(library.conversations.length, relationshipTotal);
+}
+
+export function hasConversationLibraryTotal(
+  library: DesktopConversationListView,
+): boolean {
+  const relationshipTotal = library.relationshipMix.reduce(
+    (total, entry) => total + entry.conversations,
+    0,
+  );
+  return relationshipTotal > library.conversations.length;
 }
 
 function renderLogsSubtitle(currentState: RendererState): string {
@@ -714,16 +746,14 @@ function pickConversationId(
   conversations: Conversation[],
   preferredConversationId: string | null,
 ): string | null {
-  if (preferredConversationId) {
-    const match = conversations.find(
-      (conversation) => conversation.id === preferredConversationId,
-    );
-    if (match) {
-      return match.id;
-    }
+  if (!preferredConversationId) {
+    return null;
   }
 
-  return conversations[0]?.id ?? null;
+  const match = conversations.find(
+    (conversation) => conversation.id === preferredConversationId,
+  );
+  return match?.id ?? null;
 }
 
 function normalizeFilterValue(value: string): string | undefined {
