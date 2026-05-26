@@ -1,12 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   DesktopRendererController,
   ESTIMATED_COST_HELP,
+  formatDate,
   type RendererState,
 } from "../desktop/renderer";
 import type { JinDesktopBridge } from "../desktop/bridge";
 import { renderDesktopReactShellToStaticMarkup } from "../desktop/components/app-shell";
+import { DESKTOP_LAYOUT_STORAGE_KEY } from "../desktop/layout/layout-storage";
+import {
+  DesktopLayoutPreferencesProvider,
+  useDesktopLayoutPreferences,
+  type DesktopLayoutPreferences,
+} from "../desktop/layout/preferences";
+import {
+  DesktopPreferencesProvider,
+  useDesktopPreferences,
+  type DesktopPreferences,
+} from "../desktop/preferences";
+import { SettingsWorkspace } from "../desktop/views/settings/workspace";
+import {
+  DashboardGrid,
+  type DashboardGridItemContext,
+} from "../desktop/views/home/dashboard-grid";
+import {
+  DEFAULT_HOME_PANEL_LAYOUT,
+  HOME_LAYOUT_SCHEMA_VERSION,
+  type HomePanelLayout,
+} from "../desktop/views/home/layout";
+import {
+  DEFAULT_SETTINGS_PANEL_LAYOUT,
+  SETTINGS_LAYOUT_SCHEMA_VERSION,
+  type SettingsPanelLayout,
+} from "../desktop/views/settings/layout";
+import {
+  createHomeLayoutEditorState,
+  homeLayoutEditorReducer,
+} from "../desktop/views/home/layout-editor-state";
+import {
+  usageColorClassForColor,
+  usageHeightClass,
+  usageWidthClass,
+} from "../desktop/views/home/usage-visuals";
 import type {
   Conversation,
   Message,
@@ -32,6 +70,13 @@ import {
 import { VERSION } from "../src/updater";
 
 describe("desktop renderer", () => {
+  test("formats desktop dates consistently across CI platforms", () => {
+    expect(formatDate("2026-04-29T08:30:00.000")).toBe("Apr 29 at 8:30 AM");
+    expect(formatDate("2026-04-29T13:05:00.000")).toBe("Apr 29 at 1:05 PM");
+    expect(formatDate("")).toBe("Unknown time");
+    expect(formatDate("not-a-date")).toBe("not-a-date");
+  });
+
   test("controller refreshes through injected preload bridge state", async () => {
     const snapshots: RendererState[] = [];
     const library = makeConversationListView();
@@ -87,7 +132,119 @@ describe("desktop renderer", () => {
     const finalSnapshot = snapshots.at(-1);
     expect(finalSnapshot?.snapshot?.status.runtime.state).toBe("running");
     expect(finalSnapshot?.library?.conversations[0]?.id).toBe("desktop-child");
-    expect(finalSnapshot?.detail?.conversation.id).toBe("desktop-child");
+    expect(finalSnapshot?.detail).toBeNull();
+    expect(finalSnapshot?.conversationRoute).toBe("index");
+
+    await controller.previewConversation("desktop-child");
+
+    expect(snapshots.at(-1)?.detail?.conversation.id).toBe("desktop-child");
+    expect(snapshots.at(-1)?.conversationRoute).toBe("index");
+
+    await controller.openConversation("desktop-child");
+
+    expect(snapshots.at(-1)?.detail?.conversation.id).toBe("desktop-child");
+    expect(snapshots.at(-1)?.conversationRoute).toBe("detail");
+  });
+
+  test("controller delegates conversation filters and windows to the bridge", async () => {
+    const requests: Array<unknown> = [];
+    const firstWindow = makeConversationListView();
+    firstWindow.conversations = [makeChildConversation(), makeRootConversation()];
+    firstWindow.totalCount = 3;
+    firstWindow.filteredCount = 3;
+    firstWindow.page = {
+      offset: 0,
+      limit: 100,
+      returned: 2,
+      hasMore: true,
+      nextOffset: 2,
+    };
+
+    const secondWindow = makeConversationListView();
+    secondWindow.conversations = [makeForkConversation()];
+    secondWindow.totalCount = 3;
+    secondWindow.filteredCount = 3;
+    secondWindow.page = {
+      offset: 2,
+      limit: 100,
+      returned: 1,
+      hasMore: false,
+      nextOffset: null,
+    };
+
+    const repoWindow = makeConversationListView();
+    repoWindow.filters = {
+      ...repoWindow.filters,
+      repository: "github.com/acme/jin",
+      limit: 100,
+      offset: 0,
+    };
+    repoWindow.conversations = [makeChildConversation()];
+    repoWindow.totalCount = 3;
+    repoWindow.filteredCount = 1;
+    repoWindow.page = {
+      offset: 0,
+      limit: 100,
+      returned: 1,
+      hasMore: false,
+      nextOffset: null,
+    };
+
+    const controller = new DesktopRendererController({
+      bridge: {
+        async getHomeSnapshot() {
+          return makeSnapshot("running");
+        },
+        async listConversations(request) {
+          requests.push(request);
+          if (request?.repository) {
+            return repoWindow;
+          }
+          return request?.offset === 2 ? secondWindow : firstWindow;
+        },
+        async getConversationDetail() {
+          return makeConversationDetailView();
+        },
+        async getLogs() {
+          return makeLogsView();
+        },
+        async getRouting() {
+          return makeRoutingView();
+        },
+        async getTraceView() {
+          return makeTraceView();
+        },
+        async getTreeView() {
+          return makeTreeView();
+        },
+        async runControlAction() {
+          return {
+            action: "restart",
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            status: makeStatus("running"),
+          };
+        },
+      },
+      initialState: {
+        activeView: "conversations",
+      },
+    });
+
+    await controller.refreshShell({ preserveSelection: false });
+    await controller.loadMoreConversations();
+    await controller.setRepositoryFilter("github.com/acme/jin");
+
+    expect(requests).toEqual([
+      { limit: 100, offset: 0 },
+      { limit: 100, offset: 2 },
+      { limit: 100, offset: 0, repository: "github.com/acme/jin" },
+    ]);
+    expect(controller.getSnapshot().library?.conversations.map((entry) => entry.id)).toEqual([
+      "desktop-child",
+    ]);
   });
 
   test("stopping runtime in conversations view renders a paused workbench state", () => {
@@ -108,7 +265,7 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Conversation library unavailable");
   });
 
-  test("conversation workbench renders library, tabs, and metadata inspector", () => {
+  test("conversation workbench renders an index table and bottom tray", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
@@ -122,23 +279,163 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("Conversation index");
-    expect(html).toContain("conversation-workspace-toolbar");
-    expect(html.indexOf("conversation-workspace-toolbar")).toBeLessThan(
-      html.indexOf("library-panel"),
+    expect(html).toContain("Conversation Index");
+    expect(html).toContain("All conversations");
+    expect(html).toContain("data-conversation-toolbar");
+    expect(html.indexOf("data-conversation-toolbar")).toBeLessThan(
+      html.indexOf("data-conversation-list"),
     );
-    expect(html).toContain("conversation-filter-row");
-    expect(html).toContain("Timeline");
+    expect(html).toContain("data-conversation-index-panel");
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("Search conversation index");
+    expect(html).toContain("All adapters");
+    expect(html).toContain("All repositories");
+    expect(html).toContain("All relationships");
+    expect(html).toContain("All time");
+    expect(html).toContain("Messages");
+    expect(html).toContain("Open conversation");
+    expect(html).toContain("Selected conversation metadata");
+    expect(html).toContain("Tool activity");
+    expect(html).toContain("Spawned project summary");
+    expect(html).toContain("Conversation");
+    expect(html).toContain("Project");
+    expect(html).toContain("Relationship");
+    expect(html).toContain("Started");
+    expect(html).toContain("Ended");
+    expect(html).toContain("Apr 29 at 8:30 AM");
+
+    const conversationsSource = readFileSync(
+      new URL("../desktop/views/conversations/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
+    expect(conversationsSource).toContain("--conversation-toolbar-bg");
+    expect(conversationsSource).toContain("--conversation-row-selected-bg");
+    expect(conversationsSource).toContain("--overlay-panel-bg");
+    expect(conversationsSource).toContain("[background:var(--overlay-panel-bg)]");
+    expect(conversationsSource).toContain("TABLE_HEAD_CELL_CLASS");
+    expect(conversationsSource).toContain("bg-[var(--field-bg)]");
+    expect(conversationsSource).not.toContain("bg-white/[0.03]");
+    expect(conversationsSource).not.toContain("rgba(18,25,29,0.98)");
+    expect(themeSource).toContain("--conversation-toolbar-bg");
+    expect(themeSource).toContain("--conversation-row-selected-shadow");
+  });
+
+  test("conversation index exposes repository filters from the daemon view", () => {
+    const repositoryA = "https://github.com/acme/jin.git";
+    const repositoryB = "git@github.com:mendeleden/jin.git";
+    const library = makeConversationListView();
+    library.availableRepositories = [repositoryA, repositoryB];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library,
+      }),
+    );
+
+    expect(html).toContain("Repository");
+    expect(html).toContain("All repositories");
+    expect(html).toContain("acme/jin.git");
+    expect(html).toContain("mendeleden/jin.git");
+  });
+
+  test("open conversation route renders nested detail tabs", () => {
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        conversationRoute: "detail",
+        selectedSubview: "timeline",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+        selectedConversationId: "desktop-child",
+        detail: makeConversationDetailView(),
+        trace: makeTraceView(),
+        tree: makeTreeView(),
+      }),
+    );
+
+    expect(html).toContain('data-conversation-surface="detail"');
+    expect(html).toContain("data-conversation-detail-route");
+    expect(html).toContain("Open Conversation");
+    expect(html).toContain("Conversation detail tabs");
+    expect(html).toContain("Messages");
     expect(html).toContain("Trace");
     expect(html).toContain("Tree");
-    expect(html).toContain("Metadata");
-    expect(html).toContain("Conversation ID");
-    expect(html).toContain("Trace ID");
-    expect(html).toContain("Spawned project summary");
-    expect(html).toContain("Conversation index");
+    expect(html).toContain("data-conversation-messages-view");
+    expect(html).toContain("data-message-role-summary");
+    expect(html).toContain("data-conversation-copy-strip");
+    expect(html).toContain('data-copy-field="conversation-id"');
+    expect(html).toContain('data-copy-field="trace-id"');
+    expect(html).toContain('data-copy-field="parent-id"');
+    expect(html).toContain('data-copy-field="source-path"');
+    expect(html).toContain("/tmp/desktop-child.jsonl");
+    expect(html).toContain('data-message-card="desktop-child-m1"');
+    expect(html).toContain('data-message-collapsed="false"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html.indexOf("data-conversation-copy-strip")).toBeLessThan(
+      html.indexOf("data-conversation-detail-tab"),
+    );
+    expect(html).toMatch(/<strong[^>]*>1<\/strong> user/);
+    expect(html).toMatch(/<strong[^>]*>1<\/strong> assistant/);
+    expect(html).toContain("Index");
+    expect(html).not.toContain("Trace summary");
+    expect(html).not.toContain("data-conversation-bottom-tray");
+  });
+
+  test("conversation index labels loaded rows when no aggregate total is available", () => {
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+      }),
+    );
+
+    expect(html).toContain("3 loaded");
+    expect(html).not.toContain("3 conversations loaded");
+    expect(html).not.toContain("data-conversation-stats");
+    expect(html).not.toContain("conversations indexed");
+  });
+
+  test("conversation index uses visible of total copy for aggregate totals", () => {
+    const library = makeConversationListView();
+    library.relationshipMix = [
+      { relationship: "root", conversations: 477 },
+      { relationship: "spawned", conversations: 929 },
+      { relationship: "compacted", conversations: 584 },
+    ];
+    library.totalCount = 1_990;
+    library.filteredCount = 1_990;
+    library.page = {
+      offset: 0,
+      limit: 100,
+      returned: 3,
+      hasMore: true,
+      nextOffset: 3,
+    };
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library,
+      }),
+    );
+
+    expect(html).toContain("3 shown of 1,990");
+    expect(html).not.toContain("3 visible of 1,990 conversations");
+    expect(html).toContain("<strong>929</strong>");
+    expect(html).toContain("<strong>584</strong>");
+    expect(html).not.toContain("data-conversation-stats");
   });
 
   test("home overview uses compact large numbers and keeps runtime paths in the sidebar", () => {
+    const homeWorkspaceSource = readFileSync(
+      new URL("../desktop/views/home/workspace.tsx", import.meta.url),
+      "utf8",
+    );
     const snapshot = makeSnapshot("running");
     if (!snapshot.data) {
       throw new Error("expected running snapshot data");
@@ -178,9 +475,10 @@ describe("desktop renderer", () => {
     expect(html).toContain("Cost");
     expect(html).toContain("Daily");
     expect(html).toContain("Monthly");
+    expect(countText(html, 'data-selected="true"')).toBeGreaterThanOrEqual(2);
     expect(html).toContain("Previous usage window");
     expect(html).toContain("Next usage window");
-    expect(html).toContain("usage-area-chart");
+    expect(html).toContain('data-usage-window-label="true"');
     expect(html).not.toContain("usage-area-static-chart");
     expect(html).not.toContain("usage-area-static-fill");
     expect(html).toContain("Daily token usage by adapter");
@@ -193,10 +491,23 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("Latest conversations");
     expect(html).not.toContain("Open library");
     expect(html).not.toContain("Current total");
-    expect(html).toContain("usage-chart");
+    expect(html).toContain('data-dashboard-grid="home"');
+    expect(html).toContain('data-layout-schema="home-grid-v1"');
+    expect(html).toContain('data-layout-columns="12"');
+    expect(html).toContain('data-layout-mode="view"');
+    expect(html).toContain('data-panel-id="usage"');
+    expect(html).toContain('data-panel-id="projects"');
+    expect(html).toContain('data-panel-id="harnesses"');
+    expect(html).toContain("col-start-1 row-start-1 col-span-12 row-span-5");
+    expect(html).toContain("col-start-1 row-start-6 col-span-7 row-span-3");
+    expect(html).toContain("col-start-8 row-start-6 col-span-5 row-span-3");
     expect(html).toContain("Project Stacks");
     expect(html).toContain("Harness Timeline");
     expect(html).not.toContain('data-home-flow-graph="mission-control"');
+    expect(html).toContain("data-home-layout-toolbar");
+    expect(html).toContain("Edit layout");
+    expect(homeWorkspaceSource).toContain("LayoutEditorToolbar");
+    expect(homeWorkspaceSource).toContain('surface="home"');
     expect(html).toContain("Settings");
     expect(html).not.toContain("sidebar-runtime-details");
     expect(html).not.toContain("conversations across");
@@ -219,21 +530,26 @@ describe("desktop renderer", () => {
 
     expect(html).toContain('data-usage-chart-source="snapshot"');
     expect(html).toContain("Current activity snapshot");
-    expect(html).toContain("Current snapshot");
     expect(html).toContain("claude-code");
     expect(html).toContain("244");
     expect(html).toContain("Snapshot-derived token usage by adapter");
-    expect(html).toContain("recharts-wrapper usage-area-chart");
+    expect(html).toContain("recharts-wrapper");
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(chartSource).not.toContain("Tooltip as RechartsTooltip");
+    expect(chartSource).not.toContain("<RechartsTooltip");
     expect(html).toContain('title="Snapshot: 3 conversations"');
     expect(html).toContain('title="Current: 3 conversations"');
     expect(html).not.toContain("usage-area-static-layer");
     const kpis = extractUsageChartKpis(html);
-    expect(countText(kpis, "<strong>244</strong>")).toBe(1);
-    expect(kpis).toContain("<strong>244</strong>");
+    expect(countText(kpis, ">244</strong>")).toBe(1);
+    expect(kpis).toContain(">244</strong>");
     expect(kpis).toContain("tokens");
-    expect(kpis).toContain("<strong>3</strong>");
+    expect(kpis).toContain(">3</strong>");
     expect(kpis).toContain("conversations");
-    expect(kpis).toContain("<strong>$1.32</strong>");
+    expect(kpis).toContain(">$1.32</strong>");
     expect(kpis).toContain("est. cost");
     expect(kpis).not.toContain("<strong>488</strong>");
     expect(kpis).not.toContain("$2.64");
@@ -298,34 +614,366 @@ describe("desktop renderer", () => {
       }),
     );
 
-    const callout = extractUsageCallout(html);
-    expect(extractUsageChartKpis(html)).toContain("<strong>269</strong>");
-    expect(callout).toContain("244");
-    expect(callout).toContain("25");
-    expect(countText(callout, "claude-code")).toBe(1);
+    expect(extractUsageChartKpis(html)).toContain(">269</strong>");
+    expect(html).not.toContain('data-usage-callout="latest"');
+    expect(html).toContain("claude-code");
   });
 
-  test("desktop home CSS reserves visible pulse panel height", () => {
-    const css = readFileSync(
-      new URL("../desktop/styles.css", import.meta.url),
+  test("desktop home styling is Tailwind-owned with only base CSS globals", () => {
+    const css = readDesktopCssSource();
+    const theme = readDesktopThemeSource();
+    const gridSource = readFileSync(
+      new URL("../desktop/views/home/dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const gridPlacementSource = readFileSync(
+      new URL("../desktop/layout/grid-placement.ts", import.meta.url),
+      "utf8",
+    );
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const panelsSource = readFileSync(
+      new URL("../desktop/views/home/panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
       "utf8",
     );
 
-    expect(css).toContain(".home-pulse-panel");
-    expect(css).toContain(".workspace-home > .compact-panel.home-pulse-panel");
-    expect(css).toContain("grid-column: 1 / -1;");
-    expect(css).toContain("min-height: 448px;");
-    expect(css).toContain(".home-project-panel");
-    expect(css).toContain(".home-adapter-panel");
-    expect(css).toContain(".usage-chart-controls");
-    expect(css).toContain(".usage-period-toggle");
-    expect(css).toContain(".usage-window-controls");
-    expect(css).toContain(".usage-area-chart-shell");
-    expect(css).toContain(".usage-area-chart");
+    expect(css).toContain('@import "tailwindcss"');
+    expect(css).toContain('@import "./theme.css"');
+    expect(css).toContain("background: var(--app-bg)");
+    expect(theme).toContain("--radius-panel");
+    expect(theme).toContain("--accent:");
+    expect(theme).toContain(':root[data-theme="light"]');
+    expect(theme).toContain("--sidebar-bg:");
+    expect(theme).toContain("--picker-selected-bg:");
+    expect(theme).toContain("--control-selected-bg:");
+    expect(theme).toContain("--home-usage-panel-bg:");
+    expect(theme).toContain("--layout-edit-handle-bg:");
+    expect(theme).toContain("--layout-edit-handle-text: #0e4e70");
+    expect(css).not.toContain(".home-pulse-panel");
+    expect(css).not.toContain(".dashboard-grid");
+    expect(css).not.toContain(".usage-chart-controls");
+    expect(css.split("\n").length).toBeLessThan(90);
+    expect(editableGridSource).toContain("auto-rows-[80px]");
+    expect(editableGridSource).toContain("data-layout-edit-grid");
+    expect(editableGridSource).toContain("--layout-edit-handle-bg");
+    expect(editableGridSource).toContain("--layout-edit-grid-bg");
+    expect(editableGridSource).toContain('size="icon"');
+    expect(editableGridSource).not.toContain("bg-[rgba(8,12,19,0.92)]");
+    expect(editableGridSource).not.toContain("text-[var(--text)] shadow-[0_10px_22px_rgba");
+    expect(gridSource).toContain("desktopGridPanelPlacementClassName");
+    expect(gridPlacementSource).toContain("col-start-1");
+    expect(gridPlacementSource).toContain("row-span-5");
+    expect(gridSource).not.toContain("home-layout-");
+    expect(editableGridSource).not.toContain("home-layout-");
+    expect(panelsSource).not.toContain("min-h-[448px]");
+    expect(panelsSource).toContain("data-home-panel-density");
+    expect(panelsSource).toContain("data-home-panel-stack-below");
+    expect(panelsSource).toContain("homePanelItemLimit");
+    expect(chartSource).toContain("h-[168px]");
+    expect(chartSource).toContain("h-[252px]");
+    expect(chartSource).toContain("h-[318px]");
+    expect(chartSource).toContain("max-[1220px]:grid-cols-1");
     expect(css).not.toContain(".usage-area-static-chart");
     expect(css).not.toContain(".usage-area-static-fill");
-    expect(css).toContain(".usage-session-rail");
-    expect(css).toContain("height: 252px;");
+  });
+
+  test("desktop home avoids direct inline styles for local visual sizing", () => {
+    const shellSource = readFileSync(
+      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      "utf8",
+    );
+    const homeWorkspaceSource = readFileSync(
+      new URL("../desktop/views/home/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const layoutPreferencesSource = readFileSync(
+      new URL("../desktop/layout/preferences.tsx", import.meta.url),
+      "utf8",
+    );
+    const panelsSource = readFileSync(
+      new URL("../desktop/views/home/panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const chartSource = readFileSync(
+      new URL("../desktop/views/home/token-usage-chart.tsx", import.meta.url),
+      "utf8",
+    );
+
+    for (const source of [
+      shellSource,
+      homeWorkspaceSource,
+      editableGridSource,
+      layoutPreferencesSource,
+      panelsSource,
+      chartSource,
+    ]) {
+      expect(source).not.toContain("style={{");
+      expect(source).not.toContain("<i style");
+      expect(source).not.toContain("wrapperStyle");
+    }
+
+    expect(shellSource).not.toContain("function HomePulsePanel");
+    expect(shellSource).toContain('from "../views/workspace-switcher"');
+    expect(homeWorkspaceSource).toContain('from "./panels"');
+    expect(panelsSource).toContain("usageWidthClass");
+    expect(panelsSource).toContain("usageHeightClass");
+  });
+
+  test("desktop home usage visuals resolve to the supported class vocabulary", () => {
+    expect(usageWidthClass(0, 100, 7)).toBe("w-[7%]");
+    expect(usageWidthClass(8, 100, 7)).toBe("w-[10%]");
+    expect(usageWidthClass(100, 100, 7)).toBe("w-[100%]");
+    expect(usageHeightClass(0, 100, 2)).toBe("h-[2%]");
+    expect(usageHeightClass(1, 100, 12)).toBe("h-[12%]");
+    expect(usageHeightClass(99, 100, 10)).toBe("h-[100%]");
+    expect(usageColorClassForColor("#89B4FF")).toBe("bg-[#89b4ff]");
+  });
+
+  test("dashboard grid normalizes layout data before rendering placement metadata", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        items: [
+          {
+            panelId: "usage",
+            children: createElement("section"),
+          },
+        ],
+        layout: [{ panelId: "usage", x: 99, y: 99, w: 2, h: 1 }],
+      }),
+    );
+
+    expect(html).toContain('data-layout-x="6"');
+    expect(html).toContain('data-layout-y="8"');
+    expect(html).toContain('data-layout-w="6"');
+    expect(html).toContain('data-layout-h="4"');
+    expect(html).toContain("col-start-7");
+    expect(html).toContain("row-start-9");
+    expect(html).toContain("col-span-6");
+    expect(html).toContain("row-span-4");
+  });
+
+  test("dashboard grid passes normalized layout context to panel renderers", () => {
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        items: [
+          {
+            panelId: "harnesses",
+            children: ({ panel }: DashboardGridItemContext) =>
+              createElement("section", {
+                "data-render-density": panel.density,
+                "data-render-height": panel.height,
+                "data-render-layout": `${panel.layout.w}x${panel.layout.h}`,
+                "data-render-stack-below": String(panel.stackedBelowPx),
+                "data-render-width": panel.width,
+              }),
+          },
+        ],
+        layout: [{ panelId: "harnesses", x: 8, y: 5, w: 4, h: 3 }],
+      }),
+    );
+
+    expect(html).toContain('data-render-density="compact"');
+    expect(html).toContain('data-render-height="short"');
+    expect(html).toContain('data-render-stack-below="1220"');
+    expect(html).toContain('data-render-width="narrow"');
+    expect(html).toContain('data-render-layout="4x3"');
+  });
+
+  test("dashboard grid edit mode exposes CSP-safe move and resize handles", () => {
+    const editableGridSource = readFileSync(
+      new URL("../desktop/layout/editable-dashboard-grid.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
+    const html = renderToStaticMarkup(
+      createElement(DashboardGrid, {
+        editable: true,
+        items: [
+          {
+            panelId: "usage",
+            children: createElement("section"),
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain('data-layout-mode="edit"');
+    expect(html).toContain('data-layout-interaction-mode="idle"');
+    expect(html).toContain('data-layout-edit-grid="true"');
+    expect(html).toContain('data-layout-active-mode="idle"');
+    expect(html).toContain('data-layout-edit-active="false"');
+    expect(html).toContain('data-layout-edit-handle="move"');
+    expect(html).toContain('data-layout-edit-handle="resize"');
+    expect(html).toContain("Move Token &amp; Cost Observatory");
+    expect(html).toContain("Resize Token &amp; Cost Observatory");
+    expect(html).toContain("bg-[var(--layout-edit-handle-bg)]");
+    expect(html).toContain("text-[var(--layout-edit-handle-text)]");
+    expect(editableGridSource).toContain("outline-[var(--layout-edit-panel-outline)]");
+    expect(editableGridSource).toContain("after:border-[var(--layout-edit-handle-corner)]");
+    expect(themeSource).toContain("--layout-edit-handle-active-bg");
+    expect(html).not.toContain("style=");
+    expect(html).not.toContain("react-grid-layout");
+  });
+
+  test("home layout editor keeps draft changes local until explicit save", () => {
+    withFakeWindowLocalStorage(null, (storage) => {
+      const preferences = renderLayoutPreferencesProbe();
+      const movedLayout: HomePanelLayout[] = [
+        { panelId: "usage", x: 0, y: 0, w: 12, h: 4 },
+        { panelId: "projects", x: 0, y: 4, w: 7, h: 3 },
+        { panelId: "harnesses", x: 7, y: 4, w: 5, h: 3 },
+      ];
+
+      let editor = createHomeLayoutEditorState(preferences.homeLayout);
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "edit",
+      });
+      editor = homeLayoutEditorReducer(editor, {
+        layout: movedLayout,
+        type: "draft",
+      });
+
+      expect(editor.editing).toBe(true);
+      expect(editor.draftLayout).toEqual(movedLayout);
+      expect(storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY)).toBeNull();
+
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "cancel",
+      });
+
+      expect(editor.editing).toBe(false);
+      expect(editor.draftLayout).toEqual(DEFAULT_HOME_PANEL_LAYOUT);
+      expect(storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY)).toBeNull();
+
+      editor = homeLayoutEditorReducer(editor, {
+        homeLayout: preferences.homeLayout,
+        type: "edit",
+      });
+      editor = homeLayoutEditorReducer(editor, {
+        layout: movedLayout,
+        type: "draft",
+      });
+      preferences.setHomeLayout(editor.draftLayout);
+      editor = homeLayoutEditorReducer(editor, { type: "saved" });
+
+      const stored = JSON.parse(
+        storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY) ?? "{}",
+      );
+      expect(editor.editing).toBe(false);
+      expect(stored.home.schema).toBe(HOME_LAYOUT_SCHEMA_VERSION);
+      expect(stored.home.panels).toEqual(movedLayout);
+    });
+  });
+
+  test("home layout preferences reject overlapping stored layouts", () => {
+    withFakeWindowLocalStorage(
+      JSON.stringify({
+        home: {
+          panels: [
+            { panelId: "usage", x: 0, y: 0, w: 12, h: 12 },
+            { panelId: "projects", x: 0, y: 12, w: 7, h: 3 },
+            { panelId: "harnesses", x: 7, y: 12, w: 5, h: 3 },
+          ],
+          schema: HOME_LAYOUT_SCHEMA_VERSION,
+        },
+      }),
+      () => {
+        const preferences = renderLayoutPreferencesProbe();
+        expect(preferences.homeLayout).toEqual(DEFAULT_HOME_PANEL_LAYOUT);
+      },
+    );
+  });
+
+  test("settings workspace uses the editable grid with side-by-side defaults", () => {
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const html = withFakeWindowLocalStorage(null, () =>
+      renderToStaticMarkup(
+        createElement(
+          DesktopPreferencesProvider,
+          null,
+          createElement(
+            DesktopLayoutPreferencesProvider,
+            null,
+            createElement(SettingsWorkspace, {
+              state: makeState({
+                activeView: "settings",
+                snapshot: makeSnapshot("running"),
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    expect(settingsSource).toContain("SettingsDashboardGrid");
+    expect(settingsSource).toContain("LayoutEditorToolbar");
+    expect(html).toContain('data-dashboard-grid="settings"');
+    expect(html).toContain('data-layout-schema="settings-grid-v1"');
+    expect(html).toContain('data-layout-columns="12"');
+    expect(html).toContain('data-layout-mode="view"');
+    expect(html).toContain('data-settings-layout-toolbar="true"');
+    expect(html).toContain('data-panel-id="theme"');
+    expect(html).toContain('data-panel-id="refresh"');
+    expect(html).toContain('data-panel-id="runtime"');
+    expect(html).toContain('data-panel-id="paths"');
+    expect(html).toContain("col-start-1 row-start-1 col-span-6 row-span-3");
+    expect(html).toContain("col-start-7 row-start-1 col-span-6 row-span-3");
+    expect(html).toContain("col-start-1 row-start-4 col-span-6 row-span-3");
+    expect(html).toContain("col-start-7 row-start-4 col-span-6 row-span-3");
+    expect(html).toContain("Edit layout");
+  });
+
+  test("settings layout preferences persist and reject overlapping layouts", () => {
+    withFakeWindowLocalStorage(null, (storage) => {
+      const preferences = renderLayoutPreferencesProbe();
+      const movedLayout: SettingsPanelLayout[] = [
+        { panelId: "theme", x: 0, y: 0, w: 4, h: 3 },
+        { panelId: "refresh", x: 4, y: 0, w: 4, h: 3 },
+        { panelId: "runtime", x: 8, y: 0, w: 4, h: 3 },
+        { panelId: "paths", x: 0, y: 3, w: 12, h: 3 },
+      ];
+
+      preferences.setSettingsLayout(movedLayout);
+
+      const stored = JSON.parse(
+        storage.getItem(DESKTOP_LAYOUT_STORAGE_KEY) ?? "{}",
+      );
+      expect(stored.settings.schema).toBe(SETTINGS_LAYOUT_SCHEMA_VERSION);
+      expect(stored.settings.panels).toEqual(movedLayout);
+    });
+
+    withFakeWindowLocalStorage(
+      JSON.stringify({
+        settings: {
+          panels: [
+            { panelId: "theme", x: 0, y: 0, w: 6, h: 3 },
+            { panelId: "refresh", x: 0, y: 0, w: 6, h: 3 },
+            { panelId: "runtime", x: 0, y: 3, w: 6, h: 3 },
+            { panelId: "paths", x: 6, y: 3, w: 6, h: 3 },
+          ],
+          schema: SETTINGS_LAYOUT_SCHEMA_VERSION,
+        },
+      }),
+      () => {
+        const preferences = renderLayoutPreferencesProbe();
+        expect(preferences.settingsLayout).toEqual(DEFAULT_SETTINGS_PANEL_LAYOUT);
+      },
+    );
   });
 
   test("sidebar runtime card omits traces and keeps cost as the final metric", () => {
@@ -430,10 +1078,242 @@ describe("desktop renderer", () => {
     for (const html of [conversationsHtml, logsHtml, settingsHtml]) {
       expect(html).not.toContain("data-legacy-html-view");
     }
-    expect(conversationsHtml).toContain("Conversation index");
-    expect(conversationsHtml).toContain("Metadata");
+    expect(conversationsHtml).toContain("Conversation Index");
+    expect(conversationsHtml).toContain("Selected conversation metadata");
     expect(logsHtml).toContain("Daemon log tail");
+    expect(settingsHtml).toContain("Shell refresh");
+    expect(settingsHtml).toContain("Every 30s");
+    expect(settingsHtml).toContain("Desktop auto-refresh interval");
     expect(settingsHtml).toContain("Daemon status");
+  });
+
+  test("desktop app shell delegates workspace surfaces to modules", () => {
+    const shellSource = readFileSync(
+      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      "utf8",
+    );
+    const workspaceSwitcherSource = readFileSync(
+      new URL("../desktop/views/workspace-switcher.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(shellSource).toContain("function AppShell");
+    expect(shellSource).toContain("ActiveWorkspace");
+    expect(shellSource).not.toContain("function HomeWorkspace");
+    expect(shellSource).not.toContain("function ConversationsWorkspace");
+    expect(shellSource).not.toContain("function RoutingWorkspace");
+    expect(shellSource).not.toContain("function LogsWorkspace");
+    expect(shellSource).not.toContain("function SettingsWorkspace");
+    expect(workspaceSwitcherSource).toContain("./home/workspace");
+    expect(workspaceSwitcherSource).toContain("./conversations/workspace");
+    expect(workspaceSwitcherSource).toContain("./routing/workspace");
+    expect(workspaceSwitcherSource).toContain("./logs/workspace");
+    expect(workspaceSwitcherSource).toContain("./settings/workspace");
+  });
+
+  test("desktop workspace runtime lifecycle handling stays centralized", () => {
+    const statusPanelsSource = readFileSync(
+      new URL("../desktop/components/shell/status-panels.tsx", import.meta.url),
+      "utf8",
+    );
+    const surfaceSources = [
+      "../desktop/views/home/workspace.tsx",
+      "../desktop/views/conversations/workspace.tsx",
+      "../desktop/views/routing/workspace.tsx",
+      "../desktop/views/logs/workspace.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+
+    expect(statusPanelsSource).toContain("function RuntimeStateGate");
+    expect(statusPanelsSource).toContain("isTransitionalRuntimeState");
+
+    for (const source of surfaceSources) {
+      expect(source).toContain("RuntimeStateGate");
+      expect(source).not.toContain("isTransitionalRuntimeState");
+      expect(source).not.toContain('runtime.state === "stopped"');
+    }
+  });
+
+  test("desktop renderer polls lifecycle snapshots so external daemon changes reconcile", () => {
+    const rendererSource = readFileSync(
+      new URL("../desktop/react-renderer.tsx", import.meta.url),
+      "utf8",
+    );
+    const preferencesSource = readFileSync(
+      new URL("../desktop/preferences.tsx", import.meta.url),
+      "utf8",
+    );
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(rendererSource).toContain("DesktopPreferencesProvider");
+    expect(rendererSource).toContain("refreshIntervalMs");
+    expect(rendererSource).toContain("window.setInterval");
+    expect(rendererSource).toContain("preserveMessage: true");
+    expect(rendererSource).toContain("window.clearInterval");
+    expect(rendererSource).not.toContain("DESKTOP_LIFECYCLE_REFRESH_MS");
+    expect(normalizeSourceText(preferencesSource)).toContain(
+      "DEFAULT_DESKTOP_REFRESH_INTERVAL_MS: DesktopRefreshIntervalMs =\n  30_000",
+    );
+    expect(preferencesSource).toContain("localStorage");
+    expect(settingsSource).toContain("DESKTOP_REFRESH_INTERVAL_OPTIONS");
+    expect(settingsSource).toContain("Shell refresh");
+  });
+
+  test("desktop appearance theme is preference-owned and rendered in Settings", () => {
+    const rendererSource = readFileSync(
+      new URL("../desktop/react-renderer.tsx", import.meta.url),
+      "utf8",
+    );
+    const preferencesSource = readFileSync(
+      new URL("../desktop/preferences.tsx", import.meta.url),
+      "utf8",
+    );
+    const settingsSource = readFileSync(
+      new URL("../desktop/views/settings/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+
+    withFakeWindowLocalStorage(
+      {
+        "jin.desktop.themeMode": "light",
+      },
+      (storage) => {
+        const preferences = renderDesktopPreferencesProbe();
+        expect(preferences.themeMode).toBe("light");
+        preferences.setThemeMode("dark");
+        expect(storage.getItem("jin.desktop.themeMode")).toBe("dark");
+      },
+    );
+
+    const html = withFakeWindowLocalStorage(
+      {
+        "jin.desktop.themeMode": "light",
+      },
+      () =>
+        renderToStaticMarkup(
+          createElement(
+            DesktopPreferencesProvider,
+            null,
+            createElement(SettingsWorkspace, {
+              state: makeState({
+                activeView: "settings",
+                snapshot: makeSnapshot("running"),
+              }),
+            }),
+          ),
+        ),
+    );
+
+    expect(rendererSource).toContain("data-theme={themeMode}");
+    expect(preferencesSource).toContain("DESKTOP_THEME_MODE_STORAGE_KEY");
+    expect(preferencesSource).toContain("applyDesktopThemeMode");
+    expect(settingsSource).toContain("ThemeModeToggle");
+    expect(settingsSource).toContain("DESKTOP_THEME_MODE_OPTIONS");
+    expect(html).toContain('data-theme-mode-toggle="true"');
+    expect(html).toContain('aria-label="Desktop theme mode"');
+    expect(html).toContain("Light");
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  test("desktop topbar exposes a draggable Electron titlebar region", () => {
+    const source = readFileSync(
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("[-webkit-app-region:drag]");
+    expect(source).toContain("[-webkit-app-region:no-drag]");
+  });
+
+  test("desktop shell chrome keeps branding out of the sidebar and uses semantic runtime icons", () => {
+    const source = readFileSync(
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
+      "utf8",
+    );
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+    const collapsedHtml = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "home",
+        sidebarCollapsed: true,
+        snapshot: makeSnapshot("running"),
+      }),
+    );
+
+    const sidebar = extractReactSidebar(html);
+
+    expect(source).not.toContain("JIN_APP_ICON_SRC");
+    expect(source).toContain("PanelLeftDashed");
+    expect(source).toContain("CircleStop");
+    expect(source).not.toContain("PowerOff");
+    expect(source).toContain("RotateCcw");
+    expect(html).toContain('data-sidebar-brand="true"');
+    expect(sidebar).not.toContain('src="./assets/jin-app-icon.png"');
+    expect(sidebar).not.toContain(">Jin</strong>");
+    expect(sidebar).not.toContain(">Desktop</span>");
+    expect(html).toContain("Collapse sidebar");
+    expect(html).toContain('aria-label="Restart Jin"');
+    expect(html).toContain('aria-label="Stop Jin"');
+    expect(html).toContain('aria-label="Refresh shell"');
+    expect(collapsedHtml).toContain('data-sidebar-runtime-collapsed="true"');
+    expect(collapsedHtml).toContain('aria-label="Runtime running"');
+    expect(collapsedHtml).not.toContain('data-sidebar-metric="cost"');
+  });
+
+  test("desktop shared UI primitives replace legacy global control classes", () => {
+    const primitiveSources = [
+      "../desktop/ui/button.tsx",
+      "../desktop/ui/badge.tsx",
+      "../desktop/ui/panel.tsx",
+      "../desktop/ui/primitives.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+    const migratedSources = [
+      "../desktop/components/app-shell.tsx",
+      "../desktop/components/shell/frame.tsx",
+      "../desktop/components/shell/status-panels.tsx",
+      "../desktop/views/conversations/workspace.tsx",
+      "../desktop/views/logs/workspace.tsx",
+      "../desktop/views/settings/workspace.tsx",
+      "../desktop/views/home/token-usage-chart.tsx",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+    const css = readDesktopCssSource();
+    const themeCss = readDesktopThemeSource();
+
+    expect(primitiveSources.join("\n")).toContain("function StatusBadge");
+    expect(primitiveSources.join("\n")).toContain("function PanelHeader");
+    expect(primitiveSources.join("\n")).toContain("function FieldGrid");
+    expect(primitiveSources.join("\n")).toContain("function SegmentedControl");
+    expect(primitiveSources.join("\n")).toContain("data-[selected=true]:bg-[var(--picker-selected-bg)]");
+    expect(primitiveSources.join("\n")).toContain("data-[selected=true]:text-[var(--picker-selected-text)]");
+    expect(primitiveSources.join("\n")).toContain("0_0_0_1px_var(--picker-selected-border)");
+    expect(primitiveSources.join("\n")).toContain("bg-[var(--picker-selected-bg)]");
+    expect(primitiveSources.join("\n")).not.toContain("bg-transparent");
+    expect(migratedSources.join("\n")).toContain("bg-[var(--picker-selected-bg)]");
+    expect(migratedSources.join("\n")).not.toContain("text-[var(--control-selected-text)]");
+    expect(themeCss).toContain("--picker-selected-border");
+    expect(themeCss).toContain("--picker-selected-bg");
+    expect(themeCss).not.toContain("--picker-selected-bg: linear-gradient");
+    expect(themeCss).toContain("--picker-selected-text: #ffffff");
+    expect(themeCss).toContain("--control-selected-border");
+    expect(themeCss).toContain("--control-selected-bg: var(--picker-selected-bg)");
+
+    for (const source of migratedSources) {
+      expect(source).not.toContain("toolbar-button");
+      expect(source).not.toContain("status-badge");
+      expect(source).not.toContain("runtime-grid");
+      expect(source).not.toContain("runtime-field");
+    }
+
+    expect(css).not.toContain(".toolbar-button");
+    expect(css).not.toContain(".status-badge");
+    expect(css).not.toContain(".runtime-grid");
+    expect(css).not.toContain(".runtime-field");
   });
 
   test("react sidebar cost uses a focusable popover affordance with the full estimated amount", () => {
@@ -457,20 +1337,37 @@ describe("desktop renderer", () => {
     expect(costMetric).toContain("Cost (estimated)");
     expect(costMetric).toContain("$1,234,567.89");
     expect(costMetric).toContain('data-cost-popover-trigger="estimated-cost"');
+    expect(costMetric).toContain('data-floating-tooltip-trigger="true"');
     expect(costMetric).toContain(ESTIMATED_COST_HELP);
     expect(html).not.toContain("sidebar-cost-tooltip-content");
-    const css = readFileSync(
-      new URL("../desktop/styles.css", import.meta.url),
-      "utf8",
-    );
-    expect(css).toContain(".sidebar-cost-tooltip-content");
-    expect(css).toContain(".sidebar-cost-tooltip-arrow");
+    const css = readDesktopCssSource();
+    const themeCss = readDesktopThemeSource();
+    expect(themeCss).toContain("--tooltip-border");
+    expect(themeCss).toContain("--tooltip-shadow");
+    expect(css).not.toContain(".sidebar-cost-tooltip-content");
+    expect(css).not.toContain(".sidebar-cost-tooltip-arrow");
     const source = readFileSync(
-      new URL("../desktop/components/app-shell.tsx", import.meta.url),
+      new URL("../desktop/components/shell/frame.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("@radix-ui/react-tooltip");
-    expect(source).toContain("RadixTooltip.Content");
+    expect(source).not.toContain("@radix-ui/react-tooltip");
+    expect(source).not.toContain("RadixTooltip");
+    expect(source).toContain("FloatingTooltip");
+    expect(source).not.toContain("left-full");
+    expect(source).not.toContain("group-focus-within:block");
+    const tooltipSource = readFileSync(
+      new URL("../desktop/ui/tooltip.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(tooltipSource).toContain("createPortal");
+    expect(tooltipSource).toContain("fixed z-[10000]");
+    expect(tooltipSource).toContain('window.addEventListener("scroll"');
+    expect(tooltipSource).toContain("data-floating-tooltip");
+    const packageJson = readFileSync(
+      new URL("../package.json", import.meta.url),
+      "utf8",
+    );
+    expect(packageJson).not.toContain("@radix-ui/react-tooltip");
     expect(costMetric.indexOf("Cost (estimated)")).toBeLessThan(
       costMetric.indexOf("$1,234,567.89"),
     );
@@ -495,7 +1392,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("/tmp/jin/jin.log");
     expect(html).toContain("Local daemon query socket ready.");
     expect(html).toContain("WARN watcher restart delayed.");
-    expect(html).toContain("log-line warning");
+    expect(html).toContain('data-log-severity="warning"');
   });
 
   test("routing workspace renders project-to-sink graph state", () => {
@@ -532,12 +1429,12 @@ describe("desktop renderer", () => {
     expect(html).toContain("Local-only conversations stay in project cards");
     expect(html).not.toContain("Dashed amber = unrouted conversations");
     expect(html).not.toContain("routing-flow-path muted");
-    expect(countText(html, "Refresh")).toBe(1);
+    expect(countText(html, ">Refresh<")).toBe(1);
     expect(extractTopbar(html)).toContain("Refresh");
     expect(extractRoutingWorkspace(html)).not.toContain("Refresh");
     const routingFlowStrokeWidths = Array.from(
       html.matchAll(
-        /<path class="routing-flow-path(?: muted)?"[^>]*stroke-width="([^"]+)"/g,
+        /<path[^>]*data-routing-flow-path="true"[^>]*stroke-width="([^"]+)"/g,
       ),
       (match) => match[1],
     );
@@ -546,6 +1443,30 @@ describe("desktop renderer", () => {
     expect(html).toContain("Route rules");
     expect(html).toContain("remote=github.com/acme/*");
     expect(html).toContain("enabled");
+  });
+
+  test("routing workspace colors are delegated to desktop theme tokens", () => {
+    const workspaceSource = readFileSync(
+      new URL("../desktop/views/routing/workspace.tsx", import.meta.url),
+      "utf8",
+    );
+    const graphSource = readFileSync(
+      new URL("../desktop/graph-components.tsx", import.meta.url),
+      "utf8",
+    );
+    const themeSource = readDesktopThemeSource();
+    const routingSources = `${workspaceSource}\n${graphSource}`;
+
+    expect(routingSources).toContain("--routing-flow-panel-bg");
+    expect(routingSources).toContain("--routing-graph-bg");
+    expect(routingSources).toContain("--routing-node-bg");
+    expect(routingSources).toContain("--routing-tooltip-bg");
+    expect(routingSources).toContain("--routing-pill-bg");
+    expect(routingSources).not.toContain("bg-white/[0.03]");
+    expect(routingSources).not.toContain("rgba(8,12,19,0.97)");
+    expect(themeSource).toContain(":root[data-theme=\"light\"]");
+    expect(themeSource).toContain("--routing-flow-panel-bg");
+    expect(themeSource).toContain("--routing-tooltip-shadow");
   });
 
   test("routing graph bounds long project and sink labels with detail affordances", () => {
@@ -635,7 +1556,7 @@ describe("desktop renderer", () => {
     expect(html).not.toContain("routing-flow-path muted");
     expect(html).not.toContain("stroke-dasharray");
     expect(
-      Array.from(html.matchAll(/<path class="routing-flow-path"/g)),
+      Array.from(html.matchAll(/data-routing-flow-path="true"/g)),
     ).toHaveLength(2);
   });
 
@@ -685,11 +1606,11 @@ describe("desktop renderer", () => {
     expect(renderDesktopReactShellToStaticMarkup(snapshots.at(-1)!)).toContain("Restart Jin Desktop");
   });
 
-  test("conversation inspector can render as a collapsed side rail", () => {
+  test("conversation bottom tray uses the collapsed sidebar offset", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
         activeView: "conversations",
-        inspectorCollapsed: true,
+        sidebarCollapsed: true,
         snapshot: makeSnapshot("running"),
         library: makeConversationListView(),
         selectedConversationId: "desktop-child",
@@ -699,10 +1620,37 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("inspector-collapsed");
-    expect(html).toContain("inspector-rail");
-    expect(html).toContain("Expand metadata inspector");
-    expect(html).toContain("Metadata");
+    expect(html).toContain('data-conversation-surface="ops-index"');
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("left-[82px]");
+    expect(html).not.toContain("data-inspector-rail");
+  });
+
+  test("conversation bottom tray renders the full selected message timeline", () => {
+    const detail = makeConversationDetailView();
+    detail.messages = Array.from({ length: 7 }, (_, index) =>
+      makeMessage(`desktop-child-m${index + 1}`, {
+        content: `Tray message ${index + 1}`,
+        role: index % 2 === 0 ? "user" : "assistant",
+        sequence: index + 1,
+      }),
+    );
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library: makeConversationListView(),
+        selectedConversationId: "desktop-child",
+        detail,
+        trace: makeTraceView(),
+        tree: makeTreeView(),
+      }),
+    );
+
+    expect(html).toContain("data-conversation-bottom-tray");
+    expect(html).toContain("Tray message 1");
+    expect(html).toContain("Tray message 7");
   });
 
   test("home omits legacy collapsible stats bars from the primary dashboard", () => {
@@ -743,7 +1691,10 @@ describe("desktop renderer", () => {
     expect(html).toContain("Desktop root conversation");
     expect(html).toContain("Spawned project summary");
     expect(html).toContain("forked");
-    expect(html).toContain("trace-row");
+    expect(html).toContain("data-trace-row");
+    expect(html).toContain("data-trace-action");
+    expect(html).toContain("View conversation");
+    expect(html).toContain('data-trace-row-selected="true"');
   });
 
   test("incompatible desktop protocol renders an update-first state", () => {
@@ -775,10 +1726,11 @@ describe("desktop renderer", () => {
 });
 
 function extractSidebarRuntimeMetrics(html: string): string {
-  const start = html.indexOf('<div class="sidebar-metrics">');
-  if (start < 0) {
+  const marker = html.indexOf("data-sidebar-metrics");
+  if (marker < 0) {
     throw new Error("expected sidebar runtime metrics");
   }
+  const start = html.lastIndexOf("<div", marker);
   const end = html.indexOf("</section>", start);
   if (end < 0) {
     throw new Error("expected sidebar runtime section end");
@@ -788,13 +1740,13 @@ function extractSidebarRuntimeMetrics(html: string): string {
 
 function extractMetricLabels(html: string): string[] {
   return Array.from(
-    html.matchAll(/<span class="sidebar-metric-label">([^<]+)(?:<|<\/span>)/g),
+    html.matchAll(/<span[^>]*data-sidebar-metric-label="true"[^>]*>([^<]+)(?:<|<\/span>)/g),
     (match) => (match[1] ?? "").trim(),
   );
 }
 
 function extractTopbar(html: string): string {
-  const match = html.match(/<header class="topbar">[\s\S]*?<\/header>/);
+  const match = html.match(/<header[^>]*data-topbar="true"[\s\S]*?<\/header>/);
   if (!match) {
     throw new Error("expected topbar");
   }
@@ -802,7 +1754,7 @@ function extractTopbar(html: string): string {
 }
 
 function extractReactCostMetric(html: string): string {
-  const index = html.indexOf("sidebar-metric sidebar-metric-cost");
+  const index = html.indexOf('data-sidebar-metric="cost"');
   if (index < 0) {
     throw new Error("expected react sidebar cost metric");
   }
@@ -810,7 +1762,7 @@ function extractReactCostMetric(html: string): string {
 }
 
 function extractReactSidebar(html: string): string {
-  const match = html.match(/<aside class="sidebar [\s\S]*?<\/aside>/);
+  const match = html.match(/<aside[^>]*data-sidebar="true"[\s\S]*?<\/aside>/);
   if (!match) {
     throw new Error("expected react sidebar");
   }
@@ -818,7 +1770,7 @@ function extractReactSidebar(html: string): string {
 }
 
 function extractRoutingWorkspace(html: string): string {
-  const match = html.match(/<section class="workspace-routing">[\s\S]*?<\/main>/);
+  const match = html.match(/<section[^>]*data-routing-workspace="true"[\s\S]*?<\/main>/);
   if (!match) {
     throw new Error("expected routing workspace");
   }
@@ -826,19 +1778,9 @@ function extractRoutingWorkspace(html: string): string {
 }
 
 function extractUsageChartKpis(html: string): string {
-  const match = html.match(/<div class="usage-chart-kpis">([\s\S]*?)<\/div>/);
+  const match = html.match(/<div[^>]*data-usage-chart-kpis="true"[^>]*>([\s\S]*?)<\/div>/);
   if (!match) {
     throw new Error("expected usage chart KPIs");
-  }
-  return match[1] ?? "";
-}
-
-function extractUsageCallout(html: string): string {
-  const match = html.match(
-    /<div class="[^"]*\busage-callout\b[^"]*">([\s\S]*?)<\/div>/,
-  );
-  if (!match) {
-    throw new Error("expected usage callout");
   }
   return match[1] ?? "";
 }
@@ -847,9 +1789,22 @@ function countText(html: string, text: string): number {
   return html.split(text).length - 1;
 }
 
+function readDesktopCssSource(): string {
+  return readFileSync(new URL("../desktop/styles.css", import.meta.url), "utf8");
+}
+
+function readDesktopThemeSource(): string {
+  return readFileSync(new URL("../desktop/theme.css", import.meta.url), "utf8");
+}
+
+function normalizeSourceText(source: string): string {
+  return source.replace(/\r\n/g, "\n");
+}
+
 function makeState(overrides: Partial<RendererState> = {}): RendererState {
   return {
     activeView: "home",
+    conversationRoute: "index",
     selectedSubview: "timeline",
     sidebarCollapsed: false,
     inspectorCollapsed: false,
@@ -873,10 +1828,12 @@ function makeState(overrides: Partial<RendererState> = {}): RendererState {
     routingLoading: false,
     routingError: null,
     libraryRequest: {
-      limit: 48,
+      limit: 100,
+      offset: 0,
     },
     library: null,
     libraryLoading: false,
+    libraryLoadingMore: false,
     libraryError: null,
     selectedConversationId: null,
     selectedConversationLoading: false,
@@ -1111,14 +2068,28 @@ function makeConversationListView(): DesktopConversationListView {
     filters: {
       adapterId: null,
       since: null,
-      limit: 48,
+      repository: null,
+      relationship: null,
+      search: null,
+      limit: null,
+      offset: 0,
     },
     availableAdapters: ["claude-code", "codex"],
+    availableRepositories: [],
     relationshipMix: [
       { relationship: "root", conversations: 1 },
       { relationship: "spawned", conversations: 1 },
       { relationship: "forked", conversations: 1 },
     ],
+    totalCount: 3,
+    filteredCount: 3,
+    page: {
+      offset: 0,
+      limit: 100,
+      returned: 3,
+      hasMore: false,
+      nextOffset: null,
+    },
     conversations: [
       makeForkConversation(),
       makeChildConversation(),
@@ -1326,6 +2297,113 @@ function makeToolCall(
     durationMs: overrides.durationMs ?? 10,
     timestamp: overrides.timestamp ?? "2026-04-29T08:22:00.000Z",
   };
+}
+
+function renderLayoutPreferencesProbe(): DesktopLayoutPreferences {
+  let preferences: DesktopLayoutPreferences | null = null;
+
+  function CaptureLayoutPreferences() {
+    preferences = useDesktopLayoutPreferences();
+    return createElement(
+      "div",
+      null,
+      `${preferences.homeLayout.length}:${preferences.settingsLayout.length}`,
+    );
+  }
+
+  renderToStaticMarkup(
+    createElement(
+      DesktopLayoutPreferencesProvider,
+      null,
+      createElement(CaptureLayoutPreferences),
+    ),
+  );
+
+  if (!preferences) {
+    throw new Error("Expected layout preferences to render");
+  }
+
+  return preferences;
+}
+
+function renderDesktopPreferencesProbe(): DesktopPreferences {
+  let preferences: DesktopPreferences | null = null;
+
+  function CaptureDesktopPreferences() {
+    preferences = useDesktopPreferences();
+    return createElement("div", null, preferences.themeMode);
+  }
+
+  renderToStaticMarkup(
+    createElement(
+      DesktopPreferencesProvider,
+      null,
+      createElement(CaptureDesktopPreferences),
+    ),
+  );
+
+  if (!preferences) {
+    throw new Error("Expected desktop preferences to render");
+  }
+
+  return preferences;
+}
+
+function withFakeWindowLocalStorage(
+  initialValue: string | null | Record<string, string | null>,
+  callback: (storage: FakeLocalStorage) => void,
+): void;
+function withFakeWindowLocalStorage<TResult>(
+  initialValue: string | null | Record<string, string | null>,
+  callback: (storage: FakeLocalStorage) => TResult,
+): TResult;
+function withFakeWindowLocalStorage<TResult>(
+  initialValue: string | null | Record<string, string | null>,
+  callback: (storage: FakeLocalStorage) => TResult,
+): TResult {
+  const globalWithWindow = globalThis as typeof globalThis & {
+    window?: { localStorage: FakeLocalStorage };
+  };
+  const previousWindow = globalWithWindow.window;
+  const storage = new FakeLocalStorage(initialValue);
+
+  globalWithWindow.window = { localStorage: storage };
+  try {
+    return callback(storage);
+  } finally {
+    if (previousWindow) {
+      globalWithWindow.window = previousWindow;
+    } else {
+      delete globalWithWindow.window;
+    }
+  }
+}
+
+class FakeLocalStorage {
+  private readonly values = new Map<string, string>();
+  private readonly fallbackValue: string | null;
+
+  constructor(value: string | null | Record<string, string | null>) {
+    if (typeof value === "object" && value !== null) {
+      this.fallbackValue = null;
+      for (const [key, item] of Object.entries(value)) {
+        if (item !== null) {
+          this.values.set(key, item);
+        }
+      }
+      return;
+    }
+
+    this.fallbackValue = value;
+  }
+
+  getItem(key: string) {
+    return this.values.get(key) ?? this.fallbackValue;
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
 }
 
 function makeStatus(

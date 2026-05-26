@@ -15,6 +15,8 @@ export const DESKTOP_API_VERSION = 1;
 export const DESKTOP_MINIMUM_API_VERSION = 1;
 export const DESKTOP_UPDATE_COMMAND = "jin desktop --update";
 export const CLI_UPDATE_COMMAND = "jin update";
+export const DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT = 100;
+export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
 
 export type DesktopControlAction = "start" | "stop" | "restart";
 export type DesktopCompatibilityReason =
@@ -192,7 +194,11 @@ export interface DesktopHomeRequest {
 export interface DesktopConversationListRequest {
   adapterId?: string;
   since?: string;
+  repository?: string;
+  relationship?: ConversationRelationship;
+  search?: string;
   limit?: number;
+  offset?: number;
 }
 
 export interface DesktopLogsRequest {
@@ -202,14 +208,30 @@ export interface DesktopLogsRequest {
 export interface DesktopConversationListFilters {
   adapterId: string | null;
   since: string | null;
-  limit: number;
+  repository: string | null;
+  relationship: ConversationRelationship | null;
+  search: string | null;
+  limit: number | null;
+  offset: number;
+}
+
+export interface DesktopConversationListPage {
+  offset: number;
+  limit: number | null;
+  returned: number;
+  hasMore: boolean;
+  nextOffset: number | null;
 }
 
 export interface DesktopConversationListView {
   generatedAt: string;
   filters: DesktopConversationListFilters;
   availableAdapters: string[];
+  availableRepositories: string[];
   relationshipMix: DesktopRelationshipSummary[];
+  totalCount: number;
+  filteredCount: number;
+  page: DesktopConversationListPage;
   conversations: Conversation[];
 }
 

@@ -1,16 +1,16 @@
 # Jin Execution Program
 
-Updated: 2026-05-17
-Branch: main
-Focus: Premium Desktop Home and Conversations visual overhaul.
+Updated: 2026-05-24
+Branch: jin-dynamic-layout
+Focus: Desktop modular UI and future dynamic layout foundation.
 
 ## Current Thesis
 
 Desktop should remain a typed client of the daemon boundary while the UI moves
-fully out of ad hoc renderer strings into React components. Home should render
-useful local observability from the daemon view models even when a specific
-timeline series is absent. The next layer is a skinny, high-density,
-Stripe/Linear-like Desktop UI with Apple-style material polish.
+from a large React/CSS monolith toward surface-owned components and explicit
+layout models. Home should preserve useful local observability from daemon view
+models while gaining a typed panel registry that can later support user-adjusted
+layouts.
 
 ## Active Packets
 
@@ -22,6 +22,7 @@ Stripe/Linear-like Desktop UI with Apple-style material polish.
 | W4-DESKTOP-05 | merged | codex-WORKER-desktop-react-cutover | Cut Desktop shell, Home, and Routing over to real React components |
 | W4-DESKTOP-06 | review_ready | codex-WORKER-desktop-full-react-cutover, codex-WORKER-desktop-visual-fix, codex-WORKER-desktop-snapshot-chart-fix | Remove remaining legacy HTML adapter and populate Home Token & Cost Observatory |
 | W4-DESKTOP-07 | review_ready | codex-BRAIN, UX/UI reviewer lanes complete | Skinny luxury overhaul for Home and Conversations, with screenshot-driven design review |
+| W4-DESKTOP-09 | review_ready | codex-WORKER-home-dynamic-layout | Review-finding resolution for Home dynamic layout foundation, edit mode, renderer-local layout preferences, and layout-aware panels |
 
 ## Dependency Graph
 
@@ -40,6 +41,7 @@ flowchart TD
   W4D05[W4-DESKTOP-05 React component cutover]
   W4D06[W4-DESKTOP-06 Full React cutover and Home observatory]
   W4D07[W4-DESKTOP-07 Skinny luxury Home and Conversations]
+  W4D09[W4-DESKTOP-09 Home dynamic layout foundation and edit mode]
 
   BP07 --> W4C01
   BP08 --> W4C01
@@ -65,6 +67,8 @@ flowchart TD
   BP08 --> W4D06
   W4D06 --> W4D07
   BP11 --> W4D07
+  W4D07 --> W4D09
+  BP11 --> W4D09
 ```
 
 ## Coordination Rules
@@ -77,6 +81,11 @@ flowchart TD
 - W4-DESKTOP-07 owns Home/Conversations visual-system iteration and screenshot
   artifacts only. It must not change Desktop daemon API contracts or runtime
   behavior.
+- W4-DESKTOP-09 owns the active dynamic layout lane for Home, including the
+  layout foundation, edit mode, renderer-local preferences, and layout-aware
+  panels. It may use `react-grid-layout/core` behind the data-only adapter and
+  renderer `localStorage` for layout preferences, but must not adopt package
+  DOM/CSS, add Desktop IPC preference storage, or touch daemon/API contracts.
 - Do not change Desktop renderer code in config packets.
 - Do not change runtime, pipeline, sink, DB, or route matching behavior in W4-DESKTOP-04.
 - Do not change runtime, pipeline, sink, DB, API contract, or route matching
@@ -113,6 +122,20 @@ flowchart TD
   through iteration 4 under `docs/execution/artifacts/W4-DESKTOP-07/`. Validation
   passed `bun run desktop:typecheck`, focused Desktop tests, and
   `bun run desktop:build`.
+- W4-DESKTOP-09 review findings were resolved on 2026-05-24. The active dynamic layout
+  lane now has the single packet of record plus capsule, worker prompt, review
+  prompt, and live heartbeat. It covers the Home panel registry and
+  `DashboardGrid` seam, RGL core adapter, Home edit mode with renderer-local
+  storage, and layout-aware Home panels. Resolution validation passed
+  `bun run desktop:typecheck`, focused Desktop layout/renderer/shell tests,
+  `bun run desktop:build`, `git diff --check`, and a built-artifact scan for
+  forbidden RGL renderer/style dependencies. The P1 row-overflow overlap
+  invariant is fixed in the grid adapter, provider-backed edit lifecycle tests
+  cover explicit Save/Cancel behavior, and stacked breakpoint context is now
+  represented in panel render context. Computer Use attaches and confirms
+  read-only/edit-mode accessibility state; resized-state screenshot evidence is
+  still a follow-up visual artifact because screenshots are stale relative to
+  the accessibility tree during HMR.
 
 ## Exit Criteria
 

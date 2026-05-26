@@ -50,6 +50,29 @@ export type DesktopUnixRequest = (
   request: DesktopUnixRequestOptions,
 ) => Promise<DesktopUnixRequestResult>;
 
+export type DesktopDaemonRequestErrorKind =
+  | "connection_refused"
+  | "http_status"
+  | "invalid_json"
+  | "socket_missing"
+  | "transport";
+
+export class DesktopDaemonRequestError extends Error {
+  readonly kind: DesktopDaemonRequestErrorKind;
+  readonly statusCode?: number;
+
+  constructor(
+    kind: DesktopDaemonRequestErrorKind,
+    message: string,
+    options: { statusCode?: number } = {},
+  ) {
+    super(message);
+    this.name = "DesktopDaemonRequestError";
+    this.kind = kind;
+    this.statusCode = options.statusCode;
+  }
+}
+
 export interface DesktopDaemonClientOptions {
   authToken?: string;
   socketPath?: string;
@@ -117,8 +140,20 @@ export function createDesktopDaemonClient(
       if (filters.since) {
         search.set("since", filters.since);
       }
+      if (filters.repository) {
+        search.set("repository", filters.repository);
+      }
+      if (filters.relationship) {
+        search.set("relationship", filters.relationship);
+      }
+      if (filters.search) {
+        search.set("search", filters.search);
+      }
       if (typeof filters.limit === "number") {
         search.set("limit", String(filters.limit));
+      }
+      if (typeof filters.offset === "number" && filters.offset > 0) {
+        search.set("offset", String(filters.offset));
       }
 
       const pathname = `/api/desktop/conversations${search.size > 0 ? `?${search.toString()}` : ""}`;
@@ -193,7 +228,9 @@ async function requestOverHttpEndpoint(
       },
     );
 
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(classifyTransportError(error));
+    });
     request.end();
   });
 }
@@ -226,19 +263,30 @@ async function requestOverUnixSocket(
       },
     );
 
-    request.on("error", reject);
+    request.on("error", (error) => {
+      reject(classifyTransportError(error));
+    });
     request.end();
   });
 }
 
 function parseJsonResponse<T>(response: DesktopUnixRequestResult): T {
   if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw new Error(
+    throw new DesktopDaemonRequestError(
+      "http_status",
       `Desktop daemon request failed (${response.statusCode}): ${extractErrorMessage(response.body)}`,
+      { statusCode: response.statusCode },
     );
   }
 
-  return JSON.parse(response.body) as T;
+  try {
+    return JSON.parse(response.body) as T;
+  } catch (error) {
+    throw new DesktopDaemonRequestError(
+      "invalid_json",
+      `Desktop daemon returned invalid JSON: ${formatError(error)}`,
+    );
+  }
 }
 
 async function requestJson<T>(
@@ -272,4 +320,37 @@ function extractErrorMessage(body: string): string {
   } catch {}
 
   return body.trim();
+}
+
+function classifyTransportError(error: unknown): DesktopDaemonRequestError {
+  const code =
+    error instanceof Error && "code" in error
+      ? (error as NodeJS.ErrnoException).code
+      : null;
+
+  if (code === "ENOENT") {
+    return new DesktopDaemonRequestError(
+      "socket_missing",
+      "Desktop daemon socket is missing.",
+    );
+  }
+
+  if (code === "ECONNREFUSED") {
+    return new DesktopDaemonRequestError(
+      "connection_refused",
+      "Desktop daemon connection was refused.",
+    );
+  }
+
+  return new DesktopDaemonRequestError(
+    "transport",
+    `Desktop daemon request failed: ${formatError(error)}`,
+  );
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }

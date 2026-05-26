@@ -17,6 +17,7 @@ import extractZip from "extract-zip";
 const ROOT = join(import.meta.dir, "..");
 const ELECTRON_DIST = join(ROOT, "node_modules", "electron", "dist");
 const DESKTOP_DIST = join(ROOT, "desktop", "dist");
+const DESKTOP_APP_ICON_ICNS = join(DESKTOP_DIST, "assets", "jin-app-icon.icns");
 const ARTIFACT_DIR = join(ROOT, "release-artifacts");
 const VERSION = readVersion();
 
@@ -75,6 +76,7 @@ function packageDarwin(staging: string, electronDist: string): string {
 
   cpSync(sourceApp, appPath, { recursive: true });
   installRendererApp(resourcesPath);
+  installMacAppIcon(resourcesPath);
   updateMacInfoPlist(join(appPath, "Contents", "Info.plist"));
 
   run("ditto", [
@@ -151,6 +153,14 @@ function installRendererApp(resourcesPath: string): void {
   );
 }
 
+function installMacAppIcon(resourcesPath: string): void {
+  if (!existsSync(DESKTOP_APP_ICON_ICNS)) {
+    return;
+  }
+
+  cpSync(DESKTOP_APP_ICON_ICNS, join(resourcesPath, "jin-app-icon.icns"));
+}
+
 function updateMacInfoPlist(path: string): void {
   if (!existsSync(path)) {
     return;
@@ -168,6 +178,10 @@ function updateMacInfoPlist(path: string): void {
     [
       /(<key>CFBundleIdentifier<\/key>\s*<string>)[^<]*(<\/string>)/,
       "$1com.jin.desktop$2",
+    ],
+    [
+      /(<key>CFBundleIconFile<\/key>\s*<string>)[^<]*(<\/string>)/,
+      "$1jin-app-icon$2",
     ],
   ];
 

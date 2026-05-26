@@ -278,9 +278,22 @@ describe("desktop viewer routes", () => {
     expect(listPayload.filters).toEqual({
       adapterId: "claude-code",
       since: null,
+      repository: null,
+      relationship: null,
+      search: null,
       limit: 12,
+      offset: 0,
     });
     expect(listPayload.availableAdapters).toEqual(["claude-code", "codex"]);
+    expect(listPayload.totalCount).toBe(2);
+    expect(listPayload.filteredCount).toBe(2);
+    expect(listPayload.page).toEqual({
+      offset: 0,
+      limit: 12,
+      returned: 2,
+      hasMore: false,
+      nextOffset: null,
+    });
     expect(listPayload.conversations).toHaveLength(2);
     expect(listPayload.conversations[0].id).toBe("desktop-child");
     expect("parentSessionId" in listPayload.conversations[0]).toBe(false);
@@ -346,11 +359,72 @@ describe("desktop viewer routes", () => {
     expect(treePayload.tree.children[0].conversation.id).toBe("desktop-child");
   });
 
-  test("clamps malformed desktop conversation list limits before querying", async () => {
+  test("desktop conversation list filters and counts across the full dataset", async () => {
     const { store } = createQueryEnv();
-    seedManyDesktopConversations(store, DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT + 12);
+    seedDesktopStore(store);
 
     const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request(
+        "http://localhost/api/desktop/conversations?repository=github.com%2Facme%2Fjin&relationship=spawned&search=project&limit=100",
+      ),
+    );
+    const payload = await readJson<DesktopConversationListView>(response);
+
+    expect(payload.filters).toMatchObject({
+      repository: "github.com/acme/jin",
+      relationship: "spawned",
+      search: "project",
+      limit: 100,
+      offset: 0,
+    });
+    expect(payload.totalCount).toBe(3);
+    expect(payload.filteredCount).toBe(1);
+    expect(payload.conversations.map((conversation) => conversation.id)).toEqual([
+      "desktop-child",
+    ]);
+    expect(payload.availableRepositories).toEqual(["github.com/acme/jin"]);
+    expect(payload.relationshipMix.toSorted((left, right) =>
+      left.relationship.localeCompare(right.relationship),
+    )).toEqual([
+      { relationship: "forked", conversations: 1 },
+      { relationship: "root", conversations: 1 },
+      { relationship: "spawned", conversations: 1 },
+    ]);
+  });
+
+  test("desktop conversation list defaults to a first window and caps explicit limits", async () => {
+    const { store } = createQueryEnv();
+    seedManyDesktopConversations(store, DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12);
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const unboundedResponse = await handler(
+      new Request("http://localhost/api/desktop/conversations"),
+    );
+    const unboundedPayload = await readJson<DesktopConversationListView>(
+      unboundedResponse,
+    );
+
+    expect(unboundedPayload.filters.limit).toBe(
+      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    );
+    expect(unboundedPayload.filters.offset).toBe(0);
+    expect(unboundedPayload.totalCount).toBe(
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
+    );
+    expect(unboundedPayload.filteredCount).toBe(
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
+    );
+    expect(unboundedPayload.conversations).toHaveLength(
+      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    );
+    expect(unboundedPayload.page).toEqual({
+      offset: 0,
+      limit: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      returned: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      hasMore: true,
+      nextOffset: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    });
 
     for (const limit of ["abc", "0", "-5", "12.5"]) {
       const response = await handler(
@@ -373,8 +447,19 @@ describe("desktop viewer routes", () => {
 
     expect(cappedPayload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
     expect(cappedPayload.conversations).toHaveLength(
-      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT + 12,
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
     );
+
+    const nextWindowResponse = await handler(
+      new Request("http://localhost/api/desktop/conversations?limit=100&offset=100"),
+    );
+    const nextWindowPayload = await readJson<DesktopConversationListView>(
+      nextWindowResponse,
+    );
+
+    expect(nextWindowPayload.filters.offset).toBe(100);
+    expect(nextWindowPayload.conversations).toHaveLength(100);
+    expect(nextWindowPayload.page.nextOffset).toBe(200);
   });
 });
 
@@ -469,17 +554,64 @@ function seedManyDesktopConversations(
   store: SqliteConversationStore,
   count: number,
 ): void {
-  for (let index = 0; index < count; index += 1) {
-    const minute = String(index % 60).padStart(2, "0");
-    store.writeBundle(
-      makeBundle(`desktop-limit-${index}`, {
-        conversation: {
-          name: `Desktop limit fixture ${index}`,
-          startedAt: `2026-04-30T10:${minute}:00.000Z`,
-          endedAt: `2026-04-30T10:${minute}:30.000Z`,
-        },
-      }),
-    );
+  // This high-volume route fixture exercises list filtering, not staged writes.
+  const insertConversation = store.database.prepare(
+    `INSERT INTO conversations (
+      id,
+      trace_id,
+      parent_id,
+      relationship,
+      fork_point,
+      adapter_id,
+      name,
+      cwd,
+      git_remote,
+      branch,
+      model,
+      started_at,
+      ended_at,
+      source_path,
+      source_format,
+      duration_ms,
+      message_count,
+      tool_count,
+      turn_count,
+      input_tokens,
+      output_tokens,
+      cache_read,
+      cache_write,
+      est_cost
+    ) VALUES (?, ?, '', 'root', -1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'jsonl', 30000, 1, 0, 1, 10, 15, 0, 0, 0)`,
+  );
+
+  try {
+    store.database.exec("BEGIN IMMEDIATE");
+    for (let index = 0; index < count; index += 1) {
+      const id = `desktop-limit-${index}`;
+      const minute = String(index % 60).padStart(2, "0");
+      insertConversation.run(
+        id,
+        id,
+        "claude-code",
+        `Desktop limit fixture ${index}`,
+        "/Users/test/project",
+        "github.com/acme/jin",
+        "feature/desktop-shell",
+        "claude-opus",
+        `2026-04-30T10:${minute}:00.000Z`,
+        `2026-04-30T10:${minute}:30.000Z`,
+        `/tmp/${id}.jsonl`,
+      );
+    }
+
+    store.database.exec("COMMIT");
+  } catch (error) {
+    if (store.database.inTransaction) {
+      store.database.exec("ROLLBACK");
+    }
+    throw error;
+  } finally {
+    insertConversation.finalize();
   }
 }
 

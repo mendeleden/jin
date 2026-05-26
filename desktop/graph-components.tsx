@@ -1,9 +1,18 @@
+import type { ReactNode } from "react";
 import { linkHorizontal } from "d3-shape";
 import type {
   DesktopHomeData,
   DesktopRoutingSinkSummary,
   DesktopRoutingView,
 } from "../src/contracts/desktop";
+import { cx } from "./ui/classnames";
+import {
+  Eyebrow,
+  Panel,
+  PanelHeader,
+  PanelMeta,
+  PanelTitle,
+} from "./ui/panel";
 
 const GRAPH_COLOR_COUNT = 6;
 const ROUTING_GRAPH_WIDTH = 1280;
@@ -65,8 +74,12 @@ export function RoutingFlowGraph({
     sinkNodes.map((sink, index) => [sink.id, sinkYs[index] ?? topPad]),
   );
   return (
-    <div className="routing-flow-canvas" data-routing-graph="project-to-sink">
+    <div
+      className="min-h-[306px] min-w-0 flex-1 overflow-auto rounded-xl border border-[var(--routing-graph-stroke)] bg-[var(--routing-graph-bg)]"
+      data-routing-graph="project-to-sink"
+    >
       <svg
+        className="block h-auto w-full min-w-[1040px]"
         viewBox={`0 0 ${ROUTING_GRAPH_WIDTH} ${height}`}
         role="img"
         aria-label="Project to sink routing flow graph"
@@ -81,24 +94,24 @@ export function RoutingFlowGraph({
           </filter>
         </defs>
         <rect
-          className="routing-canvas-bg"
+          className="fill-[var(--routing-graph-frame)] stroke-[var(--routing-graph-stroke)]"
           x="0"
           y="0"
           width={ROUTING_GRAPH_WIDTH}
           height={height}
           rx="18"
         />
-        <text className="routing-canvas-label" x={ROUTING_PROJECT_CARD_X} y="30">
+        <text className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]" x={ROUTING_PROJECT_CARD_X} y="30">
           Indexed git projects
         </text>
         <text
-          className="routing-canvas-label"
+          className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]"
           x={(ROUTING_FLOW_START_X + ROUTING_FLOW_END_X) / 2 - 56}
           y="30"
         >
           Routing flow
         </text>
-        <text className="routing-canvas-label" x={ROUTING_SINK_CARD_X} y="30">
+        <text className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]" x={ROUTING_SINK_CARD_X} y="30">
           Configured sinks
         </text>
 
@@ -110,7 +123,8 @@ export function RoutingFlowGraph({
             return (
               <path
                 key={`${project.id}-${flow.sinkId}-${flowIndex}`}
-                className="routing-flow-path"
+                className="fill-none stroke-[var(--routing-flow-stroke)] opacity-[0.82] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke]"
+                data-routing-flow-path
                 d={flowPath(
                   [ROUTING_FLOW_START_X, startY],
                   [
@@ -141,14 +155,14 @@ export function RoutingFlowGraph({
           return (
             <g
               key={project.id}
-              className="routing-project-svg-node"
+              className="group outline-none"
               data-project-node-id={project.id}
               tabIndex={0}
               aria-label={`${projectLabel} routing details`}
             >
               <title>{tooltipLines.join("\n")}</title>
               <rect
-                className="routing-project-label-bg"
+                className="fill-[var(--routing-node-bg)] stroke-[var(--routing-node-border)] transition-colors group-focus:fill-[var(--routing-node-hover-bg)] group-focus:stroke-[var(--routing-node-hover-border)] group-hover:fill-[var(--routing-node-hover-bg)] group-hover:stroke-[var(--routing-node-hover-border)]"
                 x={ROUTING_PROJECT_CARD_X}
                 y={y - ROUTING_PROJECT_LABEL_HEIGHT / 2}
                 width={ROUTING_PROJECT_CARD_WIDTH}
@@ -156,14 +170,14 @@ export function RoutingFlowGraph({
                 rx="12"
               />
               <circle
-                className={`routing-svg-node-${index % GRAPH_COLOR_COUNT}`}
+                className={cx(graphFillClass(index), "stroke-[var(--routing-node-ring)] stroke-2")}
                 cx={ROUTING_PROJECT_NODE_X}
                 cy={y}
                 r="17"
                 filter="url(#routing-glow)"
               />
               <foreignObject
-                className="routing-node-label-object"
+                className="overflow-hidden"
                 x={ROUTING_PROJECT_TEXT_X}
                 y={y - ROUTING_PROJECT_LABEL_HEIGHT / 2 + 10}
                 width={ROUTING_PROJECT_LABEL_WIDTH}
@@ -171,32 +185,28 @@ export function RoutingFlowGraph({
                 data-project-label-width={ROUTING_PROJECT_LABEL_WIDTH}
                 data-label-truncated={String(projectLabelTruncated)}
               >
-                <div className="routing-node-label-copy">
-                  <div className="routing-node-label-title">
+                <div className="grid h-full w-full min-w-0 content-center gap-[3px] overflow-hidden">
+                  <div className="min-w-0 truncate text-[0.92rem] font-semibold leading-[1.2] text-[var(--text)]">
                     {projectVisibleLabel}
                   </div>
-                  <div className="routing-node-label-meta">
+                  <div className="min-w-0 truncate text-[0.72rem] leading-[1.2] text-[var(--text-dim)]">
                     {formatRoutingProjectInlineMeta(project)}
                   </div>
                 </div>
               </foreignObject>
               <foreignObject
-                className="routing-project-tooltip"
+                className="pointer-events-none opacity-0 transition-opacity group-focus:opacity-100 group-hover:opacity-100"
                 x={ROUTING_FLOW_START_X + 14}
                 y={tooltipY}
                 width={ROUTING_PROJECT_TOOLTIP_WIDTH}
                 height={tooltipHeight}
                 aria-hidden="true"
               >
-                <div className="routing-project-tooltip-card">
+                <div className="min-h-full w-full rounded-xl border border-[var(--routing-tooltip-border)] bg-[var(--routing-tooltip-bg)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[var(--routing-tooltip-shadow)] [overflow-wrap:anywhere]">
                   {tooltipLines.map((line, lineIndex) => (
                     <div
                       key={`${project.id}-tooltip-${lineIndex}`}
-                      className={
-                        lineIndex === 0
-                          ? "routing-project-tooltip-line routing-tooltip-title"
-                          : "routing-project-tooltip-line"
-                      }
+                      className={cx(lineIndex > 0 && "mt-1", lineIndex === 0 && "font-semibold text-[var(--text)]")}
                     >
                       {line}
                     </div>
@@ -224,23 +234,28 @@ export function RoutingFlowGraph({
           return (
             <g
               key={sink.id}
-              className={`routing-sink-svg-node ${sink.enabled ? "" : "disabled"}`}
+              className={cx("group outline-none", !sink.enabled && "opacity-[0.62]")}
               data-sink-node-id={sink.id}
               tabIndex={0}
               aria-label={`${sinkLabel} sink details`}
             >
               <title>{tooltipLines.join("\n")}</title>
               <rect
-                className="routing-sink-label-bg"
+                className="fill-[var(--routing-node-bg)] stroke-[var(--routing-node-border)] transition-colors group-focus:fill-[var(--routing-node-hover-bg)] group-focus:stroke-[var(--routing-node-hover-border)] group-hover:fill-[var(--routing-node-hover-bg)] group-hover:stroke-[var(--routing-node-hover-border)]"
                 x={ROUTING_SINK_CARD_X}
                 y={y - ROUTING_SINK_LABEL_HEIGHT / 2}
                 width={ROUTING_SINK_CARD_WIDTH}
                 height={ROUTING_SINK_LABEL_HEIGHT}
                 rx="14"
               />
-              <circle cx={ROUTING_SINK_NODE_X} cy={y} r="9" />
+              <circle
+                className={cx(sink.enabled ? "fill-[var(--success)]" : "fill-[var(--warning)]")}
+                cx={ROUTING_SINK_NODE_X}
+                cy={y}
+                r="9"
+              />
               <foreignObject
-                className="routing-node-label-object"
+                className="overflow-hidden"
                 x={ROUTING_SINK_TEXT_X}
                 y={y - ROUTING_SINK_LABEL_HEIGHT / 2 + 9}
                 width={ROUTING_SINK_LABEL_WIDTH}
@@ -248,32 +263,28 @@ export function RoutingFlowGraph({
                 data-sink-label-width={ROUTING_SINK_LABEL_WIDTH}
                 data-label-truncated={String(sinkLabelTruncated)}
               >
-                <div className="routing-node-label-copy">
-                  <div className="routing-node-label-title">
+                <div className="grid h-full w-full min-w-0 content-center gap-[3px] overflow-hidden">
+                  <div className="min-w-0 truncate text-[0.92rem] font-semibold leading-[1.2] text-[var(--text)]">
                     {sinkVisibleLabel}
                   </div>
-                  <div className="routing-node-label-meta">
+                  <div className="min-w-0 truncate text-[0.72rem] leading-[1.2] text-[var(--text-dim)]">
                     {sink.type}
                   </div>
                 </div>
               </foreignObject>
               <foreignObject
-                className="routing-sink-tooltip"
+                className="pointer-events-none opacity-0 transition-opacity group-focus:opacity-100 group-hover:opacity-100"
                 x={ROUTING_SINK_CARD_X - ROUTING_SINK_TOOLTIP_WIDTH - 18}
                 y={tooltipY}
                 width={ROUTING_SINK_TOOLTIP_WIDTH}
                 height={tooltipHeight}
                 aria-hidden="true"
               >
-                <div className="routing-project-tooltip-card">
+                <div className="min-h-full w-full rounded-xl border border-[var(--routing-tooltip-border)] bg-[var(--routing-tooltip-bg)] px-[13px] py-[11px] text-[0.72rem] leading-[1.35] text-[var(--text-soft)] shadow-[var(--routing-tooltip-shadow)] [overflow-wrap:anywhere]">
                   {tooltipLines.map((line, lineIndex) => (
                     <div
                       key={`${sink.id}-tooltip-${lineIndex}`}
-                      className={
-                        lineIndex === 0
-                          ? "routing-project-tooltip-line routing-tooltip-title"
-                          : "routing-project-tooltip-line"
-                      }
+                      className={cx(lineIndex > 0 && "mt-1", lineIndex === 0 && "font-semibold text-[var(--text)]")}
                     >
                       {line}
                     </div>
@@ -284,7 +295,7 @@ export function RoutingFlowGraph({
           );
         })}
       </svg>
-      <div className="routing-flow-legend">
+      <div className="flex flex-wrap gap-x-3.5 gap-y-2 border-t border-[var(--routing-legend-border)] px-3 py-2.5 text-[0.78rem] text-[var(--text-dim)]">
         <span>Solid blue = routed sink path</span>
         <span>Local-only conversations stay in project cards</span>
         <span>Left = indexed git project</span>
@@ -312,18 +323,13 @@ export function HomeMissionControlGraph({
 
   if (projects.length === 0 || adapters.length === 0) {
     return (
-      <section className="compact-panel compact-panel-wide mission-control-panel">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Mission Control</span>
-            <h2>Conversation Flow</h2>
-          </div>
-          <span className="panel-meta">Waiting for indexed project data</span>
-        </div>
-        <div className="empty-row">
+      <MissionControlPanel
+        meta={<PanelMeta>Waiting for indexed project data</PanelMeta>}
+      >
+        <div className="text-[0.9rem] text-[var(--text-dim)]">
           Ingest conversations with git remotes to populate the flow graph.
         </div>
-      </section>
+      </MissionControlPanel>
     );
   }
 
@@ -350,17 +356,15 @@ export function HomeMissionControlGraph({
   );
 
   return (
-    <section className="compact-panel compact-panel-wide mission-control-panel">
-      <div className="panel-header">
-        <div>
-          <span className="eyebrow">Mission Control</span>
-          <h2>Conversation Flow</h2>
-        </div>
-        <span className="panel-meta">Projects -&gt; adapters -&gt; trace shape</span>
-      </div>
-      <div className="home-flow-canvas" data-home-flow-graph="mission-control">
+    <MissionControlPanel
+      meta={<PanelMeta>Projects -&gt; adapters -&gt; trace shape</PanelMeta>}
+    >
+      <div
+        className="min-h-[306px] min-w-0 flex-1 overflow-auto rounded-xl border border-[rgba(210,224,255,0.09)] bg-[linear-gradient(180deg,rgba(255,255,255,0.032),rgba(255,255,255,0.012)),rgba(5,8,13,0.52)]"
+        data-home-flow-graph="mission-control"
+      >
         <svg
-          className="home-flow-svg"
+          className="block h-[322px] min-h-[322px] w-full min-w-full"
           viewBox={`0 0 ${HOME_GRAPH_WIDTH} ${HOME_GRAPH_HEIGHT}`}
           role="img"
           aria-label="Conversation flow from git projects to adapters and trace relationships"
@@ -375,20 +379,20 @@ export function HomeMissionControlGraph({
             </filter>
           </defs>
           <rect
-            className="home-flow-bg"
+            className="fill-[rgba(255,255,255,0.018)] stroke-[rgba(210,224,255,0.06)]"
             x="0"
             y="0"
             width={HOME_GRAPH_WIDTH}
             height={HOME_GRAPH_HEIGHT}
             rx="18"
           />
-          <text className="home-flow-label" x={projectX} y="34">
+          <text className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]" x={projectX} y="34">
             Git projects
           </text>
-          <text className="home-flow-label" x={adapterX} y="34">
+          <text className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]" x={adapterX} y="34">
             Adapters
           </text>
-          <text className="home-flow-label" x={relationshipX} y="34">
+          <text className="fill-[var(--text-dim)] text-[13px] uppercase tracking-normal [font-family:var(--mono)]" x={relationshipX} y="34">
             Trace shape
           </text>
 
@@ -404,7 +408,7 @@ export function HomeMissionControlGraph({
             return (
               <path
                 key={`${project.id}-adapter-flow`}
-                className="home-flow-path"
+                className="fill-none stroke-[rgba(137,180,255,0.58)] opacity-[0.82] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke]"
                 d={flowPath([projectX + 34, sourceY], [adapterX - 38, targetY])}
                 strokeWidth={strokeWidth}
               />
@@ -422,7 +426,7 @@ export function HomeMissionControlGraph({
               return (
                 <path
                   key={`${adapter.adapterId}-${relationship.relationship}-${relationshipIndex}`}
-                  className="home-flow-path secondary"
+                  className="fill-none stroke-[rgba(137,212,161,0.52)] opacity-[0.82] [stroke-linecap:round] [stroke-linejoin:round] [vector-effect:non-scaling-stroke]"
                   d={flowPath(
                     [adapterX + 34, sourceY],
                     [relationshipX - 38, targetY],
@@ -436,19 +440,19 @@ export function HomeMissionControlGraph({
           {projects.map((project, index) => {
             const y = projectYs[index] ?? 80;
             return (
-              <g key={project.id} className="home-flow-node">
+              <g key={project.id}>
                 <title>{project.name}</title>
                 <circle
-                  className={`routing-svg-node-${index % GRAPH_COLOR_COUNT}`}
+                  className={cx(graphFillClass(index), "stroke-[rgba(7,9,15,0.82)] stroke-2")}
                   cx={projectX}
                   cy={y}
                   r="18"
                   filter="url(#home-flow-glow)"
                 />
-                <text className="home-flow-title" x={projectX + 36} y={y - 8}>
+                <text className="fill-[var(--text)] text-base font-semibold" x={projectX + 36} y={y - 8}>
                   {truncateMiddle(compactRemoteLabel(project.name), 32)}
                 </text>
-                <text className="home-flow-meta" x={projectX + 36} y={y + 13}>
+                <text className="fill-[var(--text-dim)] text-[12.5px]" x={projectX + 36} y={y + 13}>
                   {`${formatNumber(project.conversationCount)} conv - ${formatMetricNumber(project.totalTokens).display} tokens`}
                 </text>
               </g>
@@ -458,18 +462,18 @@ export function HomeMissionControlGraph({
           {adapters.map((adapter, index) => {
             const y = adapterYs[index] ?? 80;
             return (
-              <g key={adapter.adapterId} className="home-flow-node adapter">
+              <g key={adapter.adapterId}>
                 <circle
-                  className={`routing-svg-node-${(index + 1) % GRAPH_COLOR_COUNT}`}
+                  className={cx(graphFillClass(index + 1), "stroke-[rgba(7,9,15,0.82)] stroke-2")}
                   cx={adapterX}
                   cy={y}
                   r="16"
                   filter="url(#home-flow-glow)"
                 />
-                <text className="home-flow-title" x={adapterX + 34} y={y - 7}>
+                <text className="fill-[var(--text)] text-base font-semibold" x={adapterX + 34} y={y - 7}>
                   {adapter.adapterId}
                 </text>
-                <text className="home-flow-meta" x={adapterX + 34} y={y + 13}>
+                <text className="fill-[var(--text-dim)] text-[12.5px]" x={adapterX + 34} y={y + 13}>
                   {`${formatNumber(adapter.conversations)} conv - ${formatCost(adapter.cost)}`}
                 </text>
               </g>
@@ -479,18 +483,25 @@ export function HomeMissionControlGraph({
           {relationships.map((relationship, index) => {
             const y = relationshipYs[index] ?? 90;
             return (
-              <g key={`${relationship.relationship}-${index}`} className="home-flow-node relationship">
-                <rect x={relationshipX - 16} y={y - 22} width="164" height="44" rx="14" />
+              <g key={`${relationship.relationship}-${index}`}>
+                <rect
+                  className="fill-[rgba(255,255,255,0.035)] stroke-[rgba(210,224,255,0.15)]"
+                  x={relationshipX - 16}
+                  y={y - 22}
+                  width="164"
+                  height="44"
+                  rx="14"
+                />
                 <circle
-                  className={`routing-svg-node-${(index + 2) % GRAPH_COLOR_COUNT}`}
+                  className={graphFillClass(index + 2)}
                   cx={relationshipX}
                   cy={y}
                   r="9"
                 />
-                <text className="home-flow-title" x={relationshipX + 26} y={y - 6}>
+                <text className="fill-[var(--text)] text-base font-semibold" x={relationshipX + 26} y={y - 6}>
                   {relationship.relationship}
                 </text>
-                <text className="home-flow-meta" x={relationshipX + 26} y={y + 13}>
+                <text className="fill-[var(--text-dim)] text-[12.5px]" x={relationshipX + 26} y={y + 13}>
                   {`${formatNumber(relationship.conversations)} conversations`}
                 </text>
               </g>
@@ -498,8 +509,42 @@ export function HomeMissionControlGraph({
           })}
         </svg>
       </div>
-    </section>
+    </MissionControlPanel>
   );
+}
+
+function MissionControlPanel({
+  children,
+  meta,
+}: {
+  children: ReactNode;
+  meta: ReactNode;
+}) {
+  return (
+    <Panel
+      className="flex min-h-[382px] flex-col overflow-hidden bg-[radial-gradient(circle_at_18%_2%,rgba(137,180,255,0.12),transparent_32%),linear-gradient(180deg,rgba(14,20,31,0.94),rgba(8,12,18,0.94)),rgba(255,255,255,0.02)]"
+      span="wide"
+    >
+      <PanelHeader actions={meta}>
+        <Eyebrow>Mission Control</Eyebrow>
+        <PanelTitle>Conversation Flow</PanelTitle>
+      </PanelHeader>
+      {children}
+    </Panel>
+  );
+}
+
+function graphFillClass(index: number): string {
+  const classes = [
+    "fill-[#89d4a1]",
+    "fill-[#89b4ff]",
+    "fill-[#f0c46d]",
+    "fill-[#ff8f84]",
+    "fill-[#a8d8ea]",
+    "fill-[#d6b3ff]",
+  ] as const;
+
+  return classes[index % GRAPH_COLOR_COUNT] ?? classes[0];
 }
 
 function buildRoutingSinkNodes(

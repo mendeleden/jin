@@ -16,13 +16,12 @@ import type {
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
-import {
-  DESKTOP_API_VERSION,
-  evaluateDesktopCompatibility,
-} from "../src/contracts/desktop";
+import { evaluateDesktopCompatibility } from "../src/contracts/desktop";
 import type { RuntimeState } from "../src/contracts/lifecycle";
+import { CONVERSATION_RELATIONSHIPS } from "../src/contracts/conversations";
 import {
   createDesktopDaemonClient,
+  DesktopDaemonRequestError,
   type DesktopDaemonClient,
 } from "./daemon-client";
 import { DESKTOP_IPC_CHANNELS } from "./bridge";
@@ -76,26 +75,35 @@ export function createDesktopShellService(
       }
 
       const compatibility = await readCompatibilityStatus(daemonClient);
-      if (!compatibility.compatible) {
+      if (compatibility.kind === "unavailable") {
         return {
           status,
-          compatibility,
+          compatibility: null,
           data: null,
           transportError: compatibility.message,
+        };
+      }
+
+      if (!compatibility.status.compatible) {
+        return {
+          status,
+          compatibility: compatibility.status,
+          data: null,
+          transportError: compatibility.status.message,
         };
       }
 
       try {
         return {
           status,
-          compatibility,
+          compatibility: compatibility.status,
           data: await daemonClient.getHomeData(),
           transportError: null,
         };
       } catch (error) {
         return {
           status,
-          compatibility,
+          compatibility: compatibility.status,
           data: null,
           transportError: formatError(error),
         };
@@ -239,12 +247,28 @@ function parseConversationListRequest(
   if (value.since !== undefined) {
     request.since = parseOptionalString(value.since, "since");
   }
+  if (value.repository !== undefined) {
+    request.repository = parseOptionalString(value.repository, "repository");
+  }
+  if (value.search !== undefined) {
+    request.search = parseOptionalString(value.search, "search");
+  }
+  if (value.relationship !== undefined) {
+    request.relationship = parseConversationRelationship(value.relationship);
+  }
   const limit = value.limit;
   if (limit !== undefined) {
     if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
       throw new Error("Invalid Desktop conversation list limit.");
     }
     request.limit = limit;
+  }
+  const offset = value.offset;
+  if (offset !== undefined) {
+    if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
+      throw new Error("Invalid Desktop conversation list offset.");
+    }
+    request.offset = offset;
   }
 
   return request;
@@ -256,6 +280,21 @@ function parseOptionalString(value: unknown, field: string): string {
   }
 
   return value;
+}
+
+function parseConversationRelationship(
+  value: unknown,
+): DesktopConversationListRequest["relationship"] {
+  if (
+    typeof value !== "string" ||
+    !CONVERSATION_RELATIONSHIPS.includes(
+      value as (typeof CONVERSATION_RELATIONSHIPS)[number],
+    )
+  ) {
+    throw new Error("Invalid Desktop conversation list relationship.");
+  }
+
+  return value as DesktopConversationListRequest["relationship"];
 }
 
 function parseConversationId(value: unknown): string {
@@ -270,25 +309,53 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type CompatibilityReadResult =
+  | {
+      kind: "available";
+      status: DesktopCompatibilityStatus;
+    }
+  | {
+      kind: "unavailable";
+      message: string;
+    };
+
 async function readCompatibilityStatus(
   daemonClient: DesktopDaemonClient,
-): Promise<DesktopCompatibilityStatus> {
+): Promise<CompatibilityReadResult> {
   try {
-    return evaluateDesktopCompatibility(await daemonClient.getCompatibility());
-  } catch {
     return {
-      jinVersion: "unknown",
-      desktopApiVersion: 0,
-      minimumDesktopApiVersion: 1,
-      updateCommand: "jin desktop --update",
-      cliUpdateCommand: "jin update",
-      clientDesktopApiVersion: DESKTOP_API_VERSION,
-      compatible: false,
-      reason: "daemon_too_old",
-      message:
-        "Jin Desktop could not verify compatibility with the running daemon. Run `jin update`, restart Jin, then reopen Desktop.",
+      kind: "available",
+      status: evaluateDesktopCompatibility(await daemonClient.getCompatibility()),
+    };
+  } catch (error) {
+    if (error instanceof DesktopDaemonRequestError) {
+      return {
+        kind: "unavailable",
+        message: formatDaemonClientError(error),
+      };
+    }
+
+    return {
+      kind: "unavailable",
+      message: `Jin Desktop could not verify daemon compatibility: ${formatError(error)}`,
     };
   }
+}
+
+function formatDaemonClientError(error: DesktopDaemonRequestError): string {
+  if (error.kind === "socket_missing" || error.kind === "connection_refused") {
+    return "Jin daemon is not reachable yet. It may be starting, stopping, or cleaning up; Desktop will retry automatically.";
+  }
+
+  if (error.kind === "http_status" && error.statusCode === 401) {
+    return "Jin daemon rejected the Desktop API token. Restart Desktop after restarting Jin.";
+  }
+
+  if (error.kind === "invalid_json") {
+    return "Jin daemon returned an invalid Desktop API response. Desktop will retry automatically.";
+  }
+
+  return error.message;
 }
 
 function formatError(error: unknown): string {

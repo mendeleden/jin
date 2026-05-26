@@ -1,10 +1,14 @@
 #!/usr/bin/env bun
 
-import { cpSync, mkdirSync, rmSync } from "fs";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { cpSync, existsSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
+import { build as buildVite } from "vite";
 
 const ROOT = join(import.meta.dir, "..");
 const DESKTOP_DIR = join(ROOT, "desktop");
+const DESKTOP_ASSETS_DIR = join(DESKTOP_DIR, "assets");
 const DIST_DIR = join(DESKTOP_DIR, "dist");
 
 rmSync(DIST_DIR, { recursive: true, force: true });
@@ -24,16 +28,8 @@ await buildEntry({
   format: "cjs",
   external: ["electron"],
 });
-await buildEntry({
-  entrypoint: "react-entry.tsx",
-  outfile: "renderer.js",
-  target: "browser",
-  format: "esm",
-  external: [],
-});
-
-cpSync(join(DESKTOP_DIR, "index.html"), join(DIST_DIR, "index.html"));
-cpSync(join(DESKTOP_DIR, "styles.css"), join(DIST_DIR, "styles.css"));
+await buildRenderer();
+copyDesktopAssets();
 
 interface BuildEntryOptions {
   entrypoint: string;
@@ -65,4 +61,40 @@ async function buildEntry(options: BuildEntryOptions): Promise<void> {
   }
 
   await Bun.write(join(DIST_DIR, options.outfile), output);
+}
+
+async function buildRenderer(): Promise<void> {
+  await buildVite({
+    appType: "spa",
+    base: "./",
+    build: {
+      cssCodeSplit: false,
+      emptyOutDir: false,
+      outDir: DIST_DIR,
+      rollupOptions: {
+        input: join(DESKTOP_DIR, "index.html"),
+        output: {
+          assetFileNames(assetInfo) {
+            return assetInfo.name?.endsWith(".css")
+              ? "styles.css"
+              : "assets/[name]-[hash][extname]";
+          },
+          chunkFileNames: "assets/[name]-[hash].js",
+          entryFileNames: "renderer.js",
+        },
+      },
+    },
+    clearScreen: false,
+    configFile: false,
+    plugins: [react(), tailwindcss()],
+    root: DESKTOP_DIR,
+  });
+}
+
+function copyDesktopAssets(): void {
+  if (!existsSync(DESKTOP_ASSETS_DIR)) {
+    return;
+  }
+
+  cpSync(DESKTOP_ASSETS_DIR, join(DIST_DIR, "assets"), { recursive: true });
 }

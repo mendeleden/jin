@@ -5,6 +5,7 @@ declare module "electron" {
     minWidth?: number;
     minHeight?: number;
     backgroundColor?: string;
+    icon?: string;
     titleBarStyle?: string;
     autoHideMenuBar?: boolean;
     webPreferences?: {
@@ -22,6 +23,9 @@ declare module "electron" {
   }
 
   export const app: {
+    dock?: {
+      setIcon(path: string): void;
+    };
     whenReady(): Promise<void>;
     on(event: string, listener: (...args: unknown[]) => void): void;
     quit(): void;

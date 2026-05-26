@@ -13,6 +13,7 @@ import type {
   DesktopTraceView,
   DesktopTreeView,
 } from "../src/contracts/desktop";
+import { DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT } from "../src/contracts/desktop";
 import type { JinDesktopBridge } from "./bridge";
 
 export type DesktopNavigationView =
@@ -21,11 +22,13 @@ export type DesktopNavigationView =
   | "routing"
   | "logs"
   | "settings";
+export type DesktopConversationRoute = "index" | "detail";
 export type DesktopConversationSubview = "timeline" | "trace" | "tree";
 export type DesktopHomePanel = "harness" | "models" | "usage";
 
 export interface RendererState {
   activeView: DesktopNavigationView;
+  conversationRoute: DesktopConversationRoute;
   selectedSubview: DesktopConversationSubview;
   sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
@@ -45,6 +48,7 @@ export interface RendererState {
   libraryRequest: DesktopConversationListRequest;
   library: DesktopConversationListView | null;
   libraryLoading: boolean;
+  libraryLoadingMore: boolean;
   libraryError: string | null;
   selectedConversationId: string | null;
   selectedConversationLoading: boolean;
@@ -59,7 +63,6 @@ export interface FormattedMetric {
   exact?: string;
 }
 
-const DEFAULT_CONVERSATION_LIMIT = 48;
 const DEFAULT_LOG_LIMIT = 240;
 export const ESTIMATED_COST_HELP =
   "Calculated from API pricing estimates; not subscription usage or billing-plan spend.";
@@ -69,6 +72,7 @@ export function createInitialRendererState(
 ): RendererState {
   return {
     activeView: "home",
+    conversationRoute: "index",
     selectedSubview: "timeline",
     sidebarCollapsed: false,
     inspectorCollapsed: false,
@@ -92,10 +96,12 @@ export function createInitialRendererState(
     routingLoading: false,
     routingError: null,
     libraryRequest: {
-      limit: DEFAULT_CONVERSATION_LIMIT,
+      limit: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      offset: 0,
     },
     library: null,
     libraryLoading: false,
+    libraryLoadingMore: false,
     libraryError: null,
     selectedConversationId: null,
     selectedConversationLoading: false,
@@ -152,6 +158,12 @@ export class DesktopRendererController {
 
   selectSubview(subview: DesktopConversationSubview): void {
     this.state.selectedSubview = subview;
+    this.notify();
+  }
+
+  showConversationIndex(): void {
+    this.state.activeView = "conversations";
+    this.state.conversationRoute = "index";
     this.notify();
   }
 
@@ -315,17 +327,47 @@ export class DesktopRendererController {
   }
 
   async setAdapterFilter(value: string): Promise<void> {
-    this.state.libraryRequest = {
-      ...this.state.libraryRequest,
+    await this.updateConversationListFilters({
       adapterId: normalizeFilterValue(value),
-    };
-    await this.refreshConversationLibrary({ preserveSelection: false });
+    });
+  }
+
+  async setConversationSearch(value: string): Promise<void> {
+    await this.updateConversationListFilters({
+      search: normalizeFilterValue(value),
+    });
+  }
+
+  async setRelationshipFilter(value: string): Promise<void> {
+    await this.updateConversationListFilters({
+      relationship: normalizeFilterValue(
+        value,
+      ) as DesktopConversationListRequest["relationship"],
+    });
+  }
+
+  async setRepositoryFilter(value: string): Promise<void> {
+    await this.updateConversationListFilters({
+      repository: normalizeFilterValue(value),
+    });
   }
 
   async setSinceFilter(value: string): Promise<void> {
+    await this.updateConversationListFilters({
+      since: normalizeFilterValue(value),
+    });
+  }
+
+  private async updateConversationListFilters(
+    filters: Partial<DesktopConversationListRequest>,
+  ): Promise<void> {
     this.state.libraryRequest = {
       ...this.state.libraryRequest,
-      since: normalizeFilterValue(value),
+      ...filters,
+      offset: 0,
+      limit:
+        this.state.libraryRequest.limit ??
+        DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
     };
     await this.refreshConversationLibrary({ preserveSelection: false });
   }
@@ -346,26 +388,29 @@ export class DesktopRendererController {
     this.notify();
 
     try {
-      const library = await this.bridge.listConversations(this.state.libraryRequest);
+      const request = {
+        ...this.state.libraryRequest,
+        offset: 0,
+        limit:
+          this.state.libraryRequest.limit ??
+          DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      };
+      const library = await this.bridge.listConversations(request);
       if (requestToken !== this.libraryRequestToken) {
         return;
       }
 
       this.state.library = library;
-      this.state.libraryRequest = {
-        adapterId: library.filters.adapterId ?? undefined,
-        since: library.filters.since ?? undefined,
-        limit: library.filters.limit,
-      };
+      this.state.libraryRequest = conversationListRequestFromView(library);
       this.state.libraryError = null;
 
-      const nextConversationId = pickConversationId(
-        library.conversations,
-        options.preserveSelection ? this.state.selectedConversationId : null,
-      );
+      const nextConversationId = options.preserveSelection
+        ? pickConversationId(library.conversations, this.state.selectedConversationId)
+        : null;
 
       if (!nextConversationId) {
         clearSelectedConversation(this.state);
+        this.state.conversationRoute = "index";
         return;
       }
 
@@ -387,6 +432,7 @@ export class DesktopRendererController {
 
       this.state.libraryError = formatError(error);
       clearSelectedConversation(this.state);
+      this.state.conversationRoute = "index";
     } finally {
       if (requestToken === this.libraryRequestToken) {
         this.state.libraryLoading = false;
@@ -395,11 +441,76 @@ export class DesktopRendererController {
     }
   }
 
-  async openConversation(conversationId: string): Promise<void> {
+  async loadMoreConversations(): Promise<void> {
+    if (
+      !this.state.snapshot ||
+      !isRuntimeQueryable(this.state.snapshot.status.runtime.state) ||
+      !this.state.library ||
+      !conversationLibraryHasMore(this.state.library) ||
+      this.state.libraryLoading ||
+      this.state.libraryLoadingMore
+    ) {
+      return;
+    }
+
+    const requestToken = ++this.libraryRequestToken;
+    const currentLibrary = this.state.library;
+    this.state.libraryLoadingMore = true;
+    this.state.libraryError = null;
+    this.notify();
+
+    try {
+      const library = await this.bridge.listConversations({
+        ...conversationListRequestFromView(currentLibrary),
+        offset: currentLibrary.conversations.length,
+        limit:
+          currentLibrary.filters.limit ??
+          DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      });
+      if (requestToken !== this.libraryRequestToken) {
+        return;
+      }
+
+      this.state.library = mergeConversationListViews(currentLibrary, library);
+      this.state.libraryRequest = conversationListRequestFromView(
+        this.state.library,
+      );
+      this.state.libraryError = null;
+    } catch (error) {
+      if (requestToken !== this.libraryRequestToken) {
+        return;
+      }
+
+      this.state.libraryError = formatError(error);
+    } finally {
+      if (requestToken === this.libraryRequestToken) {
+        this.state.libraryLoadingMore = false;
+        this.notify();
+      }
+    }
+  }
+
+  async previewConversation(conversationId: string): Promise<void> {
     this.state.activeView = "conversations";
+    this.state.conversationRoute = "index";
+    this.state.selectedSubview = "timeline";
     this.state.selectedConversationId = conversationId;
     this.notify();
     await this.loadConversationWorkspace(conversationId);
+  }
+
+  async openConversation(conversationId: string): Promise<void> {
+    this.state.activeView = "conversations";
+    this.state.conversationRoute = "detail";
+    this.state.selectedConversationId = conversationId;
+    this.notify();
+    await this.loadConversationWorkspace(conversationId);
+  }
+
+  closeConversation(): void {
+    this.state.conversationRoute = "index";
+    clearSelectedConversation(this.state);
+    this.notify();
   }
 
   async runControlAction(action: DesktopControlAction): Promise<void> {
@@ -435,9 +546,16 @@ export class DesktopRendererController {
 
   private async loadConversationWorkspace(conversationId: string): Promise<void> {
     const requestToken = ++this.detailRequestToken;
+    const conversationChanged =
+      this.state.detail?.conversation.id !== conversationId;
     this.state.selectedConversationId = conversationId;
     this.state.selectedConversationLoading = true;
     this.state.selectedConversationError = null;
+    if (conversationChanged) {
+      this.state.detail = null;
+      this.state.trace = null;
+      this.state.tree = null;
+    }
     this.notify();
 
     try {
@@ -507,6 +625,8 @@ function clearConversationWorkspace(state: RendererState): void {
   state.library = null;
   state.libraryError = null;
   state.libraryLoading = false;
+  state.libraryLoadingMore = false;
+  state.conversationRoute = "index";
   clearSelectedConversation(state);
 }
 
@@ -620,17 +740,81 @@ function renderConversationSubtitle(currentState: RendererState): string {
     return "Loading the daemon-backed conversation library.";
   }
 
-  const selected = currentState.detail?.conversation;
-  if (!selected) {
-    return `${formatNumber(library.conversations.length)} conversations indexed`;
+  return "";
+}
+
+export function conversationLibraryTotalCount(
+  library: DesktopConversationListView,
+): number {
+  if (Number.isFinite(library.filteredCount)) {
+    return library.filteredCount;
   }
 
-  const tokens =
-    selected.inputTokens +
-    selected.outputTokens +
-    selected.cacheRead +
-    selected.cacheWrite;
-  return `${formatNumber(library.conversations.length)} conversations indexed - ${selected.adapterId} - ${formatMetricNumber(tokens).display} tokens`;
+  const relationshipTotal = library.relationshipMix.reduce(
+    (total, entry) => total + entry.conversations,
+    0,
+  );
+  return Math.max(library.conversations.length, relationshipTotal);
+}
+
+export function conversationLibraryHasMore(
+  library: DesktopConversationListView,
+): boolean {
+  return Boolean(
+    library.page?.hasMore ??
+      library.conversations.length < conversationLibraryTotalCount(library),
+  );
+}
+
+function conversationListRequestFromView(
+  library: DesktopConversationListView,
+): DesktopConversationListRequest {
+  return {
+    adapterId: library.filters.adapterId ?? undefined,
+    since: library.filters.since ?? undefined,
+    repository: library.filters.repository ?? undefined,
+    relationship: library.filters.relationship ?? undefined,
+    search: library.filters.search ?? undefined,
+    limit:
+      library.filters.limit ??
+      library.page?.limit ??
+      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    offset: 0,
+  };
+}
+
+function mergeConversationListViews(
+  current: DesktopConversationListView,
+  next: DesktopConversationListView,
+): DesktopConversationListView {
+  const conversations = [...current.conversations];
+  const seen = new Set(conversations.map((conversation) => conversation.id));
+  for (const conversation of next.conversations) {
+    if (!seen.has(conversation.id)) {
+      conversations.push(conversation);
+      seen.add(conversation.id);
+    }
+  }
+
+  const filteredCount = next.filteredCount ?? current.filteredCount;
+  return {
+    ...next,
+    filters: {
+      ...next.filters,
+      offset: 0,
+      limit: next.filters.limit ?? current.filters.limit,
+    },
+    conversations,
+    filteredCount,
+    page: {
+      offset: 0,
+      limit: next.page?.limit ?? next.filters.limit ?? current.filters.limit,
+      returned: conversations.length,
+      hasMore: conversations.length < filteredCount,
+      nextOffset:
+        conversations.length < filteredCount ? conversations.length : null,
+    },
+  };
 }
 
 function renderLogsSubtitle(currentState: RendererState): string {
@@ -717,20 +901,19 @@ function pickConversationId(
   conversations: Conversation[],
   preferredConversationId: string | null,
 ): string | null {
-  if (preferredConversationId) {
-    const match = conversations.find(
-      (conversation) => conversation.id === preferredConversationId,
-    );
-    if (match) {
-      return match.id;
-    }
+  if (!preferredConversationId) {
+    return null;
   }
 
-  return conversations[0]?.id ?? null;
+  const match = conversations.find(
+    (conversation) => conversation.id === preferredConversationId,
+  );
+  return match?.id ?? null;
 }
 
 function normalizeFilterValue(value: string): string | undefined {
-  return value.length > 0 ? value : undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function renderRuntimeHeading(status: DesktopControlStatus): string {
@@ -758,13 +941,29 @@ export function formatDate(value: string): string {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  const month = MONTH_LABELS[date.getMonth()] ?? "";
+  const day = date.getDate();
+  const hour24 = date.getHours();
+  const hour = hour24 % 12 || 12;
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const period = hour24 >= 12 ? "PM" : "AM";
+  return `${month} ${day} at ${hour}:${minute} ${period}`;
 }
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
 
 export function formatDuration(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DESKTOP_IPC_CHANNELS, createDesktopBridge } from "../desktop/bridge";
-import { createDesktopDaemonClient } from "../desktop/daemon-client";
+import {
+  createDesktopDaemonClient,
+  DesktopDaemonRequestError,
+} from "../desktop/daemon-client";
 import {
   DESKTOP_DEV_SERVER_URL_ENV,
   normalizeDesktopDevServerUrl,
@@ -92,6 +95,28 @@ describe("desktop shell service", () => {
     expect(devHtml).toContain("/desktop/react-entry.tsx");
     expect(devHtml).toContain("ws://127.0.0.1:*");
     expect(devHtml).toContain("http://localhost:*");
+  });
+
+  test("desktop app branding assets are copied and wired into packaged windows", () => {
+    const buildScript = readFileSync(
+      new URL("../scripts/build-desktop.ts", import.meta.url),
+      "utf8",
+    );
+    const packageScript = readFileSync(
+      new URL("../scripts/package-desktop.ts", import.meta.url),
+      "utf8",
+    );
+    const mainSource = readFileSync(
+      new URL("../desktop/main.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(buildScript).toContain("copyDesktopAssets");
+    expect(buildScript).toContain('join(DIST_DIR, "assets")');
+    expect(mainSource).toContain('assets/jin-app-icon.png');
+    expect(mainSource).toContain("app.dock?.setIcon");
+    expect(packageScript).toContain("jin-app-icon.icns");
+    expect(packageScript).toContain("CFBundleIconFile");
   });
 
   test("daemon client reads the typed desktop viewer route paths", async () => {
@@ -206,6 +231,34 @@ describe("desktop shell service", () => {
     expect(snapshot.compatibility?.compatible).toBe(false);
     expect(snapshot.compatibility?.reason).toBe("desktop_too_old");
     expect(snapshot.transportError).toContain("jin desktop --update");
+  });
+
+  test("running runtime reports daemon transport failures without compatibility skew", async () => {
+    const service = createDesktopShellService({
+      controlBoundary: {
+        getStatus: () => makeStatus("running"),
+        runAction: async () => makeActionResult("restart"),
+      },
+      daemonClient: makeDaemonClient({
+        async getCompatibility() {
+          throw new DesktopDaemonRequestError(
+            "socket_missing",
+            "Desktop daemon socket is missing.",
+          );
+        },
+        async getHomeData() {
+          throw new Error("home data should not load before compatibility");
+        },
+      }),
+    });
+
+    const snapshot = await service.getHomeSnapshot();
+
+    expect(snapshot.data).toBeNull();
+    expect(snapshot.compatibility).toBeNull();
+    expect(snapshot.transportError).toContain("not reachable yet");
+    expect(snapshot.transportError).not.toContain("jin update");
+    expect(snapshot.transportError).not.toContain("Jin CLI update required");
   });
 
   test("ipc handlers and preload bridge stay on typed channels", async () => {
@@ -533,13 +586,27 @@ function makeConversationListView(): DesktopConversationListView {
     filters: {
       adapterId: "claude-code",
       since: "7d",
+      repository: null,
+      relationship: null,
+      search: null,
       limit: 12,
+      offset: 0,
     },
     availableAdapters: ["claude-code", "codex"],
+    availableRepositories: [],
     relationshipMix: [
       { relationship: "spawned", conversations: 1 },
       { relationship: "root", conversations: 1 },
     ],
+    totalCount: 2,
+    filteredCount: 2,
+    page: {
+      offset: 0,
+      limit: 12,
+      returned: 2,
+      hasMore: false,
+      nextOffset: null,
+    },
     conversations: [makeChildConversation(), makeRootConversation()],
   };
 }
