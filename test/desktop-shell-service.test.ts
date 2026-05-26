@@ -215,8 +215,8 @@ describe("desktop shell service", () => {
       daemonClient: makeDaemonClient({
         async getCompatibility() {
           return makeCompatibilityInfo({
-            desktopApiVersion: 2,
-            minimumDesktopApiVersion: 2,
+            desktopApiVersion: DESKTOP_API_VERSION + 1,
+            minimumDesktopApiVersion: DESKTOP_API_VERSION + 1,
           });
         },
         async getHomeData() {

@@ -11,7 +11,7 @@ import type {
   RuntimeState,
 } from "./lifecycle";
 
-export const DESKTOP_API_VERSION = 1;
+export const DESKTOP_API_VERSION = 2;
 export const DESKTOP_MINIMUM_API_VERSION = 1;
 export const DESKTOP_UPDATE_COMMAND = "jin desktop --update";
 export const CLI_UPDATE_COMMAND = "jin update";
