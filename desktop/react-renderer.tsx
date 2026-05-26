@@ -91,6 +91,9 @@ function DesktopReactAppContent({
     previewConversation(conversationId) {
       return controllerRef.current?.previewConversation(conversationId);
     },
+    loadMoreConversations() {
+      return controllerRef.current?.loadMoreConversations();
+    },
     refreshShell() {
       return controllerRef.current?.refreshShell({ preserveSelection: true });
     },
@@ -102,6 +105,15 @@ function DesktopReactAppContent({
     },
     setAdapterFilter(value) {
       return controllerRef.current?.setAdapterFilter(value);
+    },
+    setConversationSearch(value) {
+      return controllerRef.current?.setConversationSearch(value);
+    },
+    setRelationshipFilter(value) {
+      return controllerRef.current?.setRelationshipFilter(value);
+    },
+    setRepositoryFilter(value) {
+      return controllerRef.current?.setRepositoryFilter(value);
     },
     setSinceFilter(value) {
       return controllerRef.current?.setSinceFilter(value);

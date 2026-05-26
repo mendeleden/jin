@@ -1,6 +1,10 @@
 import { configDir, loadConfig, type JinConfig, type SinkConfig } from "../config";
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import type { Conversation, Message } from "../contracts/conversations";
+import {
+  CONVERSATION_RELATIONSHIPS,
+  type Conversation,
+  type Message,
+} from "../contracts/conversations";
 import type {
   DesktopAdapterSummary,
   DesktopCompatibilityInfo,
@@ -26,6 +30,8 @@ import type {
 import {
   CLI_UPDATE_COMMAND,
   DESKTOP_API_VERSION,
+  DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+  DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
   DESKTOP_HOME_TOKEN_USAGE_DEFAULT_DAYS,
   DESKTOP_HOME_TOKEN_USAGE_MAX_DAYS,
   DESKTOP_MINIMUM_API_VERSION,
@@ -36,10 +42,12 @@ import {
   analyzeByModel,
   analyzeToolUsage,
   buildConversationTree,
+  countConversations,
   findConversationMatches,
   getOverviewSummary,
   getTraceConversations,
   listAvailableAdapters,
+  listConversationRepositories,
   listConversations,
   listProjectUsageByHarness,
   listProjectsByRemote,
@@ -60,7 +68,10 @@ import {
 type Handler = (req: Request, params: Record<string, string>) => Response | Promise<Response>;
 type QueryStore = ReturnType<typeof getStore>;
 
-export const DESKTOP_CONVERSATION_LIST_MAX_LIMIT = 200;
+export {
+  DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+  DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
+} from "../contracts/desktop";
 export const DESKTOP_LOGS_DEFAULT_LIMIT = 240;
 export const DESKTOP_LOGS_MAX_LIMIT = 2_000;
 const DESKTOP_LOGS_READ_CHUNK_BYTES = 64 * 1024;
@@ -539,20 +550,50 @@ export function buildDesktopConversationListView(
 ): DesktopConversationListView {
   const filters = normalizeDesktopConversationListRequest(request);
   const since = filters.since ? parseSinceInput(filters.since) : undefined;
-  const conversations = listConversations(queryStore.database, {
+  const baseOptions = {
     adapterId: filters.adapterId ?? undefined,
     since,
+  };
+  const relationshipOptions = {
+    ...baseOptions,
+    remote: filters.repository ?? undefined,
+    search: filters.search ?? undefined,
+  };
+  const filteredOptions = {
+    ...relationshipOptions,
+    relationship: filters.relationship ?? undefined,
+  };
+  const conversations = listConversations(queryStore.database, {
+    ...filteredOptions,
     limit: filters.limit ?? undefined,
+    offset: filters.offset,
   });
+  const totalCount = countConversations(queryStore.database, baseOptions);
+  const filteredCount = countConversations(queryStore.database, filteredOptions);
+  const returnedThroughOffset = filters.offset + conversations.length;
 
   return {
     generatedAt: new Date().toISOString(),
     filters,
     availableAdapters: listAvailableAdapters(queryStore.database),
-    relationshipMix: summarizeRelationships(queryStore.database, {
-      adapterId: filters.adapterId ?? undefined,
-      since,
+    availableRepositories: listConversationRepositories(queryStore.database, {
+      ...baseOptions,
+      relationship: filters.relationship ?? undefined,
+      search: filters.search ?? undefined,
     }),
+    relationshipMix: summarizeRelationships(queryStore.database, {
+      ...relationshipOptions,
+    }),
+    totalCount,
+    filteredCount,
+    page: {
+      offset: filters.offset,
+      limit: filters.limit,
+      returned: conversations.length,
+      hasMore: returnedThroughOffset < filteredCount,
+      nextOffset:
+        returnedThroughOffset < filteredCount ? returnedThroughOffset : null,
+    },
     conversations,
   };
 }
@@ -865,24 +906,35 @@ function normalizeDesktopConversationListRequest(
   if (request instanceof Request) {
     const url = new URL(request.url);
     const limit = url.searchParams.get("limit");
+    const offset = url.searchParams.get("offset");
 
     return {
       adapterId: url.searchParams.get("adapter") || null,
       since: url.searchParams.get("since") || null,
+      repository: url.searchParams.get("repository") || null,
+      relationship: normalizeDesktopRelationshipFilter(
+        url.searchParams.get("relationship"),
+      ),
+      search: normalizeDesktopTextFilter(url.searchParams.get("search")),
       limit: normalizeDesktopConversationLimit(limit),
+      offset: normalizeDesktopConversationOffset(offset),
     };
   }
 
   return {
     adapterId: request.adapterId ?? null,
     since: request.since ?? null,
+    repository: normalizeDesktopTextFilter(request.repository),
+    relationship: normalizeDesktopRelationshipFilter(request.relationship),
+    search: normalizeDesktopTextFilter(request.search),
     limit: normalizeDesktopConversationLimit(request.limit),
+    offset: normalizeDesktopConversationOffset(request.offset),
   };
 }
 
-function normalizeDesktopConversationLimit(value: unknown): number | null {
+function normalizeDesktopConversationLimit(value: unknown): number {
   if (value === undefined || value === null) {
-    return null;
+    return DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT;
   }
 
   const limit =
@@ -890,17 +942,55 @@ function normalizeDesktopConversationLimit(value: unknown): number | null {
       ? value
       : typeof value === "string" && value.trim().length > 0
         ? Number(value)
-        : null;
-
-  if (limit === null) {
-    return null;
-  }
+        : DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT;
 
   if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit <= 0) {
-    return null;
+    return DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT;
   }
 
   return Math.min(limit, DESKTOP_CONVERSATION_LIST_MAX_LIMIT);
+}
+
+function normalizeDesktopConversationOffset(value: unknown): number {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+
+  const offset =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : 0;
+
+  if (!Number.isFinite(offset) || !Number.isInteger(offset) || offset < 0) {
+    return 0;
+  }
+
+  return offset;
+}
+
+function normalizeDesktopTextFilter(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDesktopRelationshipFilter(
+  value: unknown,
+): DesktopConversationListView["filters"]["relationship"] {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+
+  return CONVERSATION_RELATIONSHIPS.includes(
+    value as (typeof CONVERSATION_RELATIONSHIPS)[number],
+  )
+    ? (value as DesktopConversationListView["filters"]["relationship"])
+    : null;
 }
 
 function normalizeDesktopLogsLimit(request: Request | DesktopLogsRequest): number {

@@ -15,19 +15,23 @@ import {
   Search,
   X,
 } from "lucide-react";
-import type { Conversation, Message } from "../../../src/contracts/conversations";
+import {
+  CONVERSATION_RELATIONSHIPS,
+  type Conversation,
+  type Message,
+} from "../../../src/contracts/conversations";
 import type {
   DesktopConversationDetailView,
   DesktopConversationListView,
   DesktopTreeView,
 } from "../../../src/contracts/desktop";
 import {
+  conversationLibraryHasMore,
   conversationLibraryTotalCount,
   formatCost,
   formatDate,
   formatMetricNumber,
   formatNumber,
-  hasConversationLibraryTotal,
   shortId,
   type DesktopConversationSubview,
   type RendererState,
@@ -116,13 +120,6 @@ export function ConversationsWorkspace({
   actions: DesktopShellActions;
   state: RendererState;
 }) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [relationshipFilter, setRelationshipFilter] = useState("");
-  const conversations = state.library?.conversations ?? [];
-  const visibleConversations = useMemo(
-    () => filterConversationIndex(conversations, searchQuery, relationshipFilter),
-    [conversations, relationshipFilter, searchQuery],
-  );
   const detailRoute = state.conversationRoute === "detail";
   const trayOpen = Boolean(
     !detailRoute &&
@@ -163,12 +160,7 @@ export function ConversationsWorkspace({
             <>
               <ConversationIndexPanel
                 actions={actions}
-                relationshipFilter={relationshipFilter}
-                searchQuery={searchQuery}
-                setRelationshipFilter={setRelationshipFilter}
-                setSearchQuery={setSearchQuery}
                 state={state}
-                visibleConversations={visibleConversations}
               />
               <ConversationBottomTray actions={actions} state={state} />
             </>
@@ -181,26 +173,16 @@ export function ConversationsWorkspace({
 
 function ConversationIndexPanel({
   actions,
-  relationshipFilter,
-  searchQuery,
-  setRelationshipFilter,
-  setSearchQuery,
   state,
-  visibleConversations,
 }: {
   actions: DesktopShellActions;
-  relationshipFilter: string;
-  searchQuery: string;
-  setRelationshipFilter(value: string): void;
-  setSearchQuery(value: string): void;
   state: RendererState;
-  visibleConversations: Conversation[];
 }) {
   const totalLabel = renderConversationIndexCount(
     state.library,
     state.libraryLoading,
-    visibleConversations.length,
   );
+  const searchQuery = state.libraryRequest.search ?? "";
 
   return (
     <section
@@ -219,7 +201,7 @@ function ConversationIndexPanel({
         <PanelMeta>{totalLabel}</PanelMeta>
       </PanelHeader>
       <div
-        className="grid grid-cols-[minmax(280px,1fr)_minmax(390px,auto)] items-end gap-2.5 border-b border-[var(--line)] bg-[var(--conversation-toolbar-bg)] px-3 py-2.5 max-[1180px]:grid-cols-1"
+        className="grid grid-cols-[minmax(280px,1fr)_minmax(520px,auto)] items-end gap-2.5 border-b border-[var(--line)] bg-[var(--conversation-toolbar-bg)] px-3 py-2.5 max-[1180px]:grid-cols-1"
         data-conversation-toolbar
       >
         <label className="relative min-w-0">
@@ -231,15 +213,15 @@ function ConversationIndexPanel({
           <input
             aria-label="Search conversation index"
             className="h-9 w-full rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--field-bg)] pl-8 pr-3 text-[0.9rem] text-[var(--text)] shadow-[inset_0_1px_0_var(--control-highlight)] outline-none transition-colors placeholder:text-[var(--text-dim)] hover:border-[var(--line-strong)] focus-visible:border-[var(--control-border-hover)]"
-            onChange={(event) => setSearchQuery(event.currentTarget.value)}
+            onChange={(event) =>
+              void actions.setConversationSearch(event.currentTarget.value)
+            }
             placeholder="Search name, project, trace, model..."
             value={searchQuery}
           />
         </label>
         <ConversationFilters
           actions={actions}
-          relationshipFilter={relationshipFilter}
-          setRelationshipFilter={setRelationshipFilter}
           state={state}
         />
       </div>
@@ -247,7 +229,6 @@ function ConversationIndexPanel({
         actions={actions}
         searchQuery={searchQuery}
         state={state}
-        visibleConversations={visibleConversations}
       />
     </section>
   );
@@ -255,24 +236,21 @@ function ConversationIndexPanel({
 
 function ConversationFilters({
   actions,
-  relationshipFilter,
-  setRelationshipFilter,
   state,
 }: {
   actions: DesktopShellActions;
-  relationshipFilter: string;
-  setRelationshipFilter(value: string): void;
   state: RendererState;
 }) {
   const adapterOptions = state.library?.availableAdapters ?? [];
-  const relationshipOptions = relationshipOptionsFor(
-    state.library?.conversations ?? [],
-  );
+  const repositoryOptions = repositoryOptionsForLibrary(state.library);
+  const relationshipOptions = relationshipOptionsForLibrary(state.library);
   const adapterValue = state.libraryRequest.adapterId ?? "";
+  const repositoryFilter = state.libraryRequest.repository ?? "";
+  const relationshipFilter = state.libraryRequest.relationship ?? "";
   const sinceValue = state.libraryRequest.since ?? "";
 
   return (
-    <div className="grid grid-cols-[repeat(3,minmax(120px,1fr))] gap-2 max-[880px]:grid-cols-1">
+    <div className="grid grid-cols-[repeat(4,minmax(120px,1fr))] gap-2 max-[1080px]:grid-cols-2 max-[640px]:grid-cols-1">
       <label className={FILTER_FIELD_CLASS}>
         <span>Adapter</span>
         <select
@@ -289,10 +267,29 @@ function ConversationFilters({
         </select>
       </label>
       <label className={FILTER_FIELD_CLASS}>
+        <span>Repository</span>
+        <select
+          className={SELECT_FIELD_CLASS}
+          onChange={(event) =>
+            void actions.setRepositoryFilter(event.currentTarget.value)
+          }
+          value={repositoryFilter}
+        >
+          <option value="">All repositories</option>
+          {repositoryOptions.map((remote) => (
+            <option key={remote} title={remote} value={remote}>
+              {formatProjectReference(remote)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className={FILTER_FIELD_CLASS}>
         <span>Relationship</span>
         <select
           className={SELECT_FIELD_CLASS}
-          onChange={(event) => setRelationshipFilter(event.currentTarget.value)}
+          onChange={(event) =>
+            void actions.setRelationshipFilter(event.currentTarget.value)
+          }
           value={relationshipFilter}
         >
           <option value="">All relationships</option>
@@ -347,12 +344,10 @@ function ConversationIndexTable({
   actions,
   searchQuery,
   state,
-  visibleConversations,
 }: {
   actions: DesktopShellActions;
   searchQuery: string;
   state: RendererState;
-  visibleConversations: Conversation[];
 }) {
   if (state.libraryLoading && !state.library) {
     return (
@@ -374,7 +369,8 @@ function ConversationIndexTable({
     );
   }
 
-  const conversations = state.library?.conversations ?? [];
+  const library = state.library;
+  const conversations = library?.conversations ?? [];
   if (conversations.length === 0) {
     return (
       <EmptyState
@@ -389,20 +385,6 @@ function ConversationIndexTable({
     );
   }
 
-  if (visibleConversations.length === 0) {
-    return (
-      <EmptyState
-        className="m-3"
-        title="No conversations match this search."
-      >
-        <p>
-          Clear the search text or relationship filter to return to the full
-          conversation index.
-        </p>
-      </EmptyState>
-    );
-  }
-
   return (
     <div
       className={cx(
@@ -411,6 +393,14 @@ function ConversationIndexTable({
       )}
       data-conversation-list
       data-search-active={String(searchQuery.trim().length > 0)}
+      onScroll={(event) => {
+        const target = event.currentTarget;
+        if (
+          target.scrollHeight - target.scrollTop - target.clientHeight < 360
+        ) {
+          void actions.loadMoreConversations();
+        }
+      }}
     >
       <table className="w-full min-w-[1080px] border-separate border-spacing-0 text-left text-[0.8rem]">
         <thead className="sticky top-0 z-10 bg-[var(--panel-alt)] text-[var(--text-dim)] shadow-[0_1px_0_var(--line)]">
@@ -428,7 +418,7 @@ function ConversationIndexTable({
           </tr>
         </thead>
         <tbody>
-          {visibleConversations.map((conversation) => (
+          {conversations.map((conversation) => (
             <ConversationTableRow
               conversation={conversation}
               key={conversation.id}
@@ -436,9 +426,54 @@ function ConversationIndexTable({
               selected={conversation.id === state.selectedConversationId}
             />
           ))}
+          <ConversationTableLoadState
+            actions={actions}
+            library={library}
+            loadingMore={state.libraryLoadingMore}
+          />
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ConversationTableLoadState({
+  actions,
+  library,
+  loadingMore,
+}: {
+  actions: DesktopShellActions;
+  library: DesktopConversationListView | null;
+  loadingMore: boolean;
+}) {
+  if (!library) {
+    return null;
+  }
+
+  const hasMore = conversationLibraryHasMore(library);
+  const loaded = library.conversations.length;
+  const total = conversationLibraryTotalCount(library);
+
+  return (
+    <tr data-conversation-list-window>
+      <td
+        className="px-3 py-3 text-center text-[0.78rem] text-[var(--text-dim)]"
+        colSpan={10}
+      >
+        {hasMore ? (
+          <Button
+            disabled={loadingMore}
+            onClick={() => void actions.loadMoreConversations()}
+          >
+            {loadingMore
+              ? "Loading more..."
+              : `Load more (${formatNumber(loaded)} of ${formatNumber(total)} shown)`}
+          </Button>
+        ) : (
+          <span>{`${formatNumber(loaded)} matching conversations loaded`}</span>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -1407,69 +1442,9 @@ function totalTokens(conversation: Conversation): number {
   );
 }
 
-function filterConversationIndex(
-  conversations: readonly Conversation[],
-  searchQuery: string,
-  relationshipFilter: string,
-): Conversation[] {
-  const query = searchQuery.trim().toLocaleLowerCase();
-
-  return conversations.filter((conversation) => {
-    if (
-      relationshipFilter &&
-      conversation.relationship !== relationshipFilter
-    ) {
-      return false;
-    }
-
-    if (!query) {
-      return true;
-    }
-
-    return conversationSearchText(conversation).includes(query);
-  });
-}
-
-function conversationSearchText(conversation: Conversation): string {
-  return [
-    conversation.id,
-    conversation.traceId,
-    conversation.parentId,
-    conversation.relationship,
-    conversation.adapterId,
-    conversation.name,
-    conversation.cwd,
-    conversation.gitRemote,
-    conversation.branch,
-    conversation.model,
-    conversation.sourcePath,
-  ]
-    .join(" ")
-    .toLocaleLowerCase();
-}
-
-function relationshipCountsFor(
-  conversations: readonly Conversation[],
-): Record<string, number> {
-  return conversations.reduce<Record<string, number>>((counts, conversation) => {
-    counts[conversation.relationship] =
-      (counts[conversation.relationship] ?? 0) + 1;
-    return counts;
-  }, {});
-}
-
-function relationshipOptionsFor(
-  conversations: readonly Conversation[],
-): string[] {
-  return Object.keys(relationshipCountsFor(conversations)).sort((left, right) =>
-    left.localeCompare(right),
-  );
-}
-
 function renderConversationIndexCount(
   library: DesktopConversationListView | null,
   loading: boolean,
-  visibleCount: number,
 ): string {
   if (loading && !library) {
     return "Loading...";
@@ -1480,16 +1455,58 @@ function renderConversationIndexCount(
   }
 
   const loaded = library.conversations.length;
-  const total = conversationLibraryTotalCount(library);
-  if (visibleCount < loaded) {
-    return `${formatNumber(visibleCount)} visible of ${formatNumber(loaded)} loaded`;
+  const filtered = conversationLibraryTotalCount(library);
+  const total = Number.isFinite(library.totalCount)
+    ? library.totalCount
+    : filtered;
+
+  if (filtered !== total) {
+    return `${formatNumber(loaded)} shown of ${formatNumber(filtered)} matches (${formatNumber(total)} total)`;
   }
 
-  if (hasConversationLibraryTotal(library)) {
-    return `${formatNumber(loaded)} visible of ${formatNumber(total)}`;
+  if (conversationLibraryHasMore(library)) {
+    return `${formatNumber(loaded)} shown of ${formatNumber(filtered)}`;
   }
 
   return `${formatNumber(loaded)} loaded`;
+}
+
+function relationshipOptionsForLibrary(
+  library: DesktopConversationListView | null,
+): string[] {
+  const relationships = new Set(
+    library?.relationshipMix.map((entry) => entry.relationship) ?? [],
+  );
+
+  if (library?.filters.relationship) {
+    relationships.add(library.filters.relationship);
+  }
+
+  return [...relationships].sort((left, right) => {
+    const leftIndex = CONVERSATION_RELATIONSHIPS.indexOf(
+      left as (typeof CONVERSATION_RELATIONSHIPS)[number],
+    );
+    const rightIndex = CONVERSATION_RELATIONSHIPS.indexOf(
+      right as (typeof CONVERSATION_RELATIONSHIPS)[number],
+    );
+    return (
+      (leftIndex === -1 ? 99 : leftIndex) -
+      (rightIndex === -1 ? 99 : rightIndex)
+    );
+  });
+}
+
+function repositoryOptionsForLibrary(
+  library: DesktopConversationListView | null,
+): string[] {
+  const repositories = new Set(library?.availableRepositories ?? []);
+  if (library?.filters.repository) {
+    repositories.add(library.filters.repository);
+  }
+
+  return [...repositories].sort((left, right) =>
+    formatProjectReference(left).localeCompare(formatProjectReference(right)),
+  );
 }
 
 function previewToolNames(

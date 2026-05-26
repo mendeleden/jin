@@ -11,10 +11,14 @@ export interface DesktopShellActions {
   closeConversation(): void;
   openConversation(conversationId: string): MaybePromise;
   previewConversation(conversationId: string): MaybePromise;
+  loadMoreConversations(): MaybePromise;
   refreshShell(): MaybePromise;
   runControlAction(action: DesktopControlAction): MaybePromise;
   selectSubview(subview: DesktopConversationSubview): void;
   setAdapterFilter(value: string): MaybePromise;
+  setConversationSearch(value: string): MaybePromise;
+  setRelationshipFilter(value: string): MaybePromise;
+  setRepositoryFilter(value: string): MaybePromise;
   setSinceFilter(value: string): MaybePromise;
   showConversationIndex(): void;
   switchView(view: DesktopNavigationView): MaybePromise;
@@ -25,12 +29,16 @@ export interface DesktopShellActions {
 
 export const noopDesktopShellActions: DesktopShellActions = {
   closeConversation() {},
+  loadMoreConversations() {},
   openConversation() {},
   previewConversation() {},
   refreshShell() {},
   runControlAction() {},
   selectSubview() {},
   setAdapterFilter() {},
+  setConversationSearch() {},
+  setRelationshipFilter() {},
+  setRepositoryFilter() {},
   setSinceFilter() {},
   showConversationIndex() {},
   switchView() {},

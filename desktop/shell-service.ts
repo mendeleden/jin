@@ -18,6 +18,7 @@ import type {
 } from "../src/contracts/desktop";
 import { evaluateDesktopCompatibility } from "../src/contracts/desktop";
 import type { RuntimeState } from "../src/contracts/lifecycle";
+import { CONVERSATION_RELATIONSHIPS } from "../src/contracts/conversations";
 import {
   createDesktopDaemonClient,
   DesktopDaemonRequestError,
@@ -246,12 +247,28 @@ function parseConversationListRequest(
   if (value.since !== undefined) {
     request.since = parseOptionalString(value.since, "since");
   }
+  if (value.repository !== undefined) {
+    request.repository = parseOptionalString(value.repository, "repository");
+  }
+  if (value.search !== undefined) {
+    request.search = parseOptionalString(value.search, "search");
+  }
+  if (value.relationship !== undefined) {
+    request.relationship = parseConversationRelationship(value.relationship);
+  }
   const limit = value.limit;
   if (limit !== undefined) {
     if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1) {
       throw new Error("Invalid Desktop conversation list limit.");
     }
     request.limit = limit;
+  }
+  const offset = value.offset;
+  if (offset !== undefined) {
+    if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
+      throw new Error("Invalid Desktop conversation list offset.");
+    }
+    request.offset = offset;
   }
 
   return request;
@@ -263,6 +280,21 @@ function parseOptionalString(value: unknown, field: string): string {
   }
 
   return value;
+}
+
+function parseConversationRelationship(
+  value: unknown,
+): DesktopConversationListRequest["relationship"] {
+  if (
+    typeof value !== "string" ||
+    !CONVERSATION_RELATIONSHIPS.includes(
+      value as (typeof CONVERSATION_RELATIONSHIPS)[number],
+    )
+  ) {
+    throw new Error("Invalid Desktop conversation list relationship.");
+  }
+
+  return value as DesktopConversationListRequest["relationship"];
 }
 
 function parseConversationId(value: unknown): string {

@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createApiFetchHandler } from "../src/api/server";
 import {
+  DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
   DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
   buildDesktopLogsView,
 } from "../src/api/routes";
@@ -277,9 +278,22 @@ describe("desktop viewer routes", () => {
     expect(listPayload.filters).toEqual({
       adapterId: "claude-code",
       since: null,
+      repository: null,
+      relationship: null,
+      search: null,
       limit: 12,
+      offset: 0,
     });
     expect(listPayload.availableAdapters).toEqual(["claude-code", "codex"]);
+    expect(listPayload.totalCount).toBe(2);
+    expect(listPayload.filteredCount).toBe(2);
+    expect(listPayload.page).toEqual({
+      offset: 0,
+      limit: 12,
+      returned: 2,
+      hasMore: false,
+      nextOffset: null,
+    });
     expect(listPayload.conversations).toHaveLength(2);
     expect(listPayload.conversations[0].id).toBe("desktop-child");
     expect("parentSessionId" in listPayload.conversations[0]).toBe(false);
@@ -345,7 +359,41 @@ describe("desktop viewer routes", () => {
     expect(treePayload.tree.children[0].conversation.id).toBe("desktop-child");
   });
 
-  test("desktop conversation list has no default limit and caps explicit limits", async () => {
+  test("desktop conversation list filters and counts across the full dataset", async () => {
+    const { store } = createQueryEnv();
+    seedDesktopStore(store);
+
+    const handler = createApiFetchHandler({ queryStore: store });
+    const response = await handler(
+      new Request(
+        "http://localhost/api/desktop/conversations?repository=github.com%2Facme%2Fjin&relationship=spawned&search=project&limit=100",
+      ),
+    );
+    const payload = await readJson<DesktopConversationListView>(response);
+
+    expect(payload.filters).toMatchObject({
+      repository: "github.com/acme/jin",
+      relationship: "spawned",
+      search: "project",
+      limit: 100,
+      offset: 0,
+    });
+    expect(payload.totalCount).toBe(3);
+    expect(payload.filteredCount).toBe(1);
+    expect(payload.conversations.map((conversation) => conversation.id)).toEqual([
+      "desktop-child",
+    ]);
+    expect(payload.availableRepositories).toEqual(["github.com/acme/jin"]);
+    expect(payload.relationshipMix.toSorted((left, right) =>
+      left.relationship.localeCompare(right.relationship),
+    )).toEqual([
+      { relationship: "forked", conversations: 1 },
+      { relationship: "root", conversations: 1 },
+      { relationship: "spawned", conversations: 1 },
+    ]);
+  });
+
+  test("desktop conversation list defaults to a first window and caps explicit limits", async () => {
     const { store } = createQueryEnv();
     seedManyDesktopConversations(store, DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12);
 
@@ -357,10 +405,26 @@ describe("desktop viewer routes", () => {
       unboundedResponse,
     );
 
-    expect(unboundedPayload.filters.limit).toBeNull();
-    expect(unboundedPayload.conversations).toHaveLength(
+    expect(unboundedPayload.filters.limit).toBe(
+      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    );
+    expect(unboundedPayload.filters.offset).toBe(0);
+    expect(unboundedPayload.totalCount).toBe(
       DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
     );
+    expect(unboundedPayload.filteredCount).toBe(
+      DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
+    );
+    expect(unboundedPayload.conversations).toHaveLength(
+      DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    );
+    expect(unboundedPayload.page).toEqual({
+      offset: 0,
+      limit: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      returned: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+      hasMore: true,
+      nextOffset: DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
+    });
 
     for (const limit of ["abc", "0", "-5", "12.5"]) {
       const response = await handler(
@@ -368,9 +432,9 @@ describe("desktop viewer routes", () => {
       );
       const payload = await readJson<DesktopConversationListView>(response);
 
-      expect(payload.filters.limit).toBeNull();
+      expect(payload.filters.limit).toBe(DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT);
       expect(payload.conversations).toHaveLength(
-        DESKTOP_CONVERSATION_LIST_MAX_LIMIT + 12,
+        DESKTOP_CONVERSATION_LIST_DEFAULT_LIMIT,
       );
     }
 
@@ -385,6 +449,17 @@ describe("desktop viewer routes", () => {
     expect(cappedPayload.conversations).toHaveLength(
       DESKTOP_CONVERSATION_LIST_MAX_LIMIT,
     );
+
+    const nextWindowResponse = await handler(
+      new Request("http://localhost/api/desktop/conversations?limit=100&offset=100"),
+    );
+    const nextWindowPayload = await readJson<DesktopConversationListView>(
+      nextWindowResponse,
+    );
+
+    expect(nextWindowPayload.filters.offset).toBe(100);
+    expect(nextWindowPayload.conversations).toHaveLength(100);
+    expect(nextWindowPayload.page.nextOffset).toBe(200);
   });
 });
 

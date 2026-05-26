@@ -146,6 +146,107 @@ describe("desktop renderer", () => {
     expect(snapshots.at(-1)?.conversationRoute).toBe("detail");
   });
 
+  test("controller delegates conversation filters and windows to the bridge", async () => {
+    const requests: Array<unknown> = [];
+    const firstWindow = makeConversationListView();
+    firstWindow.conversations = [makeChildConversation(), makeRootConversation()];
+    firstWindow.totalCount = 3;
+    firstWindow.filteredCount = 3;
+    firstWindow.page = {
+      offset: 0,
+      limit: 100,
+      returned: 2,
+      hasMore: true,
+      nextOffset: 2,
+    };
+
+    const secondWindow = makeConversationListView();
+    secondWindow.conversations = [makeForkConversation()];
+    secondWindow.totalCount = 3;
+    secondWindow.filteredCount = 3;
+    secondWindow.page = {
+      offset: 2,
+      limit: 100,
+      returned: 1,
+      hasMore: false,
+      nextOffset: null,
+    };
+
+    const repoWindow = makeConversationListView();
+    repoWindow.filters = {
+      ...repoWindow.filters,
+      repository: "github.com/acme/jin",
+      limit: 100,
+      offset: 0,
+    };
+    repoWindow.conversations = [makeChildConversation()];
+    repoWindow.totalCount = 3;
+    repoWindow.filteredCount = 1;
+    repoWindow.page = {
+      offset: 0,
+      limit: 100,
+      returned: 1,
+      hasMore: false,
+      nextOffset: null,
+    };
+
+    const controller = new DesktopRendererController({
+      bridge: {
+        async getHomeSnapshot() {
+          return makeSnapshot("running");
+        },
+        async listConversations(request) {
+          requests.push(request);
+          if (request?.repository) {
+            return repoWindow;
+          }
+          return request?.offset === 2 ? secondWindow : firstWindow;
+        },
+        async getConversationDetail() {
+          return makeConversationDetailView();
+        },
+        async getLogs() {
+          return makeLogsView();
+        },
+        async getRouting() {
+          return makeRoutingView();
+        },
+        async getTraceView() {
+          return makeTraceView();
+        },
+        async getTreeView() {
+          return makeTreeView();
+        },
+        async runControlAction() {
+          return {
+            action: "restart",
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            status: makeStatus("running"),
+          };
+        },
+      },
+      initialState: {
+        activeView: "conversations",
+      },
+    });
+
+    await controller.refreshShell({ preserveSelection: false });
+    await controller.loadMoreConversations();
+    await controller.setRepositoryFilter("github.com/acme/jin");
+
+    expect(requests).toEqual([
+      { limit: 100, offset: 0 },
+      { limit: 100, offset: 2 },
+      { limit: 100, offset: 0, repository: "github.com/acme/jin" },
+    ]);
+    expect(controller.getSnapshot().library?.conversations.map((entry) => entry.id)).toEqual([
+      "desktop-child",
+    ]);
+  });
+
   test("stopping runtime in conversations view renders a paused workbench state", () => {
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
@@ -188,6 +289,7 @@ describe("desktop renderer", () => {
     expect(html).toContain("data-conversation-bottom-tray");
     expect(html).toContain("Search conversation index");
     expect(html).toContain("All adapters");
+    expect(html).toContain("All repositories");
     expect(html).toContain("All relationships");
     expect(html).toContain("All time");
     expect(html).toContain("Messages");
@@ -217,6 +319,26 @@ describe("desktop renderer", () => {
     expect(conversationsSource).not.toContain("rgba(18,25,29,0.98)");
     expect(themeSource).toContain("--conversation-toolbar-bg");
     expect(themeSource).toContain("--conversation-row-selected-shadow");
+  });
+
+  test("conversation index exposes repository filters from the daemon view", () => {
+    const repositoryA = "https://github.com/acme/jin.git";
+    const repositoryB = "git@github.com:mendeleden/jin.git";
+    const library = makeConversationListView();
+    library.availableRepositories = [repositoryA, repositoryB];
+
+    const html = renderDesktopReactShellToStaticMarkup(
+      makeState({
+        activeView: "conversations",
+        snapshot: makeSnapshot("running"),
+        library,
+      }),
+    );
+
+    expect(html).toContain("Repository");
+    expect(html).toContain("All repositories");
+    expect(html).toContain("acme/jin.git");
+    expect(html).toContain("mendeleden/jin.git");
   });
 
   test("open conversation route renders nested detail tabs", () => {
@@ -284,6 +406,15 @@ describe("desktop renderer", () => {
       { relationship: "spawned", conversations: 929 },
       { relationship: "compacted", conversations: 584 },
     ];
+    library.totalCount = 1_990;
+    library.filteredCount = 1_990;
+    library.page = {
+      offset: 0,
+      limit: 100,
+      returned: 3,
+      hasMore: true,
+      nextOffset: 3,
+    };
 
     const html = renderDesktopReactShellToStaticMarkup(
       makeState({
@@ -293,7 +424,7 @@ describe("desktop renderer", () => {
       }),
     );
 
-    expect(html).toContain("3 visible of 1,990");
+    expect(html).toContain("3 shown of 1,990");
     expect(html).not.toContain("3 visible of 1,990 conversations");
     expect(html).toContain("<strong>929</strong>");
     expect(html).toContain("<strong>584</strong>");
@@ -1696,9 +1827,13 @@ function makeState(overrides: Partial<RendererState> = {}): RendererState {
     routing: null,
     routingLoading: false,
     routingError: null,
-    libraryRequest: {},
+    libraryRequest: {
+      limit: 100,
+      offset: 0,
+    },
     library: null,
     libraryLoading: false,
+    libraryLoadingMore: false,
     libraryError: null,
     selectedConversationId: null,
     selectedConversationLoading: false,
@@ -1933,14 +2068,28 @@ function makeConversationListView(): DesktopConversationListView {
     filters: {
       adapterId: null,
       since: null,
+      repository: null,
+      relationship: null,
+      search: null,
       limit: null,
+      offset: 0,
     },
     availableAdapters: ["claude-code", "codex"],
+    availableRepositories: [],
     relationshipMix: [
       { relationship: "root", conversations: 1 },
       { relationship: "spawned", conversations: 1 },
       { relationship: "forked", conversations: 1 },
     ],
+    totalCount: 3,
+    filteredCount: 3,
+    page: {
+      offset: 0,
+      limit: 100,
+      returned: 3,
+      hasMore: false,
+      nextOffset: null,
+    },
     conversations: [
       makeForkConversation(),
       makeChildConversation(),

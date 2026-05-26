@@ -140,8 +140,20 @@ export function createDesktopDaemonClient(
       if (filters.since) {
         search.set("since", filters.since);
       }
+      if (filters.repository) {
+        search.set("repository", filters.repository);
+      }
+      if (filters.relationship) {
+        search.set("relationship", filters.relationship);
+      }
+      if (filters.search) {
+        search.set("search", filters.search);
+      }
       if (typeof filters.limit === "number") {
         search.set("limit", String(filters.limit));
+      }
+      if (typeof filters.offset === "number" && filters.offset > 0) {
+        search.set("offset", String(filters.offset));
       }
 
       const pathname = `/api/desktop/conversations${search.size > 0 ? `?${search.toString()}` : ""}`;

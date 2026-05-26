@@ -586,13 +586,27 @@ function makeConversationListView(): DesktopConversationListView {
     filters: {
       adapterId: "claude-code",
       since: "7d",
+      repository: null,
+      relationship: null,
+      search: null,
       limit: 12,
+      offset: 0,
     },
     availableAdapters: ["claude-code", "codex"],
+    availableRepositories: [],
     relationshipMix: [
       { relationship: "spawned", conversations: 1 },
       { relationship: "root", conversations: 1 },
     ],
+    totalCount: 2,
+    filteredCount: 2,
+    page: {
+      offset: 0,
+      limit: 12,
+      returned: 2,
+      hasMore: false,
+      nextOffset: null,
+    },
     conversations: [makeChildConversation(), makeRootConversation()],
   };
 }

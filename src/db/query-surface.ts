@@ -33,7 +33,9 @@ export interface ListConversationsOptions {
   adapterId?: string;
   since?: string;
   limit?: number;
+  offset?: number;
   remote?: string;
+  relationship?: Conversation["relationship"];
   search?: string;
 }
 
@@ -93,29 +95,9 @@ export function listConversations(
   let query = `
     SELECT *
     FROM conversations
-    WHERE 1 = 1
   `;
-  const params: Array<string | number> = [];
-
-  if (options.adapterId) {
-    query += " AND adapter_id = ?";
-    params.push(options.adapterId);
-  }
-
-  if (options.since) {
-    query += " AND COALESCE(NULLIF(ended_at, ''), started_at) >= ?";
-    params.push(options.since);
-  }
-
-  if (options.remote) {
-    query += " AND git_remote = ?";
-    params.push(options.remote);
-  }
-
-  if (options.search) {
-    query += " AND LOWER(name) LIKE ?";
-    params.push(`%${options.search.toLowerCase()}%`);
-  }
+  const where = buildConversationWhereClause(options);
+  query += where.sql;
 
   query += `
     ORDER BY
@@ -126,11 +108,54 @@ export function listConversations(
 
   if (options.limit && options.limit > 0) {
     query += " LIMIT ?";
-    params.push(options.limit);
+    where.params.push(options.limit);
+
+    if (options.offset && options.offset > 0) {
+      query += " OFFSET ?";
+      where.params.push(options.offset);
+    }
   }
 
-  const rows = allRows<ConversationRow>(db, query, ...params);
+  const rows = allRows<ConversationRow>(db, query, ...where.params);
   return rows.map(rowToConversation);
+}
+
+export function countConversations(
+  db: Database,
+  options: Omit<ListConversationsOptions, "limit" | "offset"> = {},
+): number {
+  const where = buildConversationWhereClause(options);
+  const row = getRow<{ conversations: number }>(
+    db,
+    `
+      SELECT COUNT(*) AS conversations
+      FROM conversations
+      ${where.sql}
+    `,
+    ...where.params,
+  );
+
+  return row?.conversations ?? 0;
+}
+
+export function listConversationRepositories(
+  db: Database,
+  options: Omit<ListConversationsOptions, "limit" | "offset" | "remote"> = {},
+): string[] {
+  const where = buildConversationWhereClause(options);
+  const rows = allRows<{ git_remote: string }>(
+    db,
+    `
+      SELECT DISTINCT git_remote
+      FROM conversations
+      ${where.sql}
+        AND git_remote != ''
+      ORDER BY git_remote ASC
+    `,
+    ...where.params,
+  );
+
+  return rows.map((row) => row.git_remote);
 }
 
 export function listAvailableAdapters(db: Database): string[] {
@@ -147,26 +172,16 @@ export function listAvailableAdapters(db: Database): string[] {
 
 export function summarizeRelationships(
   db: Database,
-  options: Pick<ListConversationsOptions, "adapterId" | "since"> = {},
+  options: Pick<
+    ListConversationsOptions,
+    "adapterId" | "since" | "remote" | "search"
+  > = {},
 ): RelationshipSummary[] {
-  let query = `
+  const where = buildConversationWhereClause(options);
+  const query = `
     SELECT relationship, COUNT(*) AS conversations
     FROM conversations
-    WHERE 1 = 1
-  `;
-  const params: string[] = [];
-
-  if (options.adapterId) {
-    query += " AND adapter_id = ?";
-    params.push(options.adapterId);
-  }
-
-  if (options.since) {
-    query += " AND COALESCE(NULLIF(ended_at, ''), started_at) >= ?";
-    params.push(options.since);
-  }
-
-  query += `
+    ${where.sql}
     GROUP BY relationship
     ORDER BY conversations DESC, relationship ASC
   `;
@@ -174,11 +189,64 @@ export function summarizeRelationships(
   return allRows<{ relationship: Conversation["relationship"]; conversations: number }>(
     db,
     query,
-    ...params,
+    ...where.params,
   ).map((row) => ({
     relationship: row.relationship,
     conversations: row.conversations ?? 0,
   }));
+}
+
+function buildConversationWhereClause(
+  options: Omit<ListConversationsOptions, "limit" | "offset">,
+): { sql: string; params: Array<string | number> } {
+  let sql = `
+    WHERE 1 = 1
+  `;
+  const params: Array<string | number> = [];
+
+  if (options.adapterId) {
+    sql += " AND adapter_id = ?";
+    params.push(options.adapterId);
+  }
+
+  if (options.since) {
+    sql += " AND COALESCE(NULLIF(ended_at, ''), started_at) >= ?";
+    params.push(options.since);
+  }
+
+  if (options.remote) {
+    sql += " AND git_remote = ?";
+    params.push(options.remote);
+  }
+
+  if (options.relationship) {
+    sql += " AND relationship = ?";
+    params.push(options.relationship);
+  }
+
+  const search = options.search?.trim().toLowerCase();
+  if (search) {
+    const like = `%${search}%`;
+    const searchableColumns = [
+      "id",
+      "trace_id",
+      "parent_id",
+      "relationship",
+      "adapter_id",
+      "name",
+      "cwd",
+      "git_remote",
+      "branch",
+      "model",
+      "source_path",
+    ];
+    sql += ` AND (${searchableColumns
+      .map((column) => `LOWER(COALESCE(${column}, '')) LIKE ?`)
+      .join(" OR ")})`;
+    params.push(...searchableColumns.map(() => like));
+  }
+
+  return { sql, params };
 }
 
 export function findConversationMatches(
