@@ -32,11 +32,13 @@ mock.module("../src/daemon/process-state", () => ({
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
+  getRuntimeStatusForCurrentProcess: () => runtimeStatus,
   isServiceActive: () => false,
   isServiceInstalled: () => false,
   markRuntimeStarting: () => runtimeStatus,
   markRuntimeRunning: () => runtimeStatus,
   clearRuntimeState: () => {},
+  clearRuntimePidFile: () => {},
   runModeLabel: (mode: string) => mode,
 }));
 

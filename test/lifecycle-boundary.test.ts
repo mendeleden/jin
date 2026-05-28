@@ -18,6 +18,7 @@ let stopWatcherResult: any;
 let stopWatcherCalls: any[] = [];
 let watchCalls: any[] = [];
 let serviceCalls: any[] = [];
+let controlStatusProbe: any;
 let serviceInstalled = false;
 let configValue: any;
 let runtimePaths = {
@@ -42,6 +43,7 @@ mock.module("../src/daemon/runtime-state", () => ({
   clearRuntimeState: () => {},
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
+  getRuntimeStatusForCurrentProcess: () => runtimeStatus,
   isServiceInstalled: () => serviceInstalled,
   markRuntimeRunning: () => runtimeStatus,
   markRuntimeStarting: () => runtimeStatus,
@@ -57,6 +59,7 @@ mock.module("../src/daemon/runtime-state", () => ({
         return "not running";
     }
   },
+  clearRuntimePidFile: () => {},
 }));
 
 mock.module("../src/commands/watch", () => ({
@@ -69,6 +72,10 @@ mock.module("../src/commands/service", () => ({
   serviceCommand: async (action: unknown) => {
     serviceCalls.push(action);
   },
+}));
+
+mock.module("../src/api/client", () => ({
+  requestDaemonControlStatus: async () => controlStatusProbe,
 }));
 
 mock.module("../src/config", () => ({
@@ -119,6 +126,7 @@ beforeEach(() => {
   stopWatcherCalls = [];
   watchCalls = [];
   serviceCalls = [];
+  controlStatusProbe = { status: "failed", message: "socket missing" };
   serviceInstalled = false;
   configValue = { sinks: [], routes: [] };
   console_ = captureConsole();
@@ -207,6 +215,43 @@ describe("lifecycle runtime boundary", () => {
       forceAfterTimeout: true,
     });
     expect(serviceCalls).toEqual(["install"]);
+  });
+
+  test("start refuses a second owner when the local socket is already responding", async () => {
+    runtimeStatus = { state: "stopped", issues: [] };
+    watcherState = { name: "watcher", status: "stopped", lifecycleState: "stopped" };
+    controlStatusProbe = {
+      status: "available",
+      statusCode: 200,
+      control: {
+        runtime: { state: "stopped", owner: null, issues: [] },
+        health: {
+          status: "stopped",
+          issueCount: 0,
+          issueSubsystems: [],
+          paused: false,
+          ingest: "inactive",
+          push: "inactive",
+          components: { running: 0, stopped: 1 },
+        },
+        components: [{ name: "watcher", status: "stopped", lifecycleState: "stopped" }],
+        paths: {
+          configDir: runtimePaths.configDir,
+          config: runtimePaths.configPath,
+          store: runtimePaths.storePath,
+          log: runtimePaths.logPath,
+          localEndpoint: runtimePaths.localEndpoint,
+          socket: runtimePaths.socketPath,
+        },
+      },
+    };
+
+    await startCommand({});
+
+    expect(watchCalls).toHaveLength(0);
+    const output = console_.logs.join("\n");
+    expect(output).toContain("daemon socket is already responding");
+    expect(output).toContain("second runtime owner");
   });
 
   test("stop behaves like a bounded control-plane action", async () => {

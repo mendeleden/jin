@@ -36,11 +36,13 @@ let localApiServerStopCalls = 0;
 
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimeStatus: () => runtimeStatus,
+  getRuntimeStatusForCurrentProcess: () => runtimeStatus,
   getRuntimePaths: () => runtimePaths,
   runModeLabel: (mode: string) => mode,
   isServiceActive: () => false,
   isServiceInstalled: () => false,
   clearRuntimeState: () => {},
+  clearRuntimePidFile: () => {},
   markRuntimeStarting: () => runtimeStatus,
   markRuntimeRunning: () => runtimeStatus,
   markRuntimeStopping: () => runtimeStatus,
