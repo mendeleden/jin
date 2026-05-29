@@ -196,6 +196,10 @@ export async function ingestOne(
             {
               ref,
               adapter: workerSnapshot,
+              discoveryState: discoveryStateForSource(
+                discoveryStateSnapshot ?? discoverySummary.state,
+                ref.sourcePath,
+              ),
             },
             {
               timeoutMs: loadConversationTimeoutMs,
@@ -407,6 +411,18 @@ function resolveWorkerLoadSnapshot(
   }
 
   return snapshot;
+}
+
+function discoveryStateForSource(
+  state: DiscoveryCacheState | null,
+  sourcePath: string,
+): DiscoveryCacheState | null {
+  if (!state) {
+    return null;
+  }
+
+  const sources = state.sources.filter((source) => source.sourcePath === sourcePath);
+  return sources.length > 0 ? { sources } : null;
 }
 
 function restoreAdapterDiscoveryState(

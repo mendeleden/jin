@@ -80,6 +80,7 @@ export type WorkerAdapterSnapshot = {
 export type WorkerLoadConversationRequest = {
   ref: ConversationRef;
   adapter: WorkerAdapterSnapshot;
+  discoveryState?: DiscoveryCacheState | null;
 };
 
 export type WorkerFindChangedRequest = {
@@ -716,6 +717,9 @@ async function loadConversationAndNotify(
     adapter.adapterId,
     adapter.adapterConfig,
   ) as unknown as V2Adapter;
+  if (request.discoveryState && isDiscoveryCacheCapableAdapter(created)) {
+    created.importDiscoveryState(request.discoveryState);
+  }
   if (typeof created.loadConversation !== "function") {
     throw new Error(`adapter ${adapter.adapterId} does not support loadConversation`);
   }
@@ -901,6 +905,7 @@ function parseLoadConversationParams(
           : {}),
       },
     },
+    discoveryState: parseDiscoveryCacheState(value.discoveryState),
   };
 }
 
