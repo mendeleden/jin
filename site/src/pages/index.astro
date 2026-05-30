@@ -1,0 +1,311 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+import SiteNav from '../components/SiteNav.astro';
+import InstallCommand from '../components/InstallCommand.astro';
+
+const heroSignals = [
+  {
+    label: 'Capture',
+    text: 'Every coding agent, no wrapper required.',
+  },
+  {
+    label: 'Normalize',
+    text: 'Sessions, tools, tokens, branches, and cost in one schema.',
+  },
+  {
+    label: 'Route',
+    text: 'Local by default, synced to Postgres, S3, R2, or webhooks.',
+  },
+];
+
+const products = [
+  {
+    name: 'jin',
+    alias: 'JustIndex',
+    title: 'The passive daemon',
+    text: 'Captures local AI coding sessions across Claude Code, Cursor, Codex, Warp, Gemini CLI, and more, then normalizes them into one local data model.',
+    points: ['Read-only adapters', 'Local SQLite store', 'Tool calls, tokens, cost, branches'],
+  },
+  {
+    name: 'jin desktop',
+    alias: 'JustInfo',
+    title: 'The developer surface',
+    text: 'Gives engineers a fast local interface for session recall, routing status, project history, and the context behind agent-generated changes.',
+    points: ['Session search', 'Project routing', 'Desktop control plane'],
+  },
+  {
+    name: 'jin team',
+    alias: 'JustInsight',
+    title: 'The organization view',
+    text: 'Routes normalized sessions into your Postgres, S3, R2, or webhook infrastructure so leaders can understand adoption, spend, and delivery patterns.',
+    points: ['Team onboarding codes', 'Private sinks', 'Usage and workflow analytics'],
+  },
+];
+
+const personaHeading = 'Developers, Team Leads, Engineering Leaders, Platform & DevEx.';
+const personaIntro =
+  'One private index across AI coding work, with the right view for the people building, managing, funding, and rolling it out.';
+
+const personas = [
+  {
+    id: 'developers',
+    role: 'Developers',
+    title: 'Find the session behind the commit.',
+    text: 'Search prompts, tool calls, branches, and agent output when the useful context is buried in a tool-specific transcript.',
+    outcomes: ['Local session recall', 'Reviewable agent traces', 'Faster debugging after AI-assisted changes'],
+    stat: 'local first',
+  },
+  {
+    id: 'team-leads',
+    role: 'Team Leads',
+    title: 'Spot where AI work is helping or looping.',
+    text: 'Understand which projects, tools, and repeated workflows are moving faster without reading every transcript or chasing status.',
+    outcomes: ['Team adoption patterns', 'Repeated blocker visibility', 'Useful context for coaching'],
+    stat: 'team signal',
+  },
+  {
+    id: 'engineering-leaders',
+    role: 'Engineering Leaders',
+    title: 'Turn AI coding usage into operating signal.',
+    text: 'Track adoption, spend, model mix, and delivery patterns across teams while keeping the data in your infrastructure.',
+    outcomes: ['Spend and usage trends', 'Project-level momentum', 'Private analytics in your stack'],
+    stat: 'private sinks',
+  },
+  {
+    id: 'platform-devex',
+    role: 'Platform & DevEx',
+    title: 'Standardize telemetry without tool lock-in.',
+    text: 'Give platform and developer experience teams one passive daemon, one schema, and clean adoption data across every coding agent developers already use.',
+    outcomes: ['Adoption by tool and model', 'Policy gaps before incidents', 'No wrapper around developer workflow'],
+    stat: '10 adapters',
+  },
+];
+
+const flow = ['Capture', 'Normalize', 'Inspect', 'Route', 'Understand'];
+---
+
+<MarketingLayout>
+  <SiteNav />
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <img
+        class="hero-backdrop"
+        src="/images/jin-desktop-routing.png"
+        alt="jin desktop routing view showing projects flowing into a team Postgres sink"
+      />
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-content">
+        <p class="eyebrow">Private telemetry for AI coding teams</p>
+        <h1 id="hero-title">AI coding work, indexed.</h1>
+        <p class="hero-copy">
+          Jin captures local agent sessions, turns scattered transcripts into a shared schema, and routes the signal your team needs into infrastructure you control.
+        </p>
+        <div class="hero-value-grid" aria-label="Core value proposition">
+          {heroSignals.map((signal) => (
+            <article>
+              <span>{signal.label}</span>
+              <p>{signal.text}</p>
+            </article>
+          ))}
+        </div>
+        <div class="hero-actions">
+          <a class="button primary" href="/docs/guide/getting-started/">Install jin</a>
+        </div>
+        <InstallCommand />
+      </div>
+    </section>
+
+    <section class="section persona-section" id="personas">
+      <div class="section-heading">
+        <div>
+          <div class="section-kicker">For:</div>
+          <h2>{personaHeading}</h2>
+        </div>
+        <p>{personaIntro}</p>
+      </div>
+      <div class="persona-switcher" data-persona-switcher>
+        <div class="persona-tabs" role="tablist" aria-label="Jin personas">
+          {personas.map((persona, index) => (
+            <button
+              type="button"
+              class={index === 0 ? 'is-active' : ''}
+              id={`persona-tab-${persona.id}`}
+              role="tab"
+              aria-selected={index === 0 ? 'true' : 'false'}
+              aria-controls={`persona-panel-${persona.id}`}
+              data-persona-tab={persona.id}
+            >
+              {persona.role}
+            </button>
+          ))}
+        </div>
+        <div class="persona-panels">
+          {personas.map((persona, index) => (
+            <article
+              class={index === 0 ? 'persona-panel is-active' : 'persona-panel'}
+              id={`persona-panel-${persona.id}`}
+              role="tabpanel"
+              aria-labelledby={`persona-tab-${persona.id}`}
+              data-persona-panel={persona.id}
+              hidden={index !== 0}
+            >
+              <div class="persona-mock" aria-hidden="true">
+                <div class="mock-shell">
+                  <div class="mock-bar">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <div class="mock-content">
+                    <div class="mock-head">
+                      <div class="mock-icon">jin</div>
+                      <div>
+                        <h3>{persona.role} view</h3>
+                        <p>{persona.stat}</p>
+                      </div>
+                    </div>
+                    <p class="mock-summary">{persona.text}</p>
+                    <div class="mock-tags">
+                      {persona.outcomes.slice(0, 3).map((outcome) => <span>{outcome}</span>)}
+                    </div>
+                    <div class="mock-list">
+                      <strong>What jin answers</strong>
+                      {persona.outcomes.map((outcome) => (
+                        <div>
+                          <span></span>
+                          <p>{outcome}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="persona-value">
+                <h3>{persona.title}</h3>
+                <p>{persona.text}</p>
+                <ul>
+                  {persona.outcomes.map((outcome) => <li>{outcome}</li>)}
+                </ul>
+                <a class="button secondary" href="/docs/guide/getting-started/">Get started</a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="bundle">
+      <div class="section-heading">
+        <div class="section-kicker">The jin bundle</div>
+        <h2>One product, three surfaces.</h2>
+        <p>
+          Lead with the passive daemon. No hooks, no workflow wrapper, and no interrupted coding sessions just to collect telemetry.
+        </p>
+      </div>
+      <div class="product-grid">
+        {products.map((product) => (
+          <article class="product-card">
+            <div class="product-name">
+              <span>{product.name}</span>
+              <small>{product.alias}</small>
+            </div>
+            <h3>{product.title}</h3>
+            <p>{product.text}</p>
+            <ul>
+              {product.points.map((point) => <li>{point}</li>)}
+            </ul>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="section flow-section" aria-labelledby="flow-title">
+      <div>
+        <div class="section-kicker">How it works</div>
+        <h2 id="flow-title">A private system of record for agentic work.</h2>
+      </div>
+      <div class="flow-rail">
+        {flow.map((item, index) => (
+          <div class="flow-step">
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <strong>{item}</strong>
+          </div>
+        ))}
+      </div>
+      <div class="code-window" aria-label="Example jin stats output">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+        </div>
+        <pre><code>$ jin stats --since=7d
+claude-code  421 sessions  38.2M tokens  $312.40
+cursor       106 sessions   9.7M tokens   $71.12
+codex         64 sessions   6.1M tokens   $44.90
+
+$ jin team-config --type=postgres --team-id=platform
+ready: one command for every developer</code></pre>
+      </div>
+    </section>
+
+    <section class="section trust-section" id="security">
+      <div>
+        <div class="section-kicker">Trust model</div>
+        <h2>Developer-native by default. Enterprise-ready by architecture.</h2>
+      </div>
+      <div class="trust-grid">
+        <article>
+          <h3>No hooks</h3>
+          <p>Jin reads native tool data passively. It never inserts hooks into coding sessions or interrupts developers for telemetry.</p>
+        </article>
+        <article>
+          <h3>Local first</h3>
+          <p>The daemon normalizes to a local store before anything is routed to a team destination.</p>
+        </article>
+        <article>
+          <h3>Your infrastructure</h3>
+          <p>Send data to Postgres, S3, R2, or webhooks without adopting another hosted black box.</p>
+        </article>
+        <article>
+          <h3>One schema</h3>
+          <p>Compare tools, models, projects, token usage, and tool calls without hand-parsing logs.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div>
+        <p class="eyebrow">Start with the daemon</p>
+        <h2>Install jin. Build the AI coding system of record.</h2>
+      </div>
+      <a class="button primary" href="/docs/guide/getting-started/">Get started</a>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <span>jin</span>
+    <a href="/docs/">Docs</a>
+    <a href="https://github.com/mendeleden/jin">GitHub</a>
+    <span>FSL-1.1-ALv2</span>
+  </footer>
+</MarketingLayout>
+
+<script>
+  document.querySelectorAll('[data-persona-switcher]').forEach((root) => {
+    const tabs = Array.from(root.querySelectorAll('[data-persona-tab]'));
+    const panels = Array.from(root.querySelectorAll('[data-persona-panel]'));
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const selected = tab.dataset.personaTab;
+
+        tabs.forEach((item) => {
+          const isActive = item === tab;
+          item.classList.toggle('is-active', isActive);
+          item.setAttribute('aria-selected', String(isActive));
+        });
+
+        panels.forEach((panel) => {
+          const isActive = panel.dataset.personaPanel === selected;
+          panel.classList.toggle('is-active', isActive);
+          panel.hidden = !isActive;
+        });
+      });
+    });
+  });
+</script>

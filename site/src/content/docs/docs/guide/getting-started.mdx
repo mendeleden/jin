@@ -1,0 +1,35 @@
+---
+title: Install jin
+description: Install the jin CLI and verify that your local AI coding sessions can be indexed.
+sidebar:
+  order: 1
+---
+
+import InstallCommand from '../../../../components/InstallCommand.astro';
+
+Install the CLI with the one-line installer:
+
+<InstallCommand />
+
+## Verify the binary
+
+```sh
+jin --version
+jin status
+```
+
+## Build from source
+
+Requires [Bun](https://bun.sh).
+
+```sh
+git clone https://github.com/mendeleden/jin.git
+cd jin
+bun install
+bun run build
+mv jin ~/.local/bin/
+```
+
+## Next step
+
+Run `jin init` to detect your local AI coding tools and create the initial config.

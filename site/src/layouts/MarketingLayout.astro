@@ -1,0 +1,29 @@
+---
+import '../styles/theme.css';
+import '../styles/marketing.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'jin - AI coding data layer',
+  description = 'Capture, inspect, and understand every AI coding session across Claude Code, Cursor, Codex, Warp, Gemini CLI, and more.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#f8f6f0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>{title}</title>
+  </head>
+  <body class="marketing-body">
+    <slot />
+  </body>
+</html>
