@@ -3,10 +3,19 @@ import MarketingLayout from '../layouts/MarketingLayout.astro';
 import SiteNav from '../components/SiteNav.astro';
 import InstallCommand from '../components/InstallCommand.astro';
 
-const metrics = [
-  ['10', 'agent adapters'],
-  ['3', 'deployment surfaces'],
-  ['0', 'workflow changes'],
+const heroSignals = [
+  {
+    label: 'Capture',
+    text: 'Every coding agent, no wrapper required.',
+  },
+  {
+    label: 'Normalize',
+    text: 'Sessions, tools, tokens, branches, and cost in one schema.',
+  },
+  {
+    label: 'Route',
+    text: 'Local by default, synced to Postgres, S3, R2, or webhooks.',
+  },
 ];
 
 const products = [
@@ -33,21 +42,42 @@ const products = [
   },
 ];
 
+const personaHeading = 'Developers, Team Leads, Engineering Leaders, Platform & DevEx.';
+const personaIntro =
+  'One private index across AI coding work, with the right view for the people building, managing, funding, and rolling it out.';
+
 const personas = [
   {
-    role: 'AI platform and DevEx leads',
-    need: 'Standardize AI coding telemetry without forcing developers into a wrapper.',
-    proof: 'Roll out one daemon and get a shared schema across every tool your team already uses.',
+    id: 'developers',
+    role: 'Developers',
+    title: 'Find the session behind the commit.',
+    text: 'Search prompts, tool calls, branches, and agent output when the useful context is buried in a tool-specific transcript.',
+    outcomes: ['Local session recall', 'Reviewable agent traces', 'Faster debugging after AI-assisted changes'],
+    stat: 'local first',
   },
   {
-    role: 'VP Eng and CTO',
-    need: 'Know where AI coding is helping, where spend is going, and which teams are actually adopting it.',
-    proof: 'Turn local agent activity into trendable data for cost, project velocity, model mix, and repeated failure modes.',
+    id: 'team-leads',
+    role: 'Team Leads',
+    title: 'Spot where AI work is helping or looping.',
+    text: 'Understand which projects, tools, and repeated workflows are moving faster without reading every transcript or chasing status.',
+    outcomes: ['Team adoption patterns', 'Repeated blocker visibility', 'Useful context for coaching'],
+    stat: 'team signal',
   },
   {
-    role: 'Staff engineers and tech leads',
-    need: 'Find the session where the decision, tool call, prompt, or branch change actually happened.',
-    proof: 'Search and inspect local history across tools instead of losing the work inside tool-specific logs.',
+    id: 'engineering-leaders',
+    role: 'Engineering Leaders',
+    title: 'Turn AI coding usage into operating signal.',
+    text: 'Track adoption, spend, model mix, and delivery patterns across teams while keeping the data in your infrastructure.',
+    outcomes: ['Spend and usage trends', 'Project-level momentum', 'Private analytics in your stack'],
+    stat: 'private sinks',
+  },
+  {
+    id: 'platform-devex',
+    role: 'Platform & DevEx',
+    title: 'Standardize telemetry without tool lock-in.',
+    text: 'Give platform and developer experience teams one passive daemon, one schema, and clean adoption data across every coding agent developers already use.',
+    outcomes: ['Adoption by tool and model', 'Policy gaps before incidents', 'No wrapper around developer workflow'],
+    stat: '10 adapters',
   },
 ];
 
@@ -64,50 +94,101 @@ const flow = ['Capture', 'Normalize', 'Inspect', 'Route', 'Understand'];
         alt="jin desktop routing view showing projects flowing into a team Postgres sink"
       />
       <div class="hero-shade" aria-hidden="true"></div>
-      <div class="hero-brand-panel" aria-hidden="true">
-        <img src="/images/jin-flowmark.png" alt="" />
-        <div class="brand-flow-line">
-          <span>sessions</span>
-          <span>index</span>
-          <span>insight</span>
-        </div>
-      </div>
       <div class="hero-content">
         <p class="eyebrow">Private telemetry for AI coding teams</p>
-        <h1 id="hero-title">
-          <span class="hero-title-static">AI coding work, indexed by</span>
-          <span class="flip-word" aria-label="jin">
-            <span>jin</span>
-            <span>JustIndex</span>
-          </span>
-        </h1>
+        <h1 id="hero-title">AI coding work, indexed.</h1>
         <p class="hero-copy">
-          The data layer for teams adopting AI coding tools. Capture the flow of local agent sessions, inspect the work, and route trusted intelligence into your own infrastructure.
+          Jin captures local agent sessions, turns scattered transcripts into a shared schema, and routes the signal your team needs into infrastructure you control.
         </p>
+        <div class="hero-value-grid" aria-label="Core value proposition">
+          {heroSignals.map((signal) => (
+            <article>
+              <span>{signal.label}</span>
+              <p>{signal.text}</p>
+            </article>
+          ))}
+        </div>
         <div class="hero-actions">
           <a class="button primary" href="/docs/guide/getting-started/">Install jin</a>
-          <a class="button secondary" href="#bundle">See the bundle</a>
         </div>
         <InstallCommand />
       </div>
     </section>
 
-    <section class="metric-strip" aria-label="Product metrics">
-      {metrics.map(([value, label]) => (
+    <section class="section persona-section" id="personas">
+      <div class="section-heading">
         <div>
-          <strong>{value}</strong>
-          <span>{label}</span>
+          <div class="section-kicker">For:</div>
+          <h2>{personaHeading}</h2>
         </div>
-      ))}
-    </section>
-
-    <section class="section intro-section">
-      <div class="section-kicker">The point</div>
-      <div class="intro-grid">
-        <h2>AI coding is moving into production. The data is still stuck on laptops.</h2>
-        <p>
-          Every team is trying Claude Code, Cursor, Codex, Warp, Gemini CLI, and the next tool after that. Jin makes the conversation history, tool calls, token usage, and project context queryable without changing how developers work.
-        </p>
+        <p>{personaIntro}</p>
+      </div>
+      <div class="persona-switcher" data-persona-switcher>
+        <div class="persona-tabs" role="tablist" aria-label="Jin personas">
+          {personas.map((persona, index) => (
+            <button
+              type="button"
+              class={index === 0 ? 'is-active' : ''}
+              id={`persona-tab-${persona.id}`}
+              role="tab"
+              aria-selected={index === 0 ? 'true' : 'false'}
+              aria-controls={`persona-panel-${persona.id}`}
+              data-persona-tab={persona.id}
+            >
+              {persona.role}
+            </button>
+          ))}
+        </div>
+        <div class="persona-panels">
+          {personas.map((persona, index) => (
+            <article
+              class={index === 0 ? 'persona-panel is-active' : 'persona-panel'}
+              id={`persona-panel-${persona.id}`}
+              role="tabpanel"
+              aria-labelledby={`persona-tab-${persona.id}`}
+              data-persona-panel={persona.id}
+              hidden={index !== 0}
+            >
+              <div class="persona-mock" aria-hidden="true">
+                <div class="mock-shell">
+                  <div class="mock-bar">
+                    <span></span><span></span><span></span>
+                  </div>
+                  <div class="mock-content">
+                    <div class="mock-head">
+                      <div class="mock-icon">jin</div>
+                      <div>
+                        <h3>{persona.role} view</h3>
+                        <p>{persona.stat}</p>
+                      </div>
+                    </div>
+                    <p class="mock-summary">{persona.text}</p>
+                    <div class="mock-tags">
+                      {persona.outcomes.slice(0, 3).map((outcome) => <span>{outcome}</span>)}
+                    </div>
+                    <div class="mock-list">
+                      <strong>What jin answers</strong>
+                      {persona.outcomes.map((outcome) => (
+                        <div>
+                          <span></span>
+                          <p>{outcome}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="persona-value">
+                <h3>{persona.title}</h3>
+                <p>{persona.text}</p>
+                <ul>
+                  {persona.outcomes.map((outcome) => <li>{outcome}</li>)}
+                </ul>
+                <a class="button secondary" href="/docs/guide/getting-started/">Get started</a>
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
 
@@ -116,7 +197,7 @@ const flow = ['Capture', 'Normalize', 'Inspect', 'Route', 'Understand'];
         <div class="section-kicker">The jin bundle</div>
         <h2>One product, three surfaces.</h2>
         <p>
-          Lead with the daemon. Let desktop and team analytics show how the data becomes useful.
+          Lead with the passive daemon. No hooks, no workflow wrapper, and no interrupted coding sessions just to collect telemetry.
         </p>
       </div>
       <div class="product-grid">
@@ -163,22 +244,6 @@ ready: one command for every developer</code></pre>
       </div>
     </section>
 
-    <section class="section" id="personas">
-      <div class="section-heading">
-        <div class="section-kicker">Who upgrades</div>
-        <h2>Built for the teams that need AI coding to be observable.</h2>
-      </div>
-      <div class="persona-list">
-        {personas.map((persona) => (
-          <article class="persona-row">
-            <h3>{persona.role}</h3>
-            <p>{persona.need}</p>
-            <strong>{persona.proof}</strong>
-          </article>
-        ))}
-      </div>
-    </section>
-
     <section class="section trust-section" id="security">
       <div>
         <div class="section-kicker">Trust model</div>
@@ -186,8 +251,8 @@ ready: one command for every developer</code></pre>
       </div>
       <div class="trust-grid">
         <article>
-          <h3>No wrappers</h3>
-          <p>Jin reads native tool data passively. Developers keep using the tools they already chose.</p>
+          <h3>No hooks</h3>
+          <p>Jin reads native tool data passively. It never inserts hooks into coding sessions or interrupts developers for telemetry.</p>
         </article>
         <article>
           <h3>Local first</h3>
@@ -219,3 +284,28 @@ ready: one command for every developer</code></pre>
     <span>FSL-1.1-ALv2</span>
   </footer>
 </MarketingLayout>
+
+<script>
+  document.querySelectorAll('[data-persona-switcher]').forEach((root) => {
+    const tabs = Array.from(root.querySelectorAll('[data-persona-tab]'));
+    const panels = Array.from(root.querySelectorAll('[data-persona-panel]'));
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const selected = tab.dataset.personaTab;
+
+        tabs.forEach((item) => {
+          const isActive = item === tab;
+          item.classList.toggle('is-active', isActive);
+          item.setAttribute('aria-selected', String(isActive));
+        });
+
+        panels.forEach((panel) => {
+          const isActive = panel.dataset.personaPanel === selected;
+          panel.classList.toggle('is-active', isActive);
+          panel.hidden = !isActive;
+        });
+      });
+    });
+  });
+</script>

@@ -1,33 +1,38 @@
-<div class="install-command" data-install-command>
+---
+import { installCommands } from '../lib/site-config.mjs';
+---
+
+<div
+  class="install-command"
+  data-install-command
+  data-unix-command={installCommands.unix}
+  data-windows-command={installCommands.windows}
+>
   <div class="install-tabs" role="tablist" aria-label="Install command operating system">
     <button type="button" class="is-active" data-os="unix">macOS / Linux</button>
     <button type="button" data-os="windows">Windows</button>
   </div>
   <div class="install-row">
     <span class="prompt" data-prompt>$</span>
-    <code data-command>curl -fsSL https://jin.builtbyeden.app/install.sh | sh</code>
+    <span class="install-code" data-command>{installCommands.unix}</span>
     <button type="button" class="copy-install" data-copy>Copy</button>
   </div>
 </div>
 
 <script is:inline>
-  const installCommands = {
-    unix: (origin) => `curl -fsSL ${origin}/install.sh | sh`,
-    windows: (origin) => `irm ${origin}/install.ps1 | iex`,
-  };
-
   document.querySelectorAll('[data-install-command]').forEach((root) => {
     const command = root.querySelector('[data-command]');
     const prompt = root.querySelector('[data-prompt]');
     const copy = root.querySelector('[data-copy]');
     const buttons = Array.from(root.querySelectorAll('[data-os]'));
-    const origin = window.location.protocol.startsWith('http')
-      ? window.location.origin
-      : 'https://jin.builtbyeden.app';
+    const commands = {
+      unix: root.dataset.unixCommand,
+      windows: root.dataset.windowsCommand,
+    };
     let os = navigator.userAgent.includes('Windows') ? 'windows' : 'unix';
 
     function render() {
-      command.textContent = installCommands[os](origin);
+      command.textContent = commands[os];
       prompt.textContent = os === 'windows' ? 'PS>' : '$';
       buttons.forEach((button) => {
         button.classList.toggle('is-active', button.dataset.os === os);
@@ -52,3 +57,76 @@
     render();
   });
 </script>
+
+<style>
+  .install-command {
+    width: min(620px, 100%);
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--paper-raised) 82%, transparent);
+    box-shadow: 0 22px 60px color-mix(in srgb, var(--dark) 12%, transparent);
+  }
+
+  .install-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--paper-muted) 72%, transparent);
+  }
+
+  .install-tabs button {
+    flex: 1;
+    min-height: 38px;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    font: 700 0.84rem var(--font-sans);
+    cursor: pointer;
+  }
+
+  .install-tabs button.is-active {
+    color: var(--green-dark);
+    border-bottom-color: var(--green);
+  }
+
+  .install-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 54px;
+    padding: 10px 12px 10px 16px;
+    color: #edf4f2;
+    background: #1f2d35;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+  }
+
+  .install-code {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #f5fbfa;
+    background: transparent;
+    font: inherit;
+  }
+
+  .prompt {
+    color: #a9b9bb;
+  }
+
+  .copy-install {
+    min-width: 66px;
+    height: 34px;
+    color: #edf4f2;
+    background: var(--dark-raised);
+    border: 1px solid var(--dark-line);
+    border-radius: 6px;
+    font: 700 0.78rem var(--font-sans);
+    cursor: pointer;
+  }
+</style>

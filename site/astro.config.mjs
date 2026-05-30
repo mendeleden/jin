@@ -1,8 +1,9 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { siteUrl } from './src/lib/site-config.mjs';
 
 export default defineConfig({
-  site: 'https://jin.builtbyeden.app',
+  site: siteUrl,
   integrations: [
     starlight({
       title: 'jin',
