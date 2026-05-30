@@ -1208,7 +1208,8 @@ export class CodexAdapter implements Adapter, V2Adapter {
     };
     try {
       await this.scanJsonlRawLines(filePath, (rawLine, index, meta) => {
-        if (rawLineHasType(rawLine, "session_meta")) {
+        const envelopeType = extractJsonStringFieldFromBuffer(rawLine, "type");
+        if (envelopeType === "session_meta") {
           const parsed = parseSmallJsonlLine(rawLine);
           const payload = asObject(parsed?.payload);
           if (payload) {
@@ -1224,42 +1225,46 @@ export class CodexAdapter implements Adapter, V2Adapter {
             return;
           }
 
-          const lineText = rawLineToString(rawLine);
-          const payloadStart = lineText.indexOf("\"payload\":");
-          adoptSessionId(extractJsonStringField(lineText, "id", payloadStart));
-          sessionTimestamp = extractJsonStringField(lineText, "timestamp", payloadStart) || sessionTimestamp;
-          cwd = extractJsonStringField(lineText, "cwd", payloadStart) || cwd;
-          gitRemote = extractJsonStringField(lineText, "repository_url", payloadStart) || gitRemote;
-          branch = extractJsonStringField(lineText, "branch", payloadStart) || branch;
-          parentThreadId = extractJsonStringField(lineText, "forked_from_id", payloadStart) || parentThreadId;
+          const payloadStart = findJsonFieldValueStartInBuffer(rawLine, "payload");
+          const gitStart = findJsonFieldValueStartInBuffer(rawLine, "git", payloadStart);
+          const sourceStart = findJsonFieldValueStartInBuffer(rawLine, "source", payloadStart);
+          const subagentStart = findJsonFieldValueStartInBuffer(rawLine, "subagent", sourceStart);
+          const threadSpawnStart = findJsonFieldValueStartInBuffer(rawLine, "thread_spawn", subagentStart);
+          adoptSessionId(extractJsonStringFieldFromBuffer(rawLine, "id", payloadStart));
+          sessionTimestamp = extractJsonStringFieldFromBuffer(rawLine, "timestamp", payloadStart) || sessionTimestamp;
+          cwd = extractJsonStringFieldFromBuffer(rawLine, "cwd", payloadStart) || cwd;
+          gitRemote = extractJsonStringFieldFromBuffer(rawLine, "repository_url", gitStart) || gitRemote;
+          branch = extractJsonStringFieldFromBuffer(rawLine, "branch", gitStart) || branch;
+          parentThreadId =
+            extractJsonStringFieldFromBuffer(rawLine, "parent_thread_id", threadSpawnStart) ||
+            extractJsonStringFieldFromBuffer(rawLine, "forked_from_id", payloadStart) ||
+            parentThreadId;
+          agentNickname = extractJsonStringFieldFromBuffer(rawLine, "agent_nickname", threadSpawnStart) || agentNickname;
           return;
         }
 
-        if (rawLineHasType(rawLine, "turn_context")) {
+        if (envelopeType === "turn_context") {
           currentTurn = currentTurn < 0 ? 1 : currentTurn + 1;
-          const lineText = rawLineToString(rawLine);
-          const payloadStart = lineText.indexOf("\"payload\":");
-          cwd = extractJsonStringField(lineText, "cwd", payloadStart) || cwd;
-          currentModel = extractJsonStringField(lineText, "model", payloadStart) || currentModel;
+          const payloadStart = findJsonFieldValueStartInBuffer(rawLine, "payload");
+          cwd = extractJsonStringFieldFromBuffer(rawLine, "cwd", payloadStart) || cwd;
+          currentModel = extractJsonStringFieldFromBuffer(rawLine, "model", payloadStart) || currentModel;
           return;
         }
 
-        if (rawLineHasType(rawLine, "compacted")) {
+        if (envelopeType === "compacted") {
           const parsed = parseSmallJsonlLine(rawLine);
           const payload = asObject(parsed?.payload);
-          const lineText = payload ? "" : rawLineToString(rawLine);
-          const payloadStart = lineText ? lineText.indexOf("\"payload\":") : -1;
-          const replacementStart = lineText.indexOf("\"replacement_history\"", payloadStart);
-          const payloadHeader = replacementStart >= 0
-            ? lineText.slice(0, replacementStart)
-            : lineText;
-          const timestamp = asString(parsed?.timestamp) || extractJsonStringField(lineText, "timestamp") || fallbackTimestamp;
+          const payloadStart = payload ? -1 : findJsonFieldValueStartInBuffer(rawLine, "payload");
+          const timestamp =
+            asString(parsed?.timestamp) ||
+            extractJsonStringFieldFromBuffer(rawLine, "timestamp") ||
+            fallbackTimestamp;
           const payloadId =
             asString(payload?.id) ||
-            extractJsonStringField(payloadHeader, "id", payloadStart);
+            extractJsonStringFieldFromBuffer(rawLine, "id", payloadStart);
           const turnId =
             asString(payload?.turn_id) ||
-            extractJsonStringField(payloadHeader, "turn_id", payloadStart);
+            extractJsonStringFieldFromBuffer(rawLine, "turn_id", payloadStart);
           addSegment(
             stableHash(
               sessionId,
@@ -1276,12 +1281,12 @@ export class CodexAdapter implements Adapter, V2Adapter {
           return;
         }
 
-        if (!rawLineHasType(rawLine, "response_item")) {
+        if (envelopeType !== "response_item") {
           return;
         }
 
         const lineText = rawLineToString(rawLine);
-        const payloadStart = lineText.indexOf("\"payload\":");
+        const payloadStart = findJsonFieldValueStart(lineText, "payload");
         if (payloadStart < 0) {
           return;
         }
@@ -1700,10 +1705,6 @@ function stableHash(...parts: string[]): string {
     .digest("hex");
 }
 
-function rawLineHasType(rawLine: Buffer, type: string): boolean {
-  return rawLine.indexOf(`"type":"${type}"`) >= 0;
-}
-
 function rawLineToString(rawLine: Buffer): string {
   return rawLine.toString("utf8");
 }
@@ -1726,49 +1727,188 @@ function extractJsonStringField(
   field: string,
   fromIndex = 0,
 ): string {
-  const start = Math.max(0, fromIndex);
-  const keyIndex = text.indexOf(`"${field}":`, start);
-  if (keyIndex < 0) {
-    return "";
-  }
-
-  let valueIndex = keyIndex + field.length + 3;
-  while (valueIndex < text.length && /\s/.test(text[valueIndex])) {
-    valueIndex += 1;
-  }
-  if (text[valueIndex] !== "\"") {
+  const valueIndex = findJsonFieldValueStart(text, field, fromIndex);
+  if (valueIndex < 0 || text[valueIndex] !== "\"") {
     return "";
   }
 
   return extractJsonStringPreview(text, valueIndex);
 }
 
+function extractJsonStringFieldFromBuffer(
+  rawLine: Buffer,
+  field: string,
+  objectStart = 0,
+): string {
+  const valueIndex = findJsonFieldValueStartInBuffer(rawLine, field, objectStart);
+  if (valueIndex < 0 || rawLine[valueIndex] !== 34) {
+    return "";
+  }
+
+  return extractJsonStringPreviewFromBuffer(rawLine, valueIndex);
+}
+
+// Discovery only needs shallow envelope fields. These scanners honor JSON
+// strings, nesting, whitespace, and key order without expanding large payloads.
+function findJsonFieldValueStart(
+  text: string,
+  field: string,
+  objectStart = 0,
+): number {
+  if (objectStart < 0) {
+    return -1;
+  }
+
+  let start = skipJsonWhitespace(text, Math.max(0, objectStart));
+  if (text[start] !== "{") {
+    return -1;
+  }
+
+  let depth = 0;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\"") {
+      if (depth !== 1) {
+        const skipped = skipJsonString(text, index);
+        if (skipped < 0) {
+          return -1;
+        }
+        index = skipped;
+        continue;
+      }
+
+      const key = readJsonStringToken(text, index);
+      if (!key) {
+        return -1;
+      }
+      const colonIndex = skipJsonWhitespace(text, key.nextIndex);
+      if (text[colonIndex] === ":") {
+        const valueIndex = skipJsonWhitespace(text, colonIndex + 1);
+        if (key.value === field) {
+          return valueIndex;
+        }
+      }
+      index = key.nextIndex - 1;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      depth -= 1;
+      if (depth <= 0) {
+        return -1;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function findJsonFieldValueStartInBuffer(
+  rawLine: Buffer,
+  field: string,
+  objectStart = 0,
+): number {
+  if (objectStart < 0) {
+    return -1;
+  }
+
+  let start = skipJsonWhitespaceInBuffer(rawLine, Math.max(0, objectStart));
+  if (rawLine[start] !== 123) {
+    return -1;
+  }
+
+  let depth = 0;
+  for (let index = start; index < rawLine.length; index += 1) {
+    const byte = rawLine[index];
+    if (byte === 34) {
+      if (depth !== 1) {
+        const skipped = skipJsonStringInBuffer(rawLine, index);
+        if (skipped < 0) {
+          return -1;
+        }
+        index = skipped;
+        continue;
+      }
+
+      const key = readJsonStringTokenFromBuffer(rawLine, index);
+      if (!key) {
+        return -1;
+      }
+      const colonIndex = skipJsonWhitespaceInBuffer(rawLine, key.nextIndex);
+      if (rawLine[colonIndex] === 58) {
+        const valueIndex = skipJsonWhitespaceInBuffer(rawLine, colonIndex + 1);
+        if (key.value === field) {
+          return valueIndex;
+        }
+      }
+      index = key.nextIndex - 1;
+      continue;
+    }
+
+    if (byte === 123 || byte === 91) {
+      depth += 1;
+      continue;
+    }
+    if (byte === 125 || byte === 93) {
+      depth -= 1;
+      if (depth <= 0) {
+        return -1;
+      }
+    }
+  }
+
+  return -1;
+}
+
 function extractMessageContentPreview(text: string, payloadStart: number): string {
-  const contentIndex = text.indexOf("\"content\":", payloadStart);
+  const contentIndex = findJsonFieldValueStart(text, "content", payloadStart);
   if (contentIndex < 0) {
     return "";
   }
 
-  let valueIndex = contentIndex + "\"content\":".length;
-  while (valueIndex < text.length && /\s/.test(text[valueIndex])) {
-    valueIndex += 1;
+  if (text[contentIndex] === "\"") {
+    return extractJsonStringPreview(text, contentIndex);
   }
 
-  if (text[valueIndex] === "\"") {
-    return extractJsonStringPreview(text, valueIndex);
-  }
-
-  const textIndex = text.indexOf("\"text\":", contentIndex);
+  const textIndex = findJsonFieldValueStartDeep(text, "text", contentIndex);
   if (textIndex >= 0) {
-    return extractJsonStringField(text, "text", textIndex);
+    return text[textIndex] === "\"" ? extractJsonStringPreview(text, textIndex) : "";
   }
 
-  const nestedContentIndex = text.indexOf("\"content\":", contentIndex + 1);
+  const nestedContentIndex = findJsonFieldValueStartDeep(text, "content", contentIndex + 1);
   if (nestedContentIndex >= 0) {
-    return extractJsonStringField(text, "content", nestedContentIndex);
+    return text[nestedContentIndex] === "\"" ? extractJsonStringPreview(text, nestedContentIndex) : "";
   }
 
   return "";
+}
+
+function findJsonFieldValueStartDeep(
+  text: string,
+  field: string,
+  fromIndex = 0,
+): number {
+  for (let index = Math.max(0, fromIndex); index < text.length; index += 1) {
+    if (text[index] !== "\"") {
+      continue;
+    }
+
+    const key = readJsonStringToken(text, index);
+    if (!key) {
+      return -1;
+    }
+    const colonIndex = skipJsonWhitespace(text, key.nextIndex);
+    if (text[colonIndex] === ":" && key.value === field) {
+      return skipJsonWhitespace(text, colonIndex + 1);
+    }
+    index = key.nextIndex - 1;
+  }
+
+  return -1;
 }
 
 function extractJsonStringPreview(
@@ -1776,6 +1916,26 @@ function extractJsonStringPreview(
   quoteIndex: number,
   maxChars = 240,
 ): string {
+  return readJsonStringToken(text, quoteIndex, maxChars)?.value ?? "";
+}
+
+function extractJsonStringPreviewFromBuffer(
+  rawLine: Buffer,
+  quoteIndex: number,
+  maxChars = 240,
+): string {
+  return readJsonStringTokenFromBuffer(rawLine, quoteIndex, maxChars)?.value ?? "";
+}
+
+function readJsonStringToken(
+  text: string,
+  quoteIndex: number,
+  maxChars = 240,
+): { value: string; nextIndex: number } | null {
+  if (text[quoteIndex] !== "\"") {
+    return null;
+  }
+
   let result = "";
   let chunkStart = quoteIndex + 1;
   for (let index = quoteIndex + 1; index < text.length; index += 1) {
@@ -1793,11 +1953,97 @@ function extractJsonStringPreview(
 
     if (char === "\"") {
       result = appendPreviewSlice(result, text.slice(chunkStart, index), maxChars);
-      return result;
+      return { value: result, nextIndex: index + 1 };
     }
   }
 
-  return result;
+  return null;
+}
+
+function readJsonStringTokenFromBuffer(
+  rawLine: Buffer,
+  quoteIndex: number,
+  maxChars = 240,
+): { value: string; nextIndex: number } | null {
+  if (rawLine[quoteIndex] !== 34) {
+    return null;
+  }
+
+  let result = "";
+  let chunkStart = quoteIndex + 1;
+  for (let index = quoteIndex + 1; index < rawLine.length; index += 1) {
+    const byte = rawLine[index];
+    if (byte === 92) {
+      result = appendPreviewSlice(result, rawLine.toString("utf8", chunkStart, index), maxChars);
+      const escaped = rawLine[index + 1] ?? 0;
+      if (result.length < maxChars) {
+        result += decodeJsonEscape(
+          String.fromCharCode(escaped),
+          rawLine.toString("ascii", index + 2, index + 6),
+        );
+      }
+      index += escaped === 117 ? 5 : 1;
+      chunkStart = index + 1;
+      continue;
+    }
+
+    if (byte === 34) {
+      result = appendPreviewSlice(result, rawLine.toString("utf8", chunkStart, index), maxChars);
+      return { value: result, nextIndex: index + 1 };
+    }
+  }
+
+  return null;
+}
+
+function skipJsonString(text: string, quoteIndex: number): number {
+  for (let index = quoteIndex + 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === "\"") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function skipJsonStringInBuffer(rawLine: Buffer, quoteIndex: number): number {
+  for (let index = quoteIndex + 1; index < rawLine.length; index += 1) {
+    const byte = rawLine[index];
+    if (byte === 92) {
+      index += 1;
+      continue;
+    }
+    if (byte === 34) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function skipJsonWhitespace(text: string, index: number): number {
+  let cursor = index;
+  while (cursor < text.length && /\s/.test(text[cursor])) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function skipJsonWhitespaceInBuffer(rawLine: Buffer, index: number): number {
+  let cursor = index;
+  while (cursor < rawLine.length) {
+    const byte = rawLine[cursor];
+    if (byte !== 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+      break;
+    }
+    cursor += 1;
+  }
+  return cursor;
 }
 
 function appendPreviewSlice(

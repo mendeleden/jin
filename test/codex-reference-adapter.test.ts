@@ -181,6 +181,48 @@ describe("CodexAdapter v2 reference contract", () => {
     expect(compacted!.conversation.endedAt).toBe("2026-03-26T10:05:01.000Z");
     expect(computeBundleHash(compacted!)).toBe(computeBundleHash(fullParsed));
   });
+
+  test("discovery indexing tolerates formatted JSON and reordered envelope keys", async () => {
+    const codexHome = makeCodexHome([
+      {
+        relativePath: "sessions/2026/03/27/rollout-formatted-envelope.jsonl",
+        contents: formattedEnvelopeFixture(),
+      },
+    ]);
+
+    const coldAdapter = new CodexAdapter(codexHome);
+    const refs = await coldAdapter.findChanged({ kind: "startup-scan" });
+    expect(refs).toHaveLength(2);
+    expect(refs[0]).toMatchObject({
+      id: "formatted-thread",
+      adapterId: "codex",
+    });
+
+    const compactedRef = refs.find((ref) => ref.id !== "formatted-thread");
+    expect(compactedRef).toBeDefined();
+
+    const state = coldAdapter.exportDiscoveryState();
+    expect(state.sources[0]?.payload).toMatchObject({
+      rootName: "Formatted root name",
+      cwd: "/tmp/formatted",
+      branch: "format-main",
+      gitRemote: "git@example.com:formatted/repo.git",
+    });
+
+    const warmAdapter = new CodexAdapter(codexHome);
+    warmAdapter.importDiscoveryState(state);
+    const compacted = await warmAdapter.loadConversation(compactedRef!);
+    const fullParsed = await loadFullParsedBundle(coldAdapter, compactedRef!);
+
+    expect(compacted).not.toBeNull();
+    expect(compacted!.conversation.name).toBe("Formatted root name");
+    expect(compacted!.conversation.relationship).toBe("compacted");
+    expect(compacted!.messages[0]).toMatchObject({
+      role: "user",
+      content: "Formatted compacted history",
+    });
+    expect(computeBundleHash(compacted!)).toBe(computeBundleHash(fullParsed));
+  });
 });
 
 function makeCodexHome(files: Array<{ relativePath: string; contents: string }>): string {
@@ -528,5 +570,16 @@ function delayedNameFixture(): string {
         content: [{ type: "output_text", text: "Continuing after compaction." }],
       },
     }),
+  ].join("\n");
+}
+
+function formattedEnvelopeFixture(): string {
+  return [
+    '{ "payload" : { "git" : { "branch" : "format-main", "repository_url" : "git@example.com:formatted/repo.git" }, "cwd" : "/tmp/formatted", "id" : "formatted-thread", "timestamp" : "2026-03-27T10:00:00.000Z" }, "timestamp" : "2026-03-27T10:00:00.000Z", "type" : "session_meta" }',
+    '{ "payload" : { "cwd" : "/tmp/formatted", "model" : "gpt-format", "turn_id" : "turn-1" }, "timestamp" : "2026-03-27T10:00:01.000Z", "type" : "turn_context" }',
+    '{ "payload" : { "content" : [ { "text" : "Formatted root name", "type" : "input_text" } ], "role" : "user", "type" : "message" }, "timestamp" : "2026-03-27T10:00:02.000Z", "type" : "response_item" }',
+    '{ "payload" : { "content" : [ { "text" : "Root response", "type" : "output_text" } ], "model" : "gpt-format", "role" : "assistant", "type" : "message" }, "timestamp" : "2026-03-27T10:00:03.000Z", "type" : "response_item" }',
+    '{ "payload" : { "replacement_history" : [ { "content" : [ { "text" : "Formatted compacted history", "type" : "input_text" } ], "role" : "user", "type" : "message" } ], "turn_id" : "compact-turn" }, "timestamp" : "2026-03-27T10:05:00.000Z", "type" : "compacted" }',
+    '{ "payload" : { "content" : [ { "text" : "Continuing formatted thread", "type" : "output_text" } ], "model" : "gpt-format", "role" : "assistant", "type" : "message" }, "timestamp" : "2026-03-27T10:05:01.000Z", "type" : "response_item" }',
   ].join("\n");
 }
