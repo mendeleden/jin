@@ -1,0 +1,54 @@
+<div class="install-command" data-install-command>
+  <div class="install-tabs" role="tablist" aria-label="Install command operating system">
+    <button type="button" class="is-active" data-os="unix">macOS / Linux</button>
+    <button type="button" data-os="windows">Windows</button>
+  </div>
+  <div class="install-row">
+    <span class="prompt" data-prompt>$</span>
+    <code data-command>curl -fsSL https://jin.builtbyeden.app/install.sh | sh</code>
+    <button type="button" class="copy-install" data-copy>Copy</button>
+  </div>
+</div>
+
+<script is:inline>
+  const installCommands = {
+    unix: (origin) => `curl -fsSL ${origin}/install.sh | sh`,
+    windows: (origin) => `irm ${origin}/install.ps1 | iex`,
+  };
+
+  document.querySelectorAll('[data-install-command]').forEach((root) => {
+    const command = root.querySelector('[data-command]');
+    const prompt = root.querySelector('[data-prompt]');
+    const copy = root.querySelector('[data-copy]');
+    const buttons = Array.from(root.querySelectorAll('[data-os]'));
+    const origin = window.location.protocol.startsWith('http')
+      ? window.location.origin
+      : 'https://jin.builtbyeden.app';
+    let os = navigator.userAgent.includes('Windows') ? 'windows' : 'unix';
+
+    function render() {
+      command.textContent = installCommands[os](origin);
+      prompt.textContent = os === 'windows' ? 'PS>' : '$';
+      buttons.forEach((button) => {
+        button.classList.toggle('is-active', button.dataset.os === os);
+      });
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        os = button.dataset.os;
+        render();
+      });
+    });
+
+    copy.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(command.textContent);
+      copy.textContent = 'Copied';
+      setTimeout(() => {
+        copy.textContent = 'Copy';
+      }, 1600);
+    });
+
+    render();
+  });
+</script>

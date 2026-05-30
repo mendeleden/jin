@@ -1,0 +1,221 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+import SiteNav from '../components/SiteNav.astro';
+import InstallCommand from '../components/InstallCommand.astro';
+
+const metrics = [
+  ['10', 'agent adapters'],
+  ['3', 'deployment surfaces'],
+  ['0', 'workflow changes'],
+];
+
+const products = [
+  {
+    name: 'jin',
+    alias: 'JustIndex',
+    title: 'The passive daemon',
+    text: 'Captures local AI coding sessions across Claude Code, Cursor, Codex, Warp, Gemini CLI, and more, then normalizes them into one local data model.',
+    points: ['Read-only adapters', 'Local SQLite store', 'Tool calls, tokens, cost, branches'],
+  },
+  {
+    name: 'jin desktop',
+    alias: 'JustInfo',
+    title: 'The developer surface',
+    text: 'Gives engineers a fast local interface for session recall, routing status, project history, and the context behind agent-generated changes.',
+    points: ['Session search', 'Project routing', 'Desktop control plane'],
+  },
+  {
+    name: 'jin team',
+    alias: 'JustInsight',
+    title: 'The organization view',
+    text: 'Routes normalized sessions into your Postgres, S3, R2, or webhook infrastructure so leaders can understand adoption, spend, and delivery patterns.',
+    points: ['Team onboarding codes', 'Private sinks', 'Usage and workflow analytics'],
+  },
+];
+
+const personas = [
+  {
+    role: 'AI platform and DevEx leads',
+    need: 'Standardize AI coding telemetry without forcing developers into a wrapper.',
+    proof: 'Roll out one daemon and get a shared schema across every tool your team already uses.',
+  },
+  {
+    role: 'VP Eng and CTO',
+    need: 'Know where AI coding is helping, where spend is going, and which teams are actually adopting it.',
+    proof: 'Turn local agent activity into trendable data for cost, project velocity, model mix, and repeated failure modes.',
+  },
+  {
+    role: 'Staff engineers and tech leads',
+    need: 'Find the session where the decision, tool call, prompt, or branch change actually happened.',
+    proof: 'Search and inspect local history across tools instead of losing the work inside tool-specific logs.',
+  },
+];
+
+const flow = ['Capture', 'Normalize', 'Inspect', 'Route', 'Understand'];
+---
+
+<MarketingLayout>
+  <SiteNav />
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <img
+        class="hero-backdrop"
+        src="/images/jin-desktop-routing.png"
+        alt="jin desktop routing view showing projects flowing into a team Postgres sink"
+      />
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-brand-panel" aria-hidden="true">
+        <img src="/images/jin-flowmark.png" alt="" />
+        <div class="brand-flow-line">
+          <span>sessions</span>
+          <span>index</span>
+          <span>insight</span>
+        </div>
+      </div>
+      <div class="hero-content">
+        <p class="eyebrow">Private telemetry for AI coding teams</p>
+        <h1 id="hero-title">
+          <span class="hero-title-static">AI coding work, indexed by</span>
+          <span class="flip-word" aria-label="jin">
+            <span>jin</span>
+            <span>JustIndex</span>
+          </span>
+        </h1>
+        <p class="hero-copy">
+          The data layer for teams adopting AI coding tools. Capture the flow of local agent sessions, inspect the work, and route trusted intelligence into your own infrastructure.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="/docs/guide/getting-started/">Install jin</a>
+          <a class="button secondary" href="#bundle">See the bundle</a>
+        </div>
+        <InstallCommand />
+      </div>
+    </section>
+
+    <section class="metric-strip" aria-label="Product metrics">
+      {metrics.map(([value, label]) => (
+        <div>
+          <strong>{value}</strong>
+          <span>{label}</span>
+        </div>
+      ))}
+    </section>
+
+    <section class="section intro-section">
+      <div class="section-kicker">The point</div>
+      <div class="intro-grid">
+        <h2>AI coding is moving into production. The data is still stuck on laptops.</h2>
+        <p>
+          Every team is trying Claude Code, Cursor, Codex, Warp, Gemini CLI, and the next tool after that. Jin makes the conversation history, tool calls, token usage, and project context queryable without changing how developers work.
+        </p>
+      </div>
+    </section>
+
+    <section class="section" id="bundle">
+      <div class="section-heading">
+        <div class="section-kicker">The jin bundle</div>
+        <h2>One product, three surfaces.</h2>
+        <p>
+          Lead with the daemon. Let desktop and team analytics show how the data becomes useful.
+        </p>
+      </div>
+      <div class="product-grid">
+        {products.map((product) => (
+          <article class="product-card">
+            <div class="product-name">
+              <span>{product.name}</span>
+              <small>{product.alias}</small>
+            </div>
+            <h3>{product.title}</h3>
+            <p>{product.text}</p>
+            <ul>
+              {product.points.map((point) => <li>{point}</li>)}
+            </ul>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="section flow-section" aria-labelledby="flow-title">
+      <div>
+        <div class="section-kicker">How it works</div>
+        <h2 id="flow-title">A private system of record for agentic work.</h2>
+      </div>
+      <div class="flow-rail">
+        {flow.map((item, index) => (
+          <div class="flow-step">
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <strong>{item}</strong>
+          </div>
+        ))}
+      </div>
+      <div class="code-window" aria-label="Example jin stats output">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+        </div>
+        <pre><code>$ jin stats --since=7d
+claude-code  421 sessions  38.2M tokens  $312.40
+cursor       106 sessions   9.7M tokens   $71.12
+codex         64 sessions   6.1M tokens   $44.90
+
+$ jin team-config --type=postgres --team-id=platform
+ready: one command for every developer</code></pre>
+      </div>
+    </section>
+
+    <section class="section" id="personas">
+      <div class="section-heading">
+        <div class="section-kicker">Who upgrades</div>
+        <h2>Built for the teams that need AI coding to be observable.</h2>
+      </div>
+      <div class="persona-list">
+        {personas.map((persona) => (
+          <article class="persona-row">
+            <h3>{persona.role}</h3>
+            <p>{persona.need}</p>
+            <strong>{persona.proof}</strong>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="section trust-section" id="security">
+      <div>
+        <div class="section-kicker">Trust model</div>
+        <h2>Developer-native by default. Enterprise-ready by architecture.</h2>
+      </div>
+      <div class="trust-grid">
+        <article>
+          <h3>No wrappers</h3>
+          <p>Jin reads native tool data passively. Developers keep using the tools they already chose.</p>
+        </article>
+        <article>
+          <h3>Local first</h3>
+          <p>The daemon normalizes to a local store before anything is routed to a team destination.</p>
+        </article>
+        <article>
+          <h3>Your infrastructure</h3>
+          <p>Send data to Postgres, S3, R2, or webhooks without adopting another hosted black box.</p>
+        </article>
+        <article>
+          <h3>One schema</h3>
+          <p>Compare tools, models, projects, token usage, and tool calls without hand-parsing logs.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div>
+        <p class="eyebrow">Start with the daemon</p>
+        <h2>Install jin. Build the AI coding system of record.</h2>
+      </div>
+      <a class="button primary" href="/docs/guide/getting-started/">Get started</a>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <span>jin</span>
+    <a href="/docs/">Docs</a>
+    <a href="https://github.com/mendeleden/jin">GitHub</a>
+    <span>FSL-1.1-ALv2</span>
+  </footer>
+</MarketingLayout>

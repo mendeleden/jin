@@ -15,6 +15,10 @@ test-harness/.env
 site/docs/public/install.sh
 site/docs/public/install.ps1
 site/docs/.vitepress/dist/
+site/.astro/
+site/dist/
+site/public/install.sh
+site/public/install.ps1
 site/package-lock.json
 
 # Claude Code worktrees
