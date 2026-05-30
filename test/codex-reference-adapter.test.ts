@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { CodexAdapter } from "../src/adapters/codex";
+import type { ConversationBundle, ConversationRef } from "../src/contracts/conversations";
+import { computeBundleHash } from "../src/db/bundle";
 
 const SIMPLE_FIXTURE = join(process.cwd(), "test/fixtures/codex/2026-02-21T12-48-43-testcodex.jsonl");
 const tempRoots: string[] = [];
@@ -146,6 +148,81 @@ describe("CodexAdapter v2 reference contract", () => {
       },
     ]);
   });
+
+  test("cached compacted loads retain the root name when the first user appears after segment detection", async () => {
+    const codexHome = makeCodexHome([
+      {
+        relativePath: "sessions/2026/03/26/rollout-delayed-name.jsonl",
+        contents: delayedNameFixture(),
+      },
+    ]);
+
+    const coldAdapter = new CodexAdapter(codexHome);
+    const refs = await coldAdapter.findChanged({ kind: "startup-scan" });
+    expect(refs).toHaveLength(2);
+
+    const compactedRef = refs.find((ref) => ref.id !== "delayed-name-thread");
+    expect(compactedRef).toBeDefined();
+
+    const state = coldAdapter.exportDiscoveryState();
+    expect(state.sources[0]?.payload).toMatchObject({
+      rootName: "Name this conversation from the delayed user turn",
+    });
+
+    const warmAdapter = new CodexAdapter(codexHome);
+    warmAdapter.importDiscoveryState(state);
+    const compacted = await warmAdapter.loadConversation(compactedRef!);
+    const fullParsed = await loadFullParsedBundle(coldAdapter, compactedRef!);
+
+    expect(compacted).not.toBeNull();
+    expect(compacted!.conversation.name).toBe("Name this conversation from the delayed user turn");
+    expect(compacted!.conversation.relationship).toBe("compacted");
+    expect(compacted!.conversation.startedAt).toBe("2026-03-26T10:05:00.000Z");
+    expect(compacted!.conversation.endedAt).toBe("2026-03-26T10:05:01.000Z");
+    expect(computeBundleHash(compacted!)).toBe(computeBundleHash(fullParsed));
+  });
+
+  test("discovery indexing tolerates formatted JSON and reordered envelope keys", async () => {
+    const codexHome = makeCodexHome([
+      {
+        relativePath: "sessions/2026/03/27/rollout-formatted-envelope.jsonl",
+        contents: formattedEnvelopeFixture(),
+      },
+    ]);
+
+    const coldAdapter = new CodexAdapter(codexHome);
+    const refs = await coldAdapter.findChanged({ kind: "startup-scan" });
+    expect(refs).toHaveLength(2);
+    expect(refs[0]).toMatchObject({
+      id: "formatted-thread",
+      adapterId: "codex",
+    });
+
+    const compactedRef = refs.find((ref) => ref.id !== "formatted-thread");
+    expect(compactedRef).toBeDefined();
+
+    const state = coldAdapter.exportDiscoveryState();
+    expect(state.sources[0]?.payload).toMatchObject({
+      rootName: "Formatted root name",
+      cwd: "/tmp/formatted",
+      branch: "format-main",
+      gitRemote: "git@example.com:formatted/repo.git",
+    });
+
+    const warmAdapter = new CodexAdapter(codexHome);
+    warmAdapter.importDiscoveryState(state);
+    const compacted = await warmAdapter.loadConversation(compactedRef!);
+    const fullParsed = await loadFullParsedBundle(coldAdapter, compactedRef!);
+
+    expect(compacted).not.toBeNull();
+    expect(compacted!.conversation.name).toBe("Formatted root name");
+    expect(compacted!.conversation.relationship).toBe("compacted");
+    expect(compacted!.messages[0]).toMatchObject({
+      role: "user",
+      content: "Formatted compacted history",
+    });
+    expect(computeBundleHash(compacted!)).toBe(computeBundleHash(fullParsed));
+  });
 });
 
 function makeCodexHome(files: Array<{ relativePath: string; contents: string }>): string {
@@ -159,6 +236,37 @@ function makeCodexHome(files: Array<{ relativePath: string; contents: string }>)
   }
 
   return root;
+}
+
+async function loadFullParsedBundle(
+  adapter: CodexAdapter,
+  ref: ConversationRef,
+): Promise<ConversationBundle> {
+  const harness = adapter as unknown as {
+    buildFileModel(filePath: string): Promise<unknown | null>;
+    resolveBase(model: unknown): Promise<unknown>;
+    resolveConversationGit(model: unknown): unknown;
+    buildBundle(
+      model: unknown,
+      base: unknown,
+      git: unknown,
+      index: number,
+    ): ConversationBundle;
+  };
+  const model = await harness.buildFileModel(ref.sourcePath);
+  if (!model) {
+    throw new Error(`expected full Codex model for ${ref.sourcePath}`);
+  }
+
+  const segments = (model as { segments: Array<{ id: string }> }).segments;
+  const segmentIndex = segments.findIndex((segment) => segment.id === ref.id);
+  if (segmentIndex < 0) {
+    throw new Error(`expected full Codex model to include segment ${ref.id}`);
+  }
+
+  const base = await harness.resolveBase(model);
+  const git = harness.resolveConversationGit(model);
+  return harness.buildBundle(model, base, git, segmentIndex);
 }
 
 function parentFixture(): string {
@@ -386,5 +494,92 @@ function childFixture(): string {
         content: [{ type: "output_text", text: "The patch looks correct." }],
       },
     }),
+  ].join("\n");
+}
+
+function delayedNameFixture(): string {
+  return [
+    JSON.stringify({
+      timestamp: "2026-03-26T10:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: "delayed-name-thread",
+        timestamp: "2026-03-26T10:00:00.000Z",
+        cwd: "/tmp/project",
+        originator: "Codex Desktop",
+        source: "vscode",
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:00:01.000Z",
+      type: "turn_context",
+      payload: {
+        turn_id: "turn-1",
+        cwd: "/tmp/project",
+        model: "gpt-5.4",
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:00:02.000Z",
+      type: "response_item",
+      payload: {
+        type: "reasoning",
+        summary: [],
+        encrypted_content: "gAAAAA-before-user",
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:00:03.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Name this conversation from the delayed user turn" }],
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:00:04.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        model: "gpt-5.4",
+        content: [{ type: "output_text", text: "I will keep that name." }],
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:05:00.000Z",
+      type: "compacted",
+      payload: {
+        replacement_history: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Compacted follow-up" }],
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-03-26T10:05:01.000Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        model: "gpt-5.4",
+        content: [{ type: "output_text", text: "Continuing after compaction." }],
+      },
+    }),
+  ].join("\n");
+}
+
+function formattedEnvelopeFixture(): string {
+  return [
+    '{ "payload" : { "git" : { "branch" : "format-main", "repository_url" : "git@example.com:formatted/repo.git" }, "cwd" : "/tmp/formatted", "id" : "formatted-thread", "timestamp" : "2026-03-27T10:00:00.000Z" }, "timestamp" : "2026-03-27T10:00:00.000Z", "type" : "session_meta" }',
+    '{ "payload" : { "cwd" : "/tmp/formatted", "model" : "gpt-format", "turn_id" : "turn-1" }, "timestamp" : "2026-03-27T10:00:01.000Z", "type" : "turn_context" }',
+    '{ "payload" : { "content" : [ { "text" : "Formatted root name", "type" : "input_text" } ], "role" : "user", "type" : "message" }, "timestamp" : "2026-03-27T10:00:02.000Z", "type" : "response_item" }',
+    '{ "payload" : { "content" : [ { "text" : "Root response", "type" : "output_text" } ], "model" : "gpt-format", "role" : "assistant", "type" : "message" }, "timestamp" : "2026-03-27T10:00:03.000Z", "type" : "response_item" }',
+    '{ "payload" : { "replacement_history" : [ { "content" : [ { "text" : "Formatted compacted history", "type" : "input_text" } ], "role" : "user", "type" : "message" } ], "turn_id" : "compact-turn" }, "timestamp" : "2026-03-27T10:05:00.000Z", "type" : "compacted" }',
+    '{ "payload" : { "content" : [ { "text" : "Continuing formatted thread", "type" : "output_text" } ], "model" : "gpt-format", "role" : "assistant", "type" : "message" }, "timestamp" : "2026-03-27T10:05:01.000Z", "type" : "response_item" }',
   ].join("\n");
 }
