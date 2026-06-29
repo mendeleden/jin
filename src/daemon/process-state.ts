@@ -1,7 +1,6 @@
-import { readFileSync, unlinkSync } from "fs";
+import { readFileSync } from "fs";
 import { spawnSync } from "node:child_process";
 import { join } from "path";
-import { configDir } from "../config";
 import {
   SHUTDOWN_DRAIN_TIMEOUT_MS,
   type RuntimeIssue,
@@ -10,13 +9,13 @@ import {
   type RuntimeState,
 } from "../contracts/lifecycle";
 import {
+  clearRuntimePidFile,
   clearRuntimeState,
   getRuntimeStatus,
   markRuntimeStopping,
 } from "./runtime-state";
 import { windowsTaskIdentityPowerShellLines } from "../windows-task";
 
-const PID_FILE = join(configDir(), "jin.pid");
 const DEFAULT_STOP_WAIT_MS = 2_000;
 
 export interface ComponentState {
@@ -74,7 +73,6 @@ export async function stopWatcher(
 ): Promise<StopWatcherResult> {
   const runtime = getRuntimeStatus();
   if (runtime.state === "stopped" || !runtime.owner) {
-    cleanupPidFile(PID_FILE);
     clearRuntimeState();
     return {
       requested: false,
@@ -92,8 +90,8 @@ export async function stopWatcher(
     await requestServiceStop();
     const completed = await waitForServiceStop(waitForExitMs);
     if (completed) {
-      cleanupPidFile(PID_FILE);
-      clearRuntimeState();
+      clearRuntimePidFile(runtime.owner);
+      clearRuntimeState(runtime.owner);
     }
     return {
       requested: true,
@@ -107,8 +105,8 @@ export async function stopWatcher(
   try {
     process.kill(runtime.owner.pid, "SIGTERM");
   } catch {
-    cleanupPidFile(PID_FILE);
-    clearRuntimeState();
+    clearRuntimePidFile(runtime.owner);
+    clearRuntimeState(runtime.owner);
     return {
       requested: true,
       completed: true,
@@ -120,8 +118,8 @@ export async function stopWatcher(
 
   const completed = await waitForPidExit(runtime.owner.pid, waitForExitMs);
   if (completed) {
-    cleanupPidFile(PID_FILE);
-    clearRuntimeState();
+    clearRuntimePidFile(runtime.owner);
+    clearRuntimeState(runtime.owner);
     return {
       requested: true,
       completed: true,
@@ -147,8 +145,8 @@ export async function stopWatcher(
 
   const forced = await waitForPidExit(runtime.owner.pid, 1_000);
   if (forced) {
-    cleanupPidFile(PID_FILE);
-    clearRuntimeState();
+    clearRuntimePidFile(runtime.owner);
+    clearRuntimeState(runtime.owner);
   }
 
   return {
@@ -279,12 +277,6 @@ async function waitForServiceStop(timeoutMs: number): Promise<boolean> {
   }
 
   return false;
-}
-
-function cleanupPidFile(path: string): void {
-  try {
-    unlinkSync(path);
-  } catch {}
 }
 
 function sleep(ms: number): Promise<void> {

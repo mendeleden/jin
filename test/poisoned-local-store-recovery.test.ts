@@ -39,7 +39,9 @@ mock.module("../src/daemon/runtime-state", () => ({
   },
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
+  getRuntimeStatusForCurrentProcess: () => runtimeStatus,
   isServiceInstalled: () => false,
+  clearRuntimePidFile: () => {},
   markRuntimeRunning: () => {},
   markRuntimeStarting: () => {},
   runModeLabel: (mode: string) => mode,
@@ -49,6 +51,13 @@ mock.module("../src/commands/watch", () => ({
   watchCommand: async () => {
     throw watchFailure;
   },
+}));
+
+mock.module("../src/api/client", () => ({
+  requestDaemonControlStatus: async () => ({
+    status: "failed",
+    message: "socket missing",
+  }),
 }));
 
 mock.module("../src/config", () => ({

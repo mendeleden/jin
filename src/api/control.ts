@@ -6,6 +6,7 @@ import { posix, win32 } from "path";
 import {
   getRuntimePaths,
   getRuntimeStatus,
+  getRuntimeStatusForCurrentProcess,
 } from "../daemon/runtime-state";
 import type {
   DesktopControlAction,
@@ -17,6 +18,8 @@ import type {
 } from "../contracts/desktop";
 import type {
   RuntimeIssue,
+  RuntimeMode,
+  RuntimeStatus,
   RuntimeState,
 } from "../contracts/lifecycle";
 
@@ -45,6 +48,7 @@ export interface LocalControlBoundary {
 }
 
 export interface LocalControlBoundaryOptions {
+  currentRuntimeMode?: RuntimeMode;
   executeAction?: (
     action: LocalControlAction,
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
@@ -67,12 +71,23 @@ export function createLocalControlBoundary(
   options: LocalControlBoundaryOptions = {},
 ): LocalControlBoundary {
   const executeAction = options.executeAction ?? executeLifecycleAction;
-  const getStatus = options.getStatus ?? getLocalControlStatus;
+  const getCurrentRuntimeStatus = options.currentRuntimeMode
+    ? () => getRuntimeStatusForCurrentProcess(options.currentRuntimeMode!)
+    : null;
+  const getStatus =
+    options.getStatus ??
+    (() =>
+      getLocalControlStatus(
+        getCurrentRuntimeStatus
+          ? { runtime: getCurrentRuntimeStatus() }
+          : undefined,
+      ));
   const requestConfigReload = options.requestConfigReload;
 
   return {
     getStatus,
     async runAction(action) {
+      getCurrentRuntimeStatus?.();
       const result = await executeAction(action);
       return {
         action,
@@ -118,10 +133,14 @@ export function createLocalControlBoundary(
   };
 }
 
-export function getLocalControlStatus(): LocalControlStatusDto {
-  const runtime = getRuntimeStatus();
+export function getLocalControlStatus(options: {
+  runtime?: RuntimeStatus;
+} = {}): LocalControlStatusDto {
+  const runtime = options.runtime ?? getRuntimeStatus();
   const issues = runtime.issues ?? [];
-  const components = getAllState().map((component) => ({ ...component }));
+  const components = options.runtime
+    ? componentsForRuntime(runtime)
+    : getAllState().map((component) => ({ ...component }));
   const paths = getRuntimePaths();
 
   return {
@@ -154,6 +173,23 @@ export function getLocalControlStatus(): LocalControlStatusDto {
       socket: paths.socketPath,
     },
   };
+}
+
+function componentsForRuntime(runtime: RuntimeStatus): LocalControlComponentDto[] {
+  if (runtime.state === "stopped" || !runtime.owner) {
+    return [{ name: "watcher", status: "stopped", lifecycleState: "stopped" }];
+  }
+
+  return [
+    {
+      name: "watcher",
+      status: "running",
+      pid: runtime.owner.pid,
+      mode: runtime.owner.mode,
+      lifecycleState: runtime.state,
+      ...(runtime.issues.length > 0 ? { issues: runtime.issues } : {}),
+    },
+  ];
 }
 
 async function executeLifecycleAction(

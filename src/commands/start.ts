@@ -1,4 +1,5 @@
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "../contracts/lifecycle";
+import { requestDaemonControlStatus } from "../api/client";
 import {
   getWatcherState,
   stopWatcher,
@@ -24,6 +25,11 @@ export async function startCommand(opts: {
 
   // --service: install as OS service
   if (opts.service) {
+    if (watcherState.status !== "running" && await localSocketResponds()) {
+      printRespondingSocketRefusal("enable service mode");
+      return;
+    }
+
     if (watcherState.status === "running" && watcherState.mode === "service") {
       console.log("  jin is already running under the OS service manager.");
       console.log("  Use service control or `jin service status` for details.");
@@ -65,6 +71,11 @@ export async function startCommand(opts: {
       console.log("  Use `jin status` or `jin stop` instead of starting a second owner.");
     }
   } else {
+    if (await localSocketResponds()) {
+      printRespondingSocketRefusal("start a detached daemon");
+      return;
+    }
+
     if (isServiceInstalled()) {
       console.log("  Note: OS service is installed but not active.");
       console.log("  The service may start on reboot. Consider `jin start --service` instead.\n");
@@ -88,6 +99,17 @@ export async function startCommand(opts: {
     }
   }
 
+}
+
+async function localSocketResponds(): Promise<boolean> {
+  const probe = await requestDaemonControlStatus({ timeoutMs: 500 });
+  return probe.status === "available";
+}
+
+function printRespondingSocketRefusal(action: string): void {
+  console.log("  A Jin daemon socket is already responding, but local owner metadata is missing.");
+  console.log(`  Refusing to ${action} because that could create a second runtime owner.`);
+  console.log("  Run `jin stop` or remove the stale runtime process before retrying.");
 }
 
 export async function restartCommand(opts: {

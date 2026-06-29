@@ -1,5 +1,6 @@
 import { getRuntimePaths } from "../daemon/runtime-state";
 import { DESKTOP_AUTH_HEADER, getDesktopApiToken } from "./auth";
+import type { DesktopControlStatus } from "../contracts/desktop";
 
 export type ConfigReloadNotificationResult =
   | {
@@ -23,6 +24,17 @@ export interface RequestConfigReloadOptions {
   token?: string;
   timeoutMs?: number;
 }
+
+export type LocalControlStatusProbeResult =
+  | {
+      status: "available";
+      statusCode: number;
+      control: DesktopControlStatus;
+    }
+  | {
+      status: "failed";
+      message: string;
+    };
 
 interface BunUnixRequestInit extends RequestInit {
   unix?: string;
@@ -74,13 +86,53 @@ export async function requestDaemonConfigReload(
   }
 }
 
+export async function requestDaemonControlStatus(
+  options: RequestConfigReloadOptions = {},
+): Promise<LocalControlStatusProbeResult> {
+  const endpoint = options.endpoint ?? getRuntimePaths().localEndpoint;
+  const token = options.token ?? getDesktopApiToken();
+  const fetchImpl = options.fetch ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("local daemon API request timed out"));
+  }, options.timeoutMs ?? DEFAULT_RELOAD_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetchImpl(
+      buildLocalApiUrl(endpoint, "/api/control/status"),
+      buildRequestInit(endpoint, token, controller.signal, "GET"),
+    );
+    const payload = await readJsonObject(response);
+    if (!response.ok || !isControlStatus(payload)) {
+      return {
+        status: "failed",
+        message: `Control status request failed with HTTP ${response.status}.`,
+      };
+    }
+
+    return {
+      status: "available",
+      statusCode: response.status,
+      control: payload,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      message: formatError(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function buildRequestInit(
   endpoint: string,
   token: string,
   signal: AbortSignal,
+  method: "GET" | "POST" = "POST",
 ): BunUnixRequestInit {
   const init: BunUnixRequestInit = {
-    method: "POST",
+    method,
     signal,
     headers: {
       [DESKTOP_AUTH_HEADER]: token,
@@ -124,6 +176,13 @@ function readPayloadMessage(payload: Record<string, any> | null): string | null 
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
+}
+
+function isControlStatus(value: unknown): value is DesktopControlStatus {
+  if (!isRecord(value) || !isRecord(value.runtime)) {
+    return false;
+  }
+  return typeof value.runtime.state === "string";
 }
 
 function formatError(error: unknown): string {

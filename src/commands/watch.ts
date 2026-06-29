@@ -26,13 +26,14 @@ import {
   appendFileSync,
   existsSync,
   readFileSync,
-  unlinkSync,
   watch,
   writeFileSync,
   type FSWatcher,
 } from "fs";
 import { basename, join } from "path";
 import { resolveSelfCommand } from "../runtime/self-command";
+import { clearRuntimePidFile } from "../daemon/runtime-state";
+import type { RuntimeMode } from "../contracts/lifecycle";
 
 type RuntimeLog = (message: string) => void;
 const CONFIG_RELOAD_WATCH_DEBOUNCE_MS = 150;
@@ -149,6 +150,7 @@ export async function watchCommand(opts: {
     apiServer = startLocalApiServer({
       queryStore: store,
       controlBoundary: createLocalControlBoundary({
+        currentRuntimeMode: currentRuntimeMode(),
         requestConfigReload: () => pipelineHandle.reloadConfig("command"),
       }),
       diagnosticLogPath: diagnosticPath,
@@ -642,9 +644,17 @@ function isRunning(): boolean {
 }
 
 function cleanup(): void {
-  try {
-    unlinkSync(pidFilePath());
-  } catch {}
+  clearRuntimePidFile(process.pid);
+}
+
+function currentRuntimeMode(): RuntimeMode {
+  if (process.env.JIN_LAUNCHED_BY_SERVICE) {
+    return "service";
+  }
+  if (process.env.JIN_DAEMON) {
+    return "daemon";
+  }
+  return "foreground";
 }
 
 function formatError(error: unknown): string {

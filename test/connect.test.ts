@@ -34,10 +34,12 @@ mock.module("../src/sinks/registry", () => ({
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => ({ state: "stopped", issues: [] }),
+  getRuntimeStatusForCurrentProcess: () => ({ state: "stopped", issues: [] }),
   isServiceInstalled: () => false,
   markRuntimeStarting: () => ({ state: "starting", issues: [] }),
   markRuntimeRunning: () => ({ state: "running", issues: [] }),
   clearRuntimeState: () => {},
+  clearRuntimePidFile: () => {},
   runModeLabel: (mode: string) => mode,
 }));
 

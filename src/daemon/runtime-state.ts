@@ -211,15 +211,17 @@ export function getRuntimeStatus(): RuntimeStatus {
 
   if (!owner) {
     if (persisted) {
-      clearRuntimeState();
+      clearRuntimeState(persisted.owner ?? null);
     }
     return { state: "stopped", issues: [] };
   }
 
-  const issues = persisted?.issues ?? [];
-  const state = resolveRuntimeState(owner, persisted, issues);
+  const ownerDrifted = !persisted || hasOwnerDrifted(owner, persisted.owner);
+  const activePersisted = ownerDrifted ? null : persisted;
+  const issues = activePersisted?.issues ?? [];
+  const state = resolveRuntimeState(owner, activePersisted, issues);
 
-  if (!persisted || hasOwnerDrifted(owner, persisted.owner)) {
+  if (ownerDrifted) {
     writePersistedRuntimeState(state, owner, issues);
   }
 
@@ -228,6 +230,41 @@ export function getRuntimeStatus(): RuntimeStatus {
     owner,
     issues,
   };
+}
+
+export function getRuntimeStatusForCurrentProcess(
+  mode: RuntimeMode,
+  issues: RuntimeIssue[] = [],
+): RuntimeStatus {
+  const owner = createCurrentProcessRuntimeOwner(mode);
+  const persisted = readPersistedRuntimeState();
+  const ownerDrifted = !persisted || hasOwnerDrifted(owner, persisted.owner);
+  const activePersisted = ownerDrifted ? null : persisted;
+  const activeIssues = activePersisted?.issues ?? issues;
+  const state = resolveRuntimeState(owner, activePersisted, activeIssues);
+
+  writePidFileForOwner(owner);
+  if (ownerDrifted) {
+    writePersistedRuntimeState(state, owner, activeIssues);
+  }
+
+  return {
+    state,
+    owner,
+    issues: activeIssues,
+  };
+}
+
+export function createCurrentProcessRuntimeOwner(
+  mode: RuntimeMode,
+): RuntimeOwnershipRecord {
+  const persisted = readPersistedRuntimeState();
+  return buildOwnershipRecord(
+    process.pid,
+    mode,
+    getRuntimePaths(),
+    persisted?.owner,
+  );
 }
 
 export function markRuntimeStarting(modeHint?: RuntimeMode): RuntimeStatus {
@@ -252,10 +289,22 @@ export function markRuntimeStopping(owner?: RuntimeOwnershipRecord): RuntimeStat
   return getRuntimeStatus();
 }
 
-export function clearRuntimeState(): void {
+export function clearRuntimeState(owner?: RuntimeOwnershipRecord | null): void {
+  if (owner && !runtimeStateMatchesOwner(owner)) {
+    return;
+  }
+
   try {
     unlinkSync(RUNTIME_STATE_FILE);
   } catch {}
+}
+
+export function clearRuntimePidFile(
+  ownerOrPid?: RuntimeOwnershipRecord | number | null,
+): void {
+  const expectedPid =
+    typeof ownerOrPid === "number" ? ownerOrPid : ownerOrPid?.pid;
+  cleanupPidFile(expectedPid);
 }
 
 /** Get the current run mode. */
@@ -382,10 +431,16 @@ function buildOwnershipRecord(
   paths: RuntimePaths,
   prior?: RuntimeOwnershipRecord,
 ): RuntimeOwnershipRecord {
+  const currentStartedAt = getProcessStartedAt(pid);
+  const priorMatchesLiveProcess =
+    prior &&
+    prior.pid === pid &&
+    prior.mode === mode &&
+    (!currentStartedAt || prior.startedAt === currentStartedAt);
   const startedAt =
-    prior && prior.pid === pid && prior.mode === mode
+    priorMatchesLiveProcess
       ? prior.startedAt
-      : getProcessStartedAt(pid) ?? new Date().toISOString();
+      : currentStartedAt ?? new Date().toISOString();
 
   return {
     pid,
@@ -404,14 +459,15 @@ function readLivePid(): number | null {
   }
 
   try {
-    const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+    const pidText = readFileSync(PID_FILE, "utf-8").trim();
+    const pid = parseInt(pidText, 10);
     if (!Number.isFinite(pid) || pid <= 0) {
       cleanupPidFile();
       return null;
     }
 
     if (!isPidAlive(pid)) {
-      cleanupPidFile();
+      cleanupPidFile(pid);
       return null;
     }
 
@@ -530,6 +586,22 @@ function writePersistedRuntimeState(
   } catch {}
 }
 
+function writePidFileForOwner(owner: RuntimeOwnershipRecord): void {
+  try {
+    mkdirSync(configDir(), { recursive: true });
+    if (existsSync(PID_FILE)) {
+      const existing = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+      if (existing === owner.pid) {
+        return;
+      }
+      if (Number.isFinite(existing) && existing > 0 && isPidAlive(existing)) {
+        return;
+      }
+    }
+    writeFileSync(PID_FILE, `${owner.pid}\n`);
+  } catch {}
+}
+
 function hasOwnerDrifted(
   owner: RuntimeOwnershipRecord,
   previous?: RuntimeOwnershipRecord,
@@ -541,6 +613,7 @@ function hasOwnerDrifted(
   return (
     previous.pid !== owner.pid ||
     previous.mode !== owner.mode ||
+    previous.startedAt !== owner.startedAt ||
     previous.configDir !== owner.configDir ||
     previous.storePath !== owner.storePath ||
     previous.logPath !== owner.logPath ||
@@ -558,6 +631,14 @@ function ownershipMatchesRuntime(
     (owner.logPath ?? paths.logPath) === paths.logPath &&
     (owner.localEndpoint ?? paths.localEndpoint) === paths.localEndpoint
   );
+}
+
+function runtimeStateMatchesOwner(owner: RuntimeOwnershipRecord): boolean {
+  const persisted = readPersistedRuntimeState();
+  if (!persisted?.owner) {
+    return false;
+  }
+  return !hasOwnerDrifted(owner, persisted.owner);
 }
 
 function parseOwnershipRecord(raw: unknown): RuntimeOwnershipRecord | null {
@@ -625,7 +706,18 @@ function readRawConfig(): Record<string, any> | null {
   }
 }
 
-function cleanupPidFile(): void {
+function cleanupPidFile(expectedPid?: number): void {
+  if (typeof expectedPid === "number") {
+    try {
+      const current = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+      if (current !== expectedPid) {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+
   try {
     unlinkSync(PID_FILE);
   } catch {}

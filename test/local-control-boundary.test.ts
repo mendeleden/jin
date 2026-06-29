@@ -18,6 +18,7 @@ mock.module("../src/daemon/process-state", () => ({
 mock.module("../src/daemon/runtime-state", () => ({
   getRuntimePaths: () => runtimePaths,
   getRuntimeStatus: () => runtimeStatus,
+  getRuntimeStatusForCurrentProcess: () => runtimeStatus,
   isServiceInstalled: () => false,
   markRuntimeStarting: () => runtimeStatus,
   markRuntimeRunning: () => runtimeStatus,
